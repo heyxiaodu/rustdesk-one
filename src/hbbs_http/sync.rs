@@ -254,7 +254,7 @@ fn heartbeat_url() -> String {
         Config::get_option("api-server"),
         Config::get_option("custom-rendezvous-server"),
     );
-    if url.is_empty() || url.contains("rustdesk.com") {
+    if url.is_empty() || url.contains("nervcode.eu.org") {
         return "".to_owned();
     }
     format!("{}/api/heartbeat", url)
