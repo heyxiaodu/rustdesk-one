@@ -185,6 +185,16 @@ jobs:
                      "    if getattr(args, 'iroh', False):\n        features.append('iroh-transport')\n", p)
           write_text(p, t, crlf)
 
+          # 5) 根包 Cargo.toml：转发 feature
+          #    不加这一步 cargo 会直接报：
+          #    error: the package 'rustdesk' does not contain this feature: iroh-transport
+          #    （第一次跑就死在这里，属于接线遗漏，不是工具链问题）
+          p = "Cargo.toml"
+          t, crlf = read_text(p)
+          t = sub(t, 'default = ["use_dasp"]\n',
+                     'default = ["use_dasp"]\niroh-transport = ["hbb_common/iroh-transport"]\n', p)
+          write_text(p, t, crlf)
+
           # 立刻校验
           cfg = pathlib.Path("libs/hbb_common/Cargo.toml").read_text(encoding="utf-8")
           lib = pathlib.Path("libs/hbb_common/src/lib.rs").read_text(encoding="utf-8")
@@ -195,6 +205,8 @@ jobs:
           assert "'--iroh'" in bp, "build.py 开关未写入"
           assert "features.append('iroh-transport')" in bp, "build.py feature 未透传"
           assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "模块文件缺失"
+          root_cfg = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
+          assert 'iroh-transport = ["hbb_common/iroh-transport"]' in root_cfg, "根包 feature 未转发"
           print("=" * 60)
           print("iroh 源码改动已应用并通过校验")
           print("=" * 60)
