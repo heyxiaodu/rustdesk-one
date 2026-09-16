@@ -121,12 +121,6 @@ def make_parser():
         help='Enable feature vram, only available on windows now.'
     )
     parser.add_argument(
-        '--iroh',
-        action='store_true',
-        help='Enable the experimental iroh(QUIC) peer-to-peer transport. '
-             'Requires rustc >= 1.91 and an updated Cargo.lock.'
-    )
-    parser.add_argument(
         '--portable',
         action='store_true',
         help='Build windows portable'
@@ -286,8 +280,6 @@ def get_features(args):
         features.append('vram')
     if args.flutter:
         features.append('flutter')
-    if getattr(args, 'iroh', False):
-        features.append('iroh-transport')
     if args.unix_file_copy_paste:
         features.append('unix-file-copy-paste')
     if osx:
