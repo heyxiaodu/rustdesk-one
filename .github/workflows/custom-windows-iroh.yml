@@ -108,15 +108,97 @@ jobs:
       # 关键步骤：在这里把你的服务器信息写进源码
       # 改动 3 处，编译前进不来就立刻报错，不会白等 1 小时才发现
       # ======================================================================
-      - name: Verify iroh source changes are present
+      # libs/hbb_common 是 git 子模块：GitHub 的 Contents API 无法直接往里写文件
+      # （会返回 409/404），而且 Windows 上 git apply 容易因 CRLF 失配。
+      # 所以模块模板放在 nervdesk/ 下，这里在构建前把它落到源码树里。
+      - name: Apply iroh source changes
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
-          set -e
-          test -f libs/hbb_common/src/iroh_transport.rs || { echo "[FAIL] 缺少 iroh_transport.rs"; exit 1; }
-          grep -q 'iroh-transport' libs/hbb_common/Cargo.toml || { echo "[FAIL] Cargo.toml 未加 feature"; exit 1; }
-          grep -q 'pub mod iroh_transport' libs/hbb_common/src/lib.rs || { echo "[FAIL] lib.rs 未注册模块"; exit 1; }
-          grep -q -- '--iroh' build.py || { echo "[FAIL] build.py 未加 --iroh 开关"; exit 1; }
-          echo "iroh 源码改动齐备"
+          python3 - <<'PYEOF'
+          import pathlib, shutil, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True); sys.exit(1)
+
+          def read_text(p):
+              raw = pathlib.Path(p).read_bytes().decode("utf-8")
+              crlf = "\r\n" in raw
+              return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+          def write_text(p, text, crlf):
+              pathlib.Path(p).write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+          def sub(text, old, new, label):
+              n = text.count(old)
+              if n != 1: die("%s: 锚点匹配 %d 处，期望 1 处" % (label, n))
+              return text.replace(old, new)
+
+          # 1) 新增 iroh 传输模块
+          src = pathlib.Path("nervdesk/iroh_transport.rs")
+          dst = pathlib.Path("libs/hbb_common/src/iroh_transport.rs")
+          if not src.is_file(): die("缺少 nervdesk/iroh_transport.rs")
+          if not dst.parent.is_dir(): die("子模块 libs/hbb_common 没拉下来")
+          shutil.copyfile(src, dst)
+
+          # 2) libs/hbb_common/Cargo.toml
+          p = "libs/hbb_common/Cargo.toml"
+          t, crlf = read_text(p)
+          t = sub(t, 'webrtc = ["dep:webrtc"]\n',
+                     'webrtc = ["dep:webrtc"]\n'
+                     '# 用 iroh(QUIC) 承载点对点数据通道，默认关闭。\n'
+                     '# 开启后可用 `cargo check -p hbb_common --features iroh-transport` 验证。\n'
+                     '#\n'
+                     '# 注意：iroh 1.2 的 MSRV 是 rustc 1.91，而 RustDesk 的 CI 锁定 1.75\n'
+                     '# （1.75 是为了 sciter 旧 UI）。启用本 feature 必须同时抬高工具链版本。\n'
+                     'iroh-transport = ["dep:iroh"]\n', p)
+          t = sub(t, 'libloading = "0.8"\n',
+                     'libloading = "0.8"\n'
+                     '# QUIC 传输（可选，见 feature iroh-transport）。锁死小版本，避免 API 漂移。\n'
+                     'iroh = { version = "1.2", optional = true }\n', p)
+          write_text(p, t, crlf)
+
+          # 3) libs/hbb_common/src/lib.rs
+          p = "libs/hbb_common/src/lib.rs"
+          t, crlf = read_text(p)
+          t = sub(t, "pub mod udp;\n",
+                     "pub mod udp;\n#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n", p)
+          write_text(p, t, crlf)
+
+          # 4) build.py（与 patches/iroh-p1-code.patch 里的改动完全一致）
+          p = "build.py"
+          t, crlf = read_text(p)
+          t = sub(t, "    parser.add_argument(\n        '--portable',",
+                     "    parser.add_argument(\n        '--iroh',\n        action='store_true',\n"
+                     "        help='Enable the experimental iroh(QUIC) peer-to-peer transport. '\n"
+                     "             'Requires rustc >= 1.91 and an updated Cargo.lock.'\n    )\n"
+                     "    parser.add_argument(\n        '--portable',", p)
+          t = sub(t, "    if args.flutter:\n        features.append('flutter')\n",
+                     "    if args.flutter:\n        features.append('flutter')\n"
+                     "    if getattr(args, 'iroh', False):\n        features.append('iroh-transport')\n", p)
+          write_text(p, t, crlf)
+
+          # 立刻校验
+          cfg = pathlib.Path("libs/hbb_common/Cargo.toml").read_text(encoding="utf-8")
+          lib = pathlib.Path("libs/hbb_common/src/lib.rs").read_text(encoding="utf-8")
+          bp  = pathlib.Path("build.py").read_text(encoding="utf-8")
+          assert 'iroh-transport = ["dep:iroh"]' in cfg, "Cargo.toml feature 未写入"
+          assert 'iroh = { version = "1.2", optional = true }' in cfg, "Cargo.toml 依赖未写入"
+          assert "pub mod iroh_transport;" in lib, "lib.rs 模块未注册"
+          assert "'--iroh'" in bp, "build.py 开关未写入"
+          assert "features.append('iroh-transport')" in bp, "build.py feature 未透传"
+          assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "模块文件缺失"
+          print("=" * 60)
+          print("iroh 源码改动已应用并通过校验")
+          print("=" * 60)
+          PYEOF
 
       - name: Inject custom server configuration
         shell: bash
