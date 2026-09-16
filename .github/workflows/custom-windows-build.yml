@@ -95,16 +95,40 @@ jobs:
       # ======================================================================
       - name: Inject custom server configuration
         shell: bash
+        # Windows 上的 Python 默认用 cp1252 编码输出，打印中文会直接
+        # UnicodeEncodeError 崩掉（第一次跑就是死在这里，与补丁逻辑无关）。
+        # 这里强制 UTF-8，避免这种与业务无关的失败。
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           python3 - <<'PYEOF'
           import os, pathlib, re, sys
 
-          ID   = os.environ["RS_ID_SERVER"].strip()
-          API  = os.environ["RS_API_SERVER"].strip()
-          KEY  = os.environ["RS_KEY"].strip()
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          ID    = os.environ["RS_ID_SERVER"].strip()
+          API   = os.environ["RS_API_SERVER"].strip()
+          KEY   = os.environ["RS_KEY"].strip()
+          RELAY = os.environ["RS_RELAY_SERVER"].strip()
 
           def die(m):
-              print("[FAIL] " + m); sys.exit(1)
+              print("[FAIL] " + m, file=sys.stderr, flush=True)
+              sys.exit(1)
+
+          # 统一按 LF 处理、写完再还原原有行尾，
+          # 这样 checkout 出来不论 LF 还是 CRLF 都不会踩到「锚点匹配 0 处」。
+          def read_text(p):
+              raw = p.read_bytes().decode("utf-8")
+              crlf = "\r\n" in raw
+              return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+          def write_text(p, text, crlf):
+              p.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
 
           cfg_p = pathlib.Path("libs/hbb_common/src/config.rs")
           com_p = pathlib.Path("src/common.rs")
@@ -112,21 +136,23 @@ jobs:
               if not p.is_file():
                   die("找不到 %s ，子模块可能没拉下来" % p)
 
-          cfg = cfg_p.read_text(encoding="utf-8")
+          cfg, cfg_crlf = read_text(cfg_p)
           cfg, n1 = re.subn(r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[[^\]]*\];',
                             'pub const RENDEZVOUS_SERVERS: &[&str] = &["%s"];' % ID, cfg)
-          if n1 != 1: die("RENDEZVOUS_SERVERS 锚点匹配 %d 处，期望 1 处" % n1)
+          if n1 != 1:
+              die("RENDEZVOUS_SERVERS 锚点匹配 %d 处，期望 1 处" % n1)
           cfg, n2 = re.subn(r'pub const RS_PUB_KEY: &str = "[^"]*";',
                             'pub const RS_PUB_KEY: &str = "%s";' % KEY, cfg)
-          if n2 != 1: die("RS_PUB_KEY 锚点匹配 %d 处，期望 1 处" % n2)
-          cfg_p.write_text(cfg, encoding="utf-8")
+          if n2 != 1:
+              die("RS_PUB_KEY 锚点匹配 %d 处，期望 1 处" % n2)
+          write_text(cfg_p, cfg, cfg_crlf)
 
-          com = com_p.read_text(encoding="utf-8")
+          com, com_crlf = read_text(com_p)
           old = '    "https://admin.rustdesk.com".to_owned()\n}'
           new = '    "%s".to_owned()\n}' % API
           if com.count(old) != 1:
               die("API 服务器锚点匹配 %d 处，期望 1 处" % com.count(old))
-          com_p.write_text(com.replace(old, new), encoding="utf-8")
+          write_text(com_p, com.replace(old, new), com_crlf)
 
           # 立刻校验，确保真的写进去了
           cfg = cfg_p.read_text(encoding="utf-8")
@@ -139,7 +165,7 @@ jobs:
           print("=" * 60)
           print("已写入源码：")
           print("  ID  服务器 : %s:21116" % ID)
-          print("  中继服务器 : %s（由 ID 服务器下发，无需写死）" % os.environ["RS_RELAY_SERVER"])
+          print("  中继服务器 : %s（由 ID 服务器下发，无需写死）" % RELAY)
           print("  API 服务器 : %s" % API)
           print("  公钥       : %s...%s" % (KEY[:8], KEY[-6:]))
           print("=" * 60)
