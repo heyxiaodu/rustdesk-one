@@ -328,6 +328,26 @@ pub async fn accept_one(endpoint: &Endpoint) -> ResultType<Option<(FramedStream,
     let Some(incoming) = endpoint.accept().await else {
         return Ok(None);
     };
+    accept_incoming(incoming).await.map(Some)
+}
+
+/// **非阻塞**地尝试接受一条 iroh 连接：在 `ms` 毫秒内没有连接就返回 `None`。
+///
+/// 供连接层在 `select!` 循环里轮询使用 —— 那里不能阻塞等待。
+pub async fn try_accept(
+    endpoint: &Endpoint,
+    ms: u64,
+) -> ResultType<Option<(FramedStream, EndpointId)>> {
+    match crate::timeout(ms, endpoint.accept()).await {
+        Ok(Some(incoming)) => accept_incoming(incoming).await.map(Some),
+        // 超时，或者 endpoint 已关闭
+        _ => Ok(None),
+    }
+}
+
+async fn accept_incoming(
+    incoming: iroh::endpoint::Incoming,
+) -> ResultType<(FramedStream, EndpointId)> {
     let conn = incoming
         .accept()
         .map_err(|e| anyhow!("iroh 接受连接失败: {e}"))?
@@ -338,7 +358,7 @@ pub async fn accept_one(endpoint: &Endpoint) -> ResultType<Option<(FramedStream,
         .accept_bi()
         .await
         .map_err(|e| anyhow!("iroh accept_bi 失败: {e}"))?;
-    Ok(Some((framed_stream_from_iroh(send, recv), peer_id)))
+    Ok((framed_stream_from_iroh(send, recv), peer_id))
 }
 
 /// 持续接受 iroh 连接，把每条连接交给 `handler`。

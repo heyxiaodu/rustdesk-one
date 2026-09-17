@@ -121,6 +121,41 @@ pub fn action_to_message(action: &Action, local_addr: &str) -> Option<Message> {
     }
 }
 
+/// 会话要求连接层执行的**有序**指令。
+///
+/// 为什么要有序：过渡层必须在**发送 Commit 之前**就装好，
+/// 否则 Commit 窗口内的应用数据不会被暂存，会静默丢失。
+/// 把这些顺序约束集中在会话里，连接层只需照单执行，
+/// 也就不容易接错。
+pub enum Order {
+    /// 安装过渡层（把老流与新的 iroh 流交给 [`crate::iroh_transition::TransitionStream`]）。
+    /// 连接层应在此之后用过渡层替换 `Connection.stream`。
+    Install(FramedStream),
+    /// 走老通道发送这条消息。
+    Send(Message),
+    /// 过渡层：Commit 已经发出去了（此后不得再往老通道写应用数据）。
+    CommitSent,
+    /// 过渡层：收到了 CommitAck（可以切到新通道并冲刷暂存数据）。
+    CommitAckReceived,
+    /// 过渡层：CommitAck 已经发出去了（响应方直接切换）。
+    CommitAckSent,
+    /// 过渡层：升级失败，把暂存数据倒回老通道。
+    Abort,
+}
+
+impl std::fmt::Debug for Order {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Order::Install(_) => write!(f, "Install(<iroh 流>)"),
+            Order::Send(_) => write!(f, "Send(<消息>)"),
+            Order::CommitSent => write!(f, "CommitSent"),
+            Order::CommitAckReceived => write!(f, "CommitAckReceived"),
+            Order::CommitAckSent => write!(f, "CommitAckSent"),
+            Order::Abort => write!(f, "Abort"),
+        }
+    }
+}
+
 /// 一次升级会话。
 pub struct UpgradeSession {
     upgrade: Upgrade,
@@ -135,6 +170,8 @@ pub struct UpgradeSession {
     ready: Option<FramedStream>,
     /// 是否已经产出过 SwitchTransport（防止重复取）
     switch_armed: bool,
+    /// 待连接层执行的有序指令
+    orders: Vec<Order>,
 }
 
 impl UpgradeSession {
@@ -148,7 +185,16 @@ impl UpgradeSession {
             dial_rx: None,
             ready: None,
             switch_armed: false,
+            orders: Vec::new(),
         }
+    }
+
+    /// 取出待执行的有序指令。
+    ///
+    /// 连接层在每次驱动会话（`start` / `handle` / `poll_dial` / `poll_accept` / `tick`）
+    /// 之后调用一次，照序执行即可。
+    pub fn drain_orders(&mut self) -> Vec<Order> {
+        std::mem::take(&mut self.orders)
     }
 
     pub fn role(&self) -> Role {
@@ -194,15 +240,16 @@ impl UpgradeSession {
     }
 
     /// 发起方：开始升级。
-    pub async fn start(&mut self) -> ResultType<Vec<Message>> {
+    pub async fn start(&mut self) -> ResultType<Vec<Order>> {
         let local = self.ensure_endpoint().await?;
         self.upgrade = Upgrade::new(Role::Initiator, local);
         let actions = self.upgrade.step(Event::Start);
-        Ok(self.apply(actions).await)
+        self.apply(actions).await;
+        Ok(self.drain_orders())
     }
 
     /// 处理一条收到的升级消息。
-    pub async fn handle(&mut self, incoming: &IncomingUpgrade) -> ResultType<Vec<Message>> {
+    pub async fn handle(&mut self, incoming: &IncomingUpgrade) -> ResultType<Vec<Order>> {
         // 响应方在收到 Offer 前可能还没有 endpoint
         if matches!(incoming, IncomingUpgrade::Offer { .. }) && self.upgrade.role() == Role::Responder {
             let local = self.ensure_endpoint().await?;
@@ -210,16 +257,53 @@ impl UpgradeSession {
         }
         let event = incoming.to_event();
         let actions = self.upgrade.step(event);
-        Ok(self.apply(actions).await)
+        self.apply(actions).await;
+        Ok(self.drain_orders())
     }
 
     /// 超时检查（连接层定时驱动）。
-    pub async fn tick(&mut self) -> ResultType<Vec<Message>> {
+    pub async fn tick(&mut self) -> ResultType<Vec<Order>> {
         if self.upgrade.state().is_terminal() {
             return Ok(Vec::new());
         }
         let actions = self.upgrade.step(Event::Timeout);
-        Ok(self.apply(actions).await)
+        self.apply(actions).await;
+        Ok(self.drain_orders())
+    }
+
+    /// 对端 iroh 身份（连接就绪后才有值）。
+    ///
+    /// 上层应把它与预期设备的 pk 比对（我们已让两者等同，
+    /// 见 `iroh_transport::secret_key_from_rustdesk`）。
+    pub fn peer_id(&self) -> Option<EndpointId> {
+        self.peer_id
+    }
+
+    /// 响应方：**非阻塞**轮询是否有进来的 iroh 连接。
+    ///
+    /// 连接层在 `select!` 里调用；只有处于 `Connecting` 阶段才需要轮询。
+    pub async fn poll_accept(&mut self) -> ResultType<bool> {
+        if self.upgrade.role() != Role::Responder
+            || self.upgrade.state() != &State::Connecting
+        {
+            return Ok(false);
+        }
+        let Some(ep) = self.endpoint.clone() else {
+            return Ok(false);
+        };
+        // 5ms：足够短，不会拖慢 select! 循环；又给 accept 一点机会完成
+        match iroh_transport::try_accept(&ep, 5).await? {
+            Some((stream, peer)) => {
+                self.ready = Some(stream);
+                self.peer_id = Some(peer);
+                let actions = self.upgrade.step(Event::IrohConnected);
+                self.apply(actions).await;
+                // 连接已就绪：先把过渡层装好，再让上层发 Commit
+                self.emit_install_if_ready();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     /// 拨号结果（非阻塞），供 `select!` 使用。
@@ -236,6 +320,8 @@ impl UpgradeSession {
                 self.dial_rx = None;
                 let actions = self.upgrade.step(Event::IrohConnected);
                 self.apply(actions).await;
+                // 连接已就绪：先把过渡层装好，再让上层发 Commit
+                self.emit_install_if_ready();
                 Ok(true)
             }
             Ok(Err(e)) => {
@@ -255,9 +341,8 @@ impl UpgradeSession {
         }
     }
 
-    /// 执行状态机产出的一批动作。
-    async fn apply(&mut self, actions: Vec<Action>) -> Vec<Message> {
-        let mut out = Vec::new();
+    /// 执行状态机产出的一批动作，把副作用翻译成有序指令。
+    async fn apply(&mut self, actions: Vec<Action>) {
         let local = self
             .endpoint
             .as_ref()
@@ -270,6 +355,20 @@ impl UpgradeSession {
                     if let Err(e) = self.spawn_dial().await {
                         log::warn!("iroh 拨号启动失败: {e}");
                     }
+                }
+                Action::SendCommit => {
+                    // 顺序很关键：先把 Commit 交给老通道，
+                    // 再通知过渡层进入提交窗口。
+                    if let Some(m) = action_to_message(&action, &local) {
+                        self.orders.push(Order::Send(m));
+                    }
+                    self.orders.push(Order::CommitSent);
+                }
+                Action::SendCommitAck => {
+                    if let Some(m) = action_to_message(&action, &local) {
+                        self.orders.push(Order::Send(m));
+                    }
+                    self.orders.push(Order::CommitAckSent);
                 }
                 Action::SwitchTransport => {
                     // 只有双方都走到这一步才会真正换流；
@@ -285,15 +384,24 @@ impl UpgradeSession {
                     self.dial_rx = None;
                     self.ready = None;
                     self.switch_armed = false;
+                    self.orders.push(Order::Abort);
                 }
                 other => {
                     if let Some(m) = action_to_message(&other, &local) {
-                        out.push(m);
+                        self.orders.push(Order::Send(m));
                     }
                 }
             }
         }
-        out
+    }
+
+    /// 把就绪的 iroh 流交给过渡层安装。
+    ///
+    /// **必须在发 Commit 之前调用**，见 [`Order::Install`] 的说明。
+    fn emit_install_if_ready(&mut self) {
+        if let Some(stream) = self.ready.take() {
+            self.orders.push(Order::Install(stream));
+        }
     }
 
     async fn spawn_dial(&mut self) -> ResultType<()> {
@@ -426,6 +534,20 @@ mod tests {
             0,
         );
         assert!(s.take_ready(&fake).is_none(), "未武装时不得换流");
+    }
+
+    /// 只有响应方、且处于 Connecting 阶段才需要轮询接受连接；
+    /// 其余情况必须立刻返回 false，不能阻塞 select! 循环。
+    #[tokio::test]
+    async fn poll_accept_is_noop_for_initiator_and_wrong_phase() {
+        // 发起方：永远不该轮询 accept
+        let mut a = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        assert!(!a.poll_accept().await.unwrap());
+
+        // 响应方但还没收到 Offer（Idle 阶段）：也不该轮询
+        let mut b = UpgradeSession::new(Role::Responder, IrohConfig::default());
+        assert!(!b.poll_accept().await.unwrap());
+        assert_eq!(b.state(), &State::Idle);
     }
 
     /// 会话在终态时 tick 不应再产出任何东西。
