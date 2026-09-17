@@ -141,7 +141,7 @@ pub fn framed_stream_from_iroh(send: SendStream, recv: RecvStream) -> FramedStre
 /// iroh/ed25519-dalek 需要的是前 32 字节种子。
 ///
 /// 因此派生出的 iroh 身份其公钥 == RustDesk 的 pk，实现天然绑定。
-pub fn secret_key_from_rustdesk(key_pair: &(Vec<u8>, Bytes)) -> ResultType<SecretKey> {
+pub fn secret_key_from_rustdesk(key_pair: &(Vec<u8>, Vec<u8>)) -> ResultType<SecretKey> {
     let sk = &key_pair.0;
     if sk.len() < 32 {
         return Err(anyhow!(
@@ -169,6 +169,36 @@ pub struct IrohConfig {
     pub relay_urls: Vec<String>,
     /// RustDesk 的密钥对。给了就用它派生稳定的 iroh 身份。
     pub secret_key: Option<SecretKey>,
+}
+
+/// 解析 relay 地址列表（逗号分隔，允许空白与空项）。
+///
+/// 单独抽出来是为了可测试：配置解析最容易出「多了个空格就连不上」这种问题。
+pub fn parse_relay_urls(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned())
+        .collect()
+}
+
+/// 从 RustDesk 配置构造 [`IrohConfig`]。
+///
+/// 做两件**必不可少**的事：
+///
+/// 1. **读 relay 地址**（选项 `iroh-relay`，逗号分隔）。
+///    不配的话就是 `RelayMode::Disabled`，跨 NAT 时永远连不上 ——
+///    即使用户部署了 relay 也用不到。
+/// 2. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
+///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
+///    （见 [`secret_key_from_rustdesk`]）。
+pub fn config_from_options() -> ResultType<IrohConfig> {
+    let secret_key = secret_key_from_rustdesk(&crate::config::Config::get_key_pair())?;
+    Ok(IrohConfig {
+        relay_urls: parse_relay_urls(&crate::config::Config::get_option("iroh-relay")),
+        secret_key: Some(secret_key),
+        ..Default::default()
+    })
 }
 
 static ENDPOINT: OnceCell<Endpoint> = OnceCell::const_new();
@@ -404,6 +434,22 @@ fn _assert_duplex_is_send_sync() {
 
 #[cfg(test)]
 mod tests {
+    /// relay 列表解析：空白、空项、单/多项都要正确。
+    #[test]
+    fn parse_relay_urls_handles_whitespace_and_empties() {
+        assert!(parse_relay_urls("").is_empty());
+        assert!(parse_relay_urls("   ").is_empty());
+        assert!(parse_relay_urls(",,").is_empty());
+        assert_eq!(
+            parse_relay_urls("https://relay.nervcode.eu.org:8443"),
+            vec!["https://relay.nervcode.eu.org:8443".to_owned()]
+        );
+        assert_eq!(
+            parse_relay_urls("  https://a:8443 , https://b ,, "),
+            vec!["https://a:8443".to_owned(), "https://b".to_owned()]
+        );
+    }
+
     use super::*;
     use bytes::BytesMut;
 
@@ -417,7 +463,7 @@ mod tests {
 
         for _ in 0..8 {
             let (pk, sk) = sign::gen_keypair();
-            let key_pair: (Vec<u8>, Bytes) = (sk.0.to_vec(), Bytes::copy_from_slice(&pk.0));
+            let key_pair: (Vec<u8>, Vec<u8>) = (sk.0.to_vec(), pk.0.to_vec());
 
             let iroh_sk = secret_key_from_rustdesk(&key_pair).expect("派生 iroh 私钥失败");
             let iroh_pk = iroh_sk.public();
@@ -433,7 +479,7 @@ mod tests {
     /// 畸形私钥必须被拒绝，而不是 panic 或静默截断。
     #[test]
     fn identity_binding_rejects_short_key() {
-        let bad: (Vec<u8>, Bytes) = (vec![1u8; 16], vec![0u8; 32].into());
+        let bad: (Vec<u8>, Vec<u8>) = (vec![1u8; 16], vec![0u8; 32]);
         assert!(secret_key_from_rustdesk(&bad).is_err());
     }
 

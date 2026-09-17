@@ -1346,10 +1346,14 @@ impl<T: InvokeUiSession> Remote<T> {
         if self.iroh_upgrade.is_some() || !is_enabled() {
             return;
         }
-        let mut session = UpgradeSession::new(
-            Role::Initiator,
-            hbb_common::iroh_transport::IrohConfig::default(),
-        );
+        let cfg = match hbb_common::iroh_transport::config_from_options() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("构造 iroh 配置失败，跳过升级: {e}");
+                return;
+            }
+        };
+        let mut session = UpgradeSession::new(Role::Initiator, cfg);
         match session.start().await {
             Ok(orders) => {
                 self.iroh_upgrade = Some(session);

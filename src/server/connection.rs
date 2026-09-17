@@ -2529,7 +2529,13 @@ impl Connection {
             return true;
         }
         if self.iroh_upgrade.is_none() {
-            let cfg = hbb_common::iroh_transport::IrohConfig::default();
+            let cfg = match hbb_common::iroh_transport::config_from_options() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("构造 iroh 配置失败，放弃升级: {e}");
+                    return true;
+                }
+            };
             self.iroh_upgrade = Some(UpgradeSession::new(Role::Responder, cfg));
             log::info!("iroh 升级会话已创建（响应方）");
         }
