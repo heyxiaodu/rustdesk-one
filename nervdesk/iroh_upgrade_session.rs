@@ -24,7 +24,11 @@
 //!        ├─ handle(union)      → 收到升级消息 → 产出要回的消息
 //!        ├─ poll_dial()        → 拨号结果（非阻塞，供 select! 使用）
 //!        ├─ tick()             → 超时检查
-//!        └─ take_ready()       → 取出已就绪的新流（此时才做加密状态迁移）
+//!        └─ poll_accept()      → 响应方：轮询进来的 iroh 连接（非阻塞）
+//!
+//! 换流不在这里做：会话产出 `Order::Install(新流)` 交给连接层装成
+//! `TransitionStream`，加密状态的搬迁在过渡层切换那一刻完成
+//! （见 `iroh_transition::TransitionStream::switch_to_new`）。
 //! ```
 
 use super::iroh_upgrade::{Action, Event, Role, State, Upgrade, UPGRADE_PROTOCOL_VERSION};
@@ -169,7 +173,6 @@ pub struct UpgradeSession {
     /// 已就绪、等待切换的新流
     ready: Option<FramedStream>,
     /// 是否已经产出过 SwitchTransport（防止重复取）
-    switch_armed: bool,
     /// 待连接层执行的有序指令
     orders: Vec<Order>,
 }
@@ -184,7 +187,6 @@ impl UpgradeSession {
             peer_id: None,
             dial_rx: None,
             ready: None,
-            switch_armed: false,
             orders: Vec::new(),
         }
     }
@@ -205,11 +207,6 @@ impl UpgradeSession {
         self.upgrade.state()
     }
 
-    /// 是否已经可以换流（连接层据此调用 [`Self::take_ready`]）。
-    pub fn switch_armed(&self) -> bool {
-        self.switch_armed
-    }
-
     /// 这个会话还需要被定时驱动吗？
     ///
     /// 连接层的主循环是 `select!`，升级会话靠一条 100ms 定时分支驱动。
@@ -221,20 +218,6 @@ impl UpgradeSession {
     /// 根本不应该有定时分支（`Option::is_some_and` 天然满足这一点）。
     pub fn needs_tick(&self) -> bool {
         !self.upgrade.state().is_terminal()
-    }
-
-    /// 取出已就绪的新流，并把老流的加密状态迁移过去。
-    ///
-    /// **调用方必须把返回的流替换掉原来的 `Connection.stream`。**
-    /// 加密状态在这里迁移，正是为了避免 nonce 复用（见 `crypto_handoff` 模块）。
-    pub fn take_ready(&mut self, old: &FramedStream) -> Option<FramedStream> {
-        if !self.switch_armed {
-            return None;
-        }
-        let mut new_stream = self.ready.take()?;
-        new_stream.adopt_crypto_from(old);
-        self.switch_armed = false;
-        Some(new_stream)
     }
 
     /// 启动 endpoint 并返回本端地址。
@@ -386,19 +369,26 @@ impl UpgradeSession {
                     self.orders.push(Order::CommitAckSent);
                 }
                 Action::SwitchTransport => {
-                    // 只有双方都走到这一步才会真正换流；
-                    // 若此时还没有就绪的流，说明协议被违反了，直接放弃。
-                    if self.ready.is_some() {
-                        self.switch_armed = true;
-                    } else {
-                        log::warn!("收到切换指令但 iroh 流尚未就绪，放弃升级");
+                    // 这一步是「通知过渡层可以换流了」。
+                    //
+                    // 两个角色在过渡层里走的是**不同**的入口：
+                    //   * 响应方：先发 CommitAck，发完就能切 —— 那一步已经在
+                    //     `Action::SendCommitAck` 里翻译成了 `Order::CommitAckSent`，
+                    //     所以这里对响应方无事可做。
+                    //   * 发起方：必须等收到 CommitAck 才能切，
+                    //     对应的入口是 `Order::CommitAckReceived`。
+                    //
+                    // 以前这里什么都没产出（只置了一个没人读的开关），
+                    // 结果状态机显示 Switched、过渡层却一直停在老通道上 ——
+                    // 升级"成功"了，数据还走老路。
+                    if self.upgrade.role() == Role::Initiator {
+                        self.orders.push(Order::CommitAckReceived);
                     }
                 }
                 Action::Fallback => {
                     log::info!("iroh 升级未成功，继续使用原通道");
                     self.dial_rx = None;
                     self.ready = None;
-                    self.switch_armed = false;
                     self.orders.push(Order::Abort);
                 }
                 other => {
@@ -531,24 +521,102 @@ mod tests {
         assert!(action_to_message(&Action::Fallback, "").is_none());
     }
 
-    /// 没有就绪的流时，即使状态机说要切换也**不能**把 switch_armed 置起来。
+    /// 发起方收到 CommitAck 之后，**必须真的产出一条换流指令**。
+    ///
+    /// 这是端到端测试挖出来的第二个「看起来成功、实际没换」的缺陷：
+    /// 状态机明明走到了 `Switched`，但 `Action::SwitchTransport` 当时
+    /// 什么都不产出（只置了一个没人读的开关），于是过渡层一直停在老通道上
+    /// —— 升级报成功，数据还走老路。单元测试当时测的是"没 ready 流时不武装"，
+    /// 恰好绕过了真正要断言的这条路径。
     #[tokio::test]
-    async fn switch_is_not_armed_without_a_ready_stream() {
-        let mut s = UpgradeSession::new(Role::Responder, IrohConfig::default());
-        // 手工把状态推进到 AwaitingCommit 需要 endpoint，这里直接验证守卫逻辑：
-        assert!(!s.switch_armed());
-        // 没有 ready 流时 take_ready 必须返回 None
-        let (a, _b) = tokio::io::duplex(1024);
-        let fake = FramedStream(
-            tokio_util::codec::Framed::new(
-                crate::tcp::DynTcpStream(Box::new(a)),
-                crate::bytes_codec::BytesCodec::new(),
-            ),
+    async fn initiator_emits_switch_order_on_commit_ack() {
+        use crate::bytes_codec::BytesCodec;
+        use crate::tcp::{DynTcpStream, FramedStream};
+        use iroh::SecretKey;
+        use tokio_util::codec::Framed;
+
+        let mut s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Initiator, "addr-A".to_owned());
+        s.upgrade.step(Event::Start);
+        s.upgrade.step(Event::AnswerReceived {
+            accepted: true,
+            endpoint_addr: "addr-B",
+            reason: "",
+        });
+        assert_eq!(s.state(), &State::Connecting);
+
+        // 拨号完成 -> [Install, Send(Commit), CommitSent]
+        let (a, _b) = tokio::io::duplex(4096);
+        let framed = FramedStream(
+            Framed::new(DynTcpStream(Box::new(a)), BytesCodec::new()),
             "127.0.0.1:0".parse().unwrap(),
             None,
             0,
         );
-        assert!(s.take_ready(&fake).is_none(), "未武装时不得换流");
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(Ok((framed, SecretKey::generate().public()))).ok();
+        s.dial_rx = Some(rx);
+        assert!(s.poll_dial().await.unwrap());
+        let _ = s.drain_orders();
+
+        // 收到 CommitAck -> 必须产出换流指令
+        let orders = s
+            .handle(&IncomingUpgrade::CommitAck)
+            .await
+            .expect("处理 CommitAck 失败");
+        assert_eq!(s.state(), &State::Switched, "应当进入 Switched");
+        assert_eq!(
+            orders.len(),
+            1,
+            "收到 CommitAck 必须产出恰好一条换流指令，实际 {:?}", orders
+        );
+        assert!(
+            matches!(orders[0], Order::CommitAckReceived),
+            "换流指令应当是 CommitAckReceived，实际 {:?}",
+            orders[0]
+        );
+    }
+
+    /// 响应方的换流入口是「CommitAck 已发出」，不能是 CommitAckReceived。
+    /// （响应方根本没有收到过 CommitAck。）
+    #[tokio::test]
+    async fn responder_switches_on_ack_sent_not_received() {
+        use crate::bytes_codec::BytesCodec;
+        use crate::tcp::{DynTcpStream, FramedStream};
+        use tokio_util::codec::Framed;
+
+        let mut s = UpgradeSession::new(Role::Responder, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Responder, "addr-B".to_owned());
+        s.upgrade.step(Event::OfferReceived {
+            endpoint_addr: "addr-A",
+            version: UPGRADE_PROTOCOL_VERSION,
+        });
+        let (a, _b) = tokio::io::duplex(4096);
+        let framed = FramedStream(
+            Framed::new(DynTcpStream(Box::new(a)), BytesCodec::new()),
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            0,
+        );
+        s.ready = Some(framed);
+        s.emit_install_if_ready();
+        s.upgrade.step(Event::IrohConnected);
+        assert_eq!(s.state(), &State::AwaitingCommit);
+        let _ = s.drain_orders();
+
+        let orders = s
+            .handle(&IncomingUpgrade::Commit)
+            .await
+            .expect("处理 Commit 失败");
+        assert_eq!(s.state(), &State::Switched);
+        assert!(
+            orders.iter().any(|o| matches!(o, Order::CommitAckSent)),
+            "响应方必须产出 CommitAckSent，实际 {:?}", orders
+        );
+        assert!(
+            !orders.iter().any(|o| matches!(o, Order::CommitAckReceived)),
+            "响应方不该产出 CommitAckReceived（它没收到过 CommitAck），实际 {:?}", orders
+        );
     }
 
     /// 终态之后必须**主动关掉**定时分支，否则每个长连接恒定 10Hz 空转。

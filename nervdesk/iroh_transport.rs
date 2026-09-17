@@ -40,9 +40,6 @@ use crate::bytes_codec::BytesCodec;
 use crate::tcp::{DynTcpStream, FramedStream};
 use crate::ResultType;
 use anyhow::anyhow;
-// `Bytes` 只在测试里用到（用 super::* 带进测试模块），
-// 不加 cfg 会在正常编译时产生 unused_imports 告警。
-#[cfg(test)]
 use bytes::Bytes;
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey, TransportAddr, endpoint::presets};
@@ -351,8 +348,29 @@ pub async fn connect_from(
         .open_bi()
         .await
         .map_err(|e| anyhow!("iroh open_bi 失败: {e}"))?;
-    Ok((framed_stream_from_iroh(send, recv), actual))
+    let mut framed = framed_stream_from_iroh(send, recv);
+
+    // ⚠️ iroh 1.x 的语义与 quinn 不同：`accept_bi()` **要等对端真的发了数据**
+    // 才会返回（见 iroh-1.2.0/src/lib.rs:155）。
+    //
+    // 我们这边拨号成功之后并不会立刻发应用数据 —— 要等 CommitAck 之后
+    // 过渡层才真正切过去。于是对端会永远卡在 accept_bi() 里，
+    // 而那里是在它的事件循环里被 await 的，整条连接就此僵死。
+    //
+    // 所以这里开好流就立刻发一个**空帧**预热；对端在 accept 路径里把它吃掉。
+    // 走分帧层（而不是裸写一个字节）是为了不破坏 RustDesk 的帧格式。
+    framed
+        .send_bytes(Bytes::new())
+        .await
+        .map_err(|e| anyhow!("iroh 通道预热失败: {e}"))?;
+    Ok((framed, actual))
 }
+
+/// 等对端「预热帧」的上限。
+///
+/// `accept_bi()` 返回时预热帧其实已经在缓冲区里了，正常情况是 0 等待；
+/// 给个上限纯粹是为了**绝不阻塞连接层的事件循环**。
+const PRIME_FRAME_TIMEOUT_MS: u64 = 1_000;
 
 /// 接受一条对端发起的 iroh 连接。
 ///
@@ -391,7 +409,18 @@ async fn accept_incoming(
         .accept_bi()
         .await
         .map_err(|e| anyhow!("iroh accept_bi 失败: {e}"))?;
-    Ok((framed_stream_from_iroh(send, recv), peer_id))
+    let mut framed = framed_stream_from_iroh(send, recv);
+
+    // 吃掉对端在 open_bi 之后立刻发来的空帧（原因见 [`connect_from`]）。
+    // **必须限时**：这段代码是在连接层的事件循环里被 await 的，
+    // 一旦无限等下去，整个会话（视频/输入/超时）都会跟着僵死。
+    match framed.next_timeout(PRIME_FRAME_TIMEOUT_MS).await {
+        Some(Ok(b)) if b.is_empty() => {}
+        other => {
+            return Err(anyhow!("iroh 通道预热帧异常（期望空帧）: {other:?}"));
+        }
+    }
+    Ok((framed, peer_id))
 }
 
 /// 持续接受 iroh 连接，把每条连接交给 `handler`。

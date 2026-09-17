@@ -135,6 +135,34 @@ impl TransitionStream {
 
     /// 发起方：收到了 CommitAck。可以切到新通道并冲刷暂存数据。
     pub fn on_commit_ack_received(&mut self) {
+        self.switch_to_new();
+    }
+
+    /// **切换的唯一入口**：把加密状态从老流**搬**到新流，然后改相位。
+    ///
+    /// 为什么必须是"搬"而不是"拷"：
+    /// `FramedStream` 的加密状态是 `(key, 发送计数, 接收计数)`，那两个计数
+    /// 就是 secretbox 的 nonce 序号。如果新老两条流**同时**持有同一份状态，
+    /// 它们就会用同一组 `(key, nonce)` 加密两份不同的明文 —— 在
+    /// XSalsa20-Poly1305 下这同时破坏机密性与完整性。
+    ///
+    /// 也不能"不搬"：新流的 `Encrypt` 是 `None`，直接切过去等于
+    /// RustDesk 这一层的内嵌加密被静默关掉（只剩 QUIC 的 TLS），
+    /// 而 `is_secured()` 还会继续报告 true —— 账实不符。
+    ///
+    /// 时序上两端是对齐的：Commit / CommitAck 本身走老通道（有序），
+    /// 天然充当同步点。切换那一刻两端的计数都是"老通道已交互的条数"，
+    /// 因此搬到新流后计数器可以直接接着用，不会跳号也不会重号。
+    ///
+    /// 重复调用是安全的：已经切过就直接返回，否则第二次 `take()`
+    /// 会把新流的加密状态又清成 `None`。
+    fn switch_to_new(&mut self) {
+        if self.phase == Phase::UsingNew {
+            return;
+        }
+        if let crate::stream::Stream::Tcp(old) = &mut self.old {
+            self.new.2 = old.2.take();
+        }
         self.phase = Phase::UsingNew;
     }
 
@@ -143,7 +171,7 @@ impl TransitionStream {
     /// 响应方没有提交窗口：CommitAck 是它往老通道写的最后一条，
     /// 之后直接切到新通道（发起方在 Commit 之后也不会再写老通道）。
     pub fn on_commit_ack_sent(&mut self) {
-        self.phase = Phase::UsingNew;
+        self.switch_to_new();
     }
 
     /// 升级失败：把暂存数据倒回老通道，恢复原状。
@@ -229,9 +257,22 @@ impl TransitionStream {
         self.new.set_send_timeout(ms);
     }
 
-    /// 是否已启用加密（沿用老通道的状态）。
+    /// 是否已启用加密。
+    ///
+    /// 必须看**当前生效**的那条通道：切换那一刻加密状态会从老流**搬**到新流
+    /// （见 [`Self::switch_to_new`]），此后若还去问老流，就会谎报"未加密"。
     pub fn is_secured(&self) -> bool {
-        self.old.is_secured()
+        match self.phase {
+            Phase::UsingNew => self.new.is_secured(),
+            _ => self.old.is_secured(),
+        }
+    }
+
+    /// 新通道当前的 `(发送计数, 接收计数)`；未切换时通常为 `None`。
+    ///
+    /// 给遥测与测试用：这是验证「加密状态真的搬过来了」的唯一窗口。
+    pub fn new_crypto_seq(&self) -> Option<(u64, u64)> {
+        self.new.crypto_seq()
     }
 
     pub fn local_addr(&self) -> std::net::SocketAddr {
@@ -321,6 +362,56 @@ mod tests {
                 0,
             ),
         )
+    }
+
+    /// 切换的那一刻，加密状态必须从老流**搬**到新流。
+    ///
+    /// 两个方向都错的做法：
+    ///   * **不搬**：新流的 `Encrypt` 是 `None`，RustDesk 这层的内嵌加密
+    ///     被静默关掉（只剩 QUIC 的 TLS），而 `is_secured()` 还会报 true。
+    ///   * **拷**（新老同时持有）：两条流会用同一组 `(key, nonce)` 加密
+    ///     不同明文 —— XSalsa20-Poly1305 下同时破坏机密性与完整性。
+    ///
+    /// 所以这里同时钉死三件事：切换前新流不能有加密状态、切换后计数原样继承、
+    /// 重复切换不能把状态又清掉。
+    #[tokio::test]
+    async fn switch_moves_crypto_state_from_old_to_new() {
+        use crate::tcp::Encrypt;
+        use sodiumoxide::crypto::secretbox;
+
+        let (mut old_a, _old_b) = mk_stream();
+        let (new_a, _new_b) = mk_framed();
+
+        // 给"老流"装上加密状态，假装它已经用过这些 nonce
+        if let crate::stream::Stream::Tcp(f) = &mut old_a {
+            f.2 = Some(Encrypt(secretbox::Key([7u8; 32]), 41, 42));
+        }
+        assert!(old_a.is_secured(), "老流应当已加密");
+
+        let mut t = TransitionStream::new(old_a, new_a);
+        assert!(
+            t.new_crypto_seq().is_none(),
+            "切换之前新流不能持有加密状态（提前复制 = nonce 复用）"
+        );
+
+        t.on_commit_sent();
+        t.on_commit_ack_received(); // 发起方：收到 CommitAck -> 换流
+
+        assert_eq!(t.phase(), Phase::UsingNew);
+        assert_eq!(
+            t.new_crypto_seq(),
+            Some((41, 42)),
+            "加密状态（含 nonce 计数）必须原样继承到新流"
+        );
+        assert!(t.is_secured(), "换流之后仍应报告已加密");
+
+        // 重复调用不能把刚搬过来的状态又清成 None
+        t.on_commit_ack_received();
+        assert_eq!(
+            t.new_crypto_seq(),
+            Some((41, 42)),
+            "重复切换不该清空加密状态"
+        );
     }
 
     /// 切换前：读写都走老通道。
