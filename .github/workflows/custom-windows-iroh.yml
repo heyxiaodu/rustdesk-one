@@ -433,6 +433,31 @@ jobs:
           cargo fetch
           echo "Cargo.lock 中 iroh 相关条目数: $(grep -c '^name = "iroh' Cargo.lock)"
 
+      # ======================================================================
+      # 端到端验证 iroh 传输本身（真实连接，不是假流）
+      # ----------------------------------------------------------------------
+      # 这个测试建立两个**真实的 iroh endpoint**，互相投递真实的 protobuf 字节，
+      # 跑完 Offer → Answer → 拨号 → Commit → CommitAck → 换流，
+      # 最后确认数据真的从 QUIC 通道过去了。
+      #
+      # 为什么放在主构建**之前**：它一上线就挖出过一个会让整条连接僵死的缺陷
+      # （iroh 的 accept_bi() 要等对端真的发了数据才返回，而我们拨号后
+      # 要等 CommitAck 才发数据 → 死锁）。传输层有问题就该在这里立刻失败，
+      # 不必先花 40 分钟编 Flutter 再发现。
+      #
+      # 注意：它跑的是 loopback 直连，**不经过 hbbs 信令、也没有真实网络路径**，
+      # 所以它不能替代两台真机的实测 —— 但它能证明"协议逻辑 + iroh 连接"
+      # 这一整段是通的。
+      # ======================================================================
+      - name: Run iroh transport end-to-end test
+        shell: bash
+        run: |
+          mkdir -p libs/hbb_common/tests
+          cp nervdesk/iroh_upgrade_e2e.rs libs/hbb_common/tests/
+          # 单线程跑：每个用例都要绑本地端口建 endpoint，串行更稳
+          cargo test --locked -p hbb_common --features iroh-transport \
+            --test iroh_upgrade_e2e -- --test-threads=1
+
       - name: Build rustdesk
         run: |
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram --iroh
