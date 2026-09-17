@@ -36,6 +36,37 @@ use crate::ResultType;
 use bytes::{Bytes, BytesMut};
 use std::collections::VecDeque;
 
+/// 提交窗口内暂存下来的一条待发数据。
+///
+/// # 为什么必须区分明文和已分帧字节
+///
+/// `send_raw` 走的是**未加密的明文**：加密发生在底层 `FramedStream` 上，
+/// 用的是那条流自己的 nonce 计数器。
+/// 如果在提交窗口内先把明文加密成密文再暂存，那么这些密文用的是**老流**的计数器；
+/// 等切到新流再发出去时，新流的计数器已经被 `adopt_crypto_from` 继承过了，
+/// 双方对"第几个包"的理解就会错位。
+///
+/// 所以提交窗口内必须暂存**明文**，等确定走哪条通道之后再交给那条通道加密。
+///
+/// 而 `send_bytes` 是已经分帧/加密过的字节（例如中继转发路径），
+/// 只能在目标通道上原样发出，不能再加密一次。
+#[derive(Debug, Clone)]
+enum Pending {
+    /// 明文，由目标通道自行加密后发出
+    Plain(Vec<u8>),
+    /// 已分帧字节，原样发出
+    Raw(Bytes),
+}
+
+impl Pending {
+    fn len(&self) -> usize {
+        match self {
+            Pending::Plain(v) => v.len(),
+            Pending::Raw(b) => b.len(),
+        }
+    }
+}
+
 /// `TransitionStream` 当前处于哪个阶段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -64,7 +95,7 @@ pub struct TransitionStream {
     new: FramedStream,
     phase: Phase,
     /// 提交窗口内暂存的应用数据（等切到新通道后按序发出）
-    buffered: VecDeque<Bytes>,
+    buffered: VecDeque<Pending>,
     /// 统计：一共暂存过多少字节（便于诊断"卡了多久"）
     buffered_bytes: usize,
 }
@@ -128,9 +159,12 @@ impl TransitionStream {
         if self.phase != Phase::UsingOld {
             return Ok(());
         }
-        while let Some(b) = self.buffered.pop_front() {
-            self.buffered_bytes = self.buffered_bytes.saturating_sub(b.len());
-            self.old.send_bytes(b).await?;
+        while let Some(item) = self.buffered.pop_front() {
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(item.len());
+            match item {
+                Pending::Plain(v) => self.old.send_raw(v).await?,
+                Pending::Raw(b) => self.old.send_bytes(b).await?,
+            }
         }
         Ok(())
     }
@@ -140,27 +174,92 @@ impl TransitionStream {
         if self.phase != Phase::UsingNew {
             return Ok(());
         }
-        while let Some(b) = self.buffered.pop_front() {
-            self.buffered_bytes = self.buffered_bytes.saturating_sub(b.len());
-            self.new.send_bytes(b).await?;
+        while let Some(item) = self.buffered.pop_front() {
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(item.len());
+            match item {
+                Pending::Plain(v) => self.new.send_raw(v).await?,
+                Pending::Raw(b) => self.new.send_bytes(b).await?,
+            }
         }
         Ok(())
     }
 
-    /// 发送应用数据。
-    ///
-    /// * `UsingOld`：直接走老通道
-    /// * `CommitWindow`：**暂存**（不能走老通道，否则对端读不到）
-    /// * `UsingNew`：直接走新通道
+    /// 发送**已分帧**字节（如中继转发路径）。
     pub async fn send_bytes(&mut self, bytes: Bytes) -> ResultType<()> {
         match self.phase {
             Phase::UsingOld => self.old.send_bytes(bytes).await,
             Phase::UsingNew => self.new.send_bytes(bytes).await,
             Phase::CommitWindow => {
                 self.buffered_bytes += bytes.len();
-                self.buffered.push_back(bytes);
+                self.buffered.push_back(Pending::Raw(bytes));
                 Ok(())
             }
+        }
+    }
+
+    /// 发送**明文**（业务数据，由目标通道负责加密）。
+    ///
+    /// 提交窗口内暂存的是明文而不是密文，原因见 [`Pending`] 的说明。
+    pub async fn send_raw(&mut self, msg: Vec<u8>) -> ResultType<()> {
+        match self.phase {
+            Phase::UsingOld => self.old.send_raw(msg).await,
+            Phase::UsingNew => self.new.send_raw(msg).await,
+            Phase::CommitWindow => {
+                self.buffered_bytes += msg.len();
+                self.buffered.push_back(Pending::Plain(msg));
+                Ok(())
+            }
+        }
+    }
+
+    /// 发送 protobuf 消息（等价于 `Stream::send`）。
+    pub async fn send(&mut self, msg: &impl protobuf::Message) -> ResultType<()> {
+        self.send_raw(msg.write_to_bytes()?).await
+    }
+
+    /// 把 raw 模式同时应用到两条通道（端口转发场景会用到）。
+    pub fn set_raw(&mut self) {
+        self.old.set_raw();
+        self.new.set_raw();
+    }
+
+    /// 把发送超时同时应用到两条通道。
+    pub fn set_send_timeout(&mut self, ms: u64) {
+        self.old.set_send_timeout(ms);
+        self.new.set_send_timeout(ms);
+    }
+
+    /// 是否已启用加密（沿用老通道的状态）。
+    pub fn is_secured(&self) -> bool {
+        self.old.is_secured()
+    }
+
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        self.old.local_addr()
+    }
+
+    /// 兼容 `Stream::set_key`：切换过程中的密钥应设置在新通道上。
+    pub fn set_key(&mut self, key: sodiumoxide::crypto::secretbox::Key) {
+        self.old.set_key(key.clone());
+        self.new.set_key(key);
+    }
+
+    /// 取出新通道（用于迁移完成后把 `Stream::Transition` 收敛成普通流）。
+    ///
+    /// 只有在 `UsingNew` 阶段调用才安全；否则会把老通道上还没排空的数据丢掉。
+    pub fn into_new(self) -> FramedStream {
+        self.new
+    }
+
+    /// 带超时的读取（对应 `Stream::next_timeout`）。
+    pub async fn next_timeout(
+        &mut self,
+        ms: u64,
+    ) -> Option<Result<BytesMut, std::io::Error>> {
+        if let Ok(res) = crate::timeout(ms, self.next()).await {
+            res
+        } else {
+            None
         }
     }
 
@@ -324,6 +423,47 @@ mod tests {
         assert_eq!(&got[..], b"buf-1");
         let got = old_b.next().await.unwrap().unwrap();
         assert_eq!(&got[..], b"buf-2");
+    }
+
+    /// 核心语义验证：提交窗口内暂存的**明文**，切换后必须由新通道加密发出，
+    /// 且双方 nonce 计数器要对齐（否则对端解不开）。
+    ///
+    /// 这正是"暂存明文而不是先加密再暂存"这个设计选择要保证的性质。
+    #[tokio::test]
+    async fn buffered_plaintext_is_encrypted_by_the_new_channel() {
+        use sodiumoxide::crypto::secretbox;
+        let key = secretbox::gen_key();
+
+        // 老通道：双方设同一把钥匙，并收发一条以推进 nonce 计数器
+        let (mut old_a, mut old_b) = mk_stream();
+        old_a.set_key(key.clone());
+        old_b.set_key(key.clone());
+        old_a.send_raw(b"before".to_vec()).await.unwrap();
+        assert_eq!(&old_b.next().await.unwrap().unwrap()[..], b"before");
+
+        // 新通道：从老通道继承加密状态
+        let (mut new_a, mut new_b) = mk_framed();
+        match &old_a {
+            crate::stream::Stream::Tcp(f) => new_a.adopt_crypto_from(f),
+            _ => panic!("测试里只造 Tcp 流"),
+        }
+        match &old_b {
+            crate::stream::Stream::Tcp(f) => new_b.adopt_crypto_from(f),
+            _ => panic!("测试里只造 Tcp 流"),
+        }
+
+        let mut trans = TransitionStream::new(old_a, new_a);
+        trans.on_commit_sent();
+        // 提交窗口内暂存明文
+        trans.send_raw(b"secret".to_vec()).await.unwrap();
+        assert_eq!(trans.buffered_len(), 1);
+
+        trans.on_commit_ack_received();
+        trans.flush_to_new().await.unwrap();
+
+        // 对端用继承过状态的新通道解密 —— 计数器对齐才可能成功
+        let got = new_b.next().await.unwrap().unwrap();
+        assert_eq!(&got[..], b"secret", "暂存的明文应由新通道加密且计数器对齐");
     }
 
     /// 阶段推进必须是单向的，不能被乱序调用搞坏。

@@ -143,6 +143,16 @@ jobs:
 
           # 1) 新增两个模块：iroh 传输 + 传输切换时的加密状态迁移
           mods = ["iroh_transport.rs", "crypto_handoff.rs", "iroh_upgrade.rs", "iroh_upgrade_session.rs", "iroh_transition.rs"]
+
+          # stream.rs 是"替换已有文件"，不是新增。
+          # 加一道哈希守卫：万一上游改了这个文件，宁可响亮失败也不要静默覆盖。
+          expected_sha = "bb541d243e0c7b8c22c82ff0acfd6e2fa0ed792acb57427a1d10852e46392d11"
+          p_stream = pathlib.Path("libs/hbb_common/src/stream.rs")
+          import hashlib
+          actual = hashlib.sha256(p_stream.read_bytes()).hexdigest()
+          if actual != expected_sha:
+              die("libs/hbb_common/src/stream.rs 与预期版本不一致（上游可能改过），拒绝覆盖")
+          shutil.copyfile("nervdesk/stream.rs", p_stream)
           dst_dir = pathlib.Path("libs/hbb_common/src")
           if not dst_dir.is_dir(): die("子模块 libs/hbb_common 没拉下来")
           for name in mods:
