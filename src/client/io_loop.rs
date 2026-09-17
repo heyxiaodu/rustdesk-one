@@ -83,6 +83,9 @@ pub struct Remote<T: InvokeUiSession> {
     chroma: Arc<RwLock<Option<Chroma>>>,
     last_record_state: bool,
     sent_close_reason: bool,
+    /// iroh 传输升级会话（NervDesk 扩展，默认关闭）
+    #[cfg(feature = "iroh-transport")]
+    iroh_upgrade: Option<hbb_common::iroh_upgrade_session::UpgradeSession>,
 }
 
 #[derive(Default)]
@@ -132,6 +135,8 @@ impl<T: InvokeUiSession> Remote<T> {
             chroma: Default::default(),
             last_record_state: false,
             sent_close_reason: false,
+            #[cfg(feature = "iroh-transport")]
+            iroh_upgrade: None,
         }
     }
 
@@ -237,8 +242,16 @@ impl<T: InvokeUiSession> Remote<T> {
                 let _keep_it = client::hc_connection(feedback, rendezvous_server, token).await;
                 let mut last_recv_time = Instant::now();
 
+                #[cfg(feature = "iroh-transport")]
+                self.start_iroh_upgrade(&mut peer).await;
+
                 loop {
                     tokio::select! {
+                        // 升级会话需要定时驱动（拨号结果、进来的 iroh 连接、超时）
+                        #[cfg(feature = "iroh-transport")]
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                            self.drive_iroh_upgrade(&mut peer).await;
+                        }
                         res = peer.next() => {
                             if let Some(res) = res {
                                 match res {
@@ -253,6 +266,10 @@ impl<T: InvokeUiSession> Remote<T> {
                                             self.handler.update_received(true);
                                         }
                                         self.data_count.fetch_add(bytes.len(), Ordering::Relaxed);
+                                        #[cfg(feature = "iroh-transport")]
+                                        if self.handle_iroh_upgrade_msg(bytes, &mut peer).await {
+                                            continue;
+                                        }
                                         if !self.handle_msg_from_peer(bytes, &mut peer).await {
                                             break
                                         }
@@ -1315,6 +1332,155 @@ impl<T: InvokeUiSession> Remote<T> {
                 .on_error("Remote terminal is not supported by the remote side");
         }
         return false;
+    }
+
+    /// 发起方：尝试启动 iroh 传输升级。
+    ///
+    /// 只有显式把选项 `enable-iroh-upgrade` 设为 `Y` 才启用，
+    /// 默认关闭，不影响不用这个功能的用户。
+    #[cfg(feature = "iroh-transport")]
+    async fn start_iroh_upgrade(&mut self, peer: &mut hbb_common::stream::Stream) {
+        use hbb_common::iroh_upgrade::{is_enabled, Role};
+        use hbb_common::iroh_upgrade_session::UpgradeSession;
+
+        if self.iroh_upgrade.is_some() || !is_enabled() {
+            return;
+        }
+        let mut session = UpgradeSession::new(
+            Role::Initiator,
+            hbb_common::iroh_transport::IrohConfig::default(),
+        );
+        match session.start().await {
+            Ok(orders) => {
+                self.iroh_upgrade = Some(session);
+                log::info!("iroh 升级会话已创建（发起方）");
+                self.run_iroh_orders(peer, orders).await;
+            }
+            Err(e) => log::warn!("启动 iroh 升级失败: {e}"),
+        }
+    }
+
+    /// 这条消息是不是 iroh 升级消息？是则消费掉并返回 `true`。
+    #[cfg(feature = "iroh-transport")]
+    async fn handle_iroh_upgrade_msg(
+        &mut self,
+        bytes: &[u8],
+        peer: &mut hbb_common::stream::Stream,
+    ) -> bool {
+        use hbb_common::iroh_upgrade::is_enabled;
+        use hbb_common::iroh_upgrade_session::IncomingUpgrade;
+        use hbb_common::protobuf::Message as _;
+
+        if !is_enabled() {
+            return false;
+        }
+        let Ok(msg) = hbb_common::message_proto::Message::parse_from_bytes(bytes) else {
+            return false;
+        };
+        let incoming = msg.union.as_ref().and_then(IncomingUpgrade::from_union);
+        let Some(incoming) = incoming else {
+            // 不是升级消息：顺手驱动一次会话
+            self.drive_iroh_upgrade(peer).await;
+            return false;
+        };
+        let orders = match self.iroh_upgrade.as_mut() {
+            Some(session) => match session.handle(&incoming).await {
+                Ok(o) => o,
+                Err(e) => {
+                    log::warn!("iroh 升级处理失败: {e}");
+                    return true;
+                }
+            },
+            // 没开会话却收到升级消息：静默忽略（对端开了、本端没开）
+            None => return true,
+        };
+        self.run_iroh_orders(peer, orders).await;
+        true
+    }
+
+    /// 驱动一次会话（拨号结果 / 进来的连接 / 超时）。
+    #[cfg(feature = "iroh-transport")]
+    async fn drive_iroh_upgrade(&mut self, peer: &mut hbb_common::stream::Stream) {
+        let orders = match self.iroh_upgrade.as_mut() {
+            Some(session) => {
+                if let Err(e) = session.poll_dial().await {
+                    log::warn!("iroh 拨号轮询失败: {e}");
+                }
+                if let Err(e) = session.poll_accept().await {
+                    log::warn!("iroh accept 轮询失败: {e}");
+                }
+                session.drain_orders()
+            }
+            None => return,
+        };
+        if !orders.is_empty() {
+            self.run_iroh_orders(peer, orders).await;
+        }
+    }
+
+    /// 按序执行会话给出的指令（顺序由会话保证，不要自行调整）。
+    #[cfg(feature = "iroh-transport")]
+    async fn run_iroh_orders(
+        &mut self,
+        peer: &mut hbb_common::stream::Stream,
+        orders: Vec<hbb_common::iroh_upgrade_session::Order>,
+    ) {
+        use hbb_common::iroh_upgrade_session::Order;
+        use hbb_common::iroh_transition::TransitionStream;
+        use hbb_common::stream::Stream;
+
+        for order in orders {
+            match order {
+                Order::Send(m) => {
+                    if let Err(e) = peer.send(&m).await {
+                        log::warn!("发送 iroh 升级消息失败: {e}");
+                    }
+                }
+                Order::Install(new_framed) => {
+                    // 加密状态迁移只对 TCP 通道成立（见 crypto_handoff 模块）
+                    if !matches!(peer, Stream::Tcp(_)) {
+                        log::warn!("当前通道不是 TCP，放弃 iroh 升级");
+                        continue;
+                    }
+                    let old = std::mem::replace(peer, Stream::Empty);
+                    *peer = Stream::Transition(Box::new(TransitionStream::new(old, new_framed)));
+                    log::info!("iroh 过渡层已安装，等待提交窗口");
+                }
+                Order::CommitSent => {
+                    if let Stream::Transition(tr) = peer {
+                        tr.on_commit_sent();
+                    }
+                }
+                Order::CommitAckSent => {
+                    if let Stream::Transition(tr) = peer {
+                        tr.on_commit_ack_sent();
+                        if let Err(e) = tr.flush_to_new().await {
+                            log::warn!("暂存数据冲刷到新通道失败: {e}");
+                        }
+                    }
+                }
+                Order::CommitAckReceived => {
+                    if let Stream::Transition(tr) = peer {
+                        tr.on_commit_ack_received();
+                        if let Err(e) = tr.flush_to_new().await {
+                            log::warn!("暂存数据冲刷到新通道失败: {e}");
+                        }
+                    }
+                }
+                Order::Abort => {
+                    if let Stream::Transition(tr) = peer {
+                        tr.abort();
+                        if let Err(e) = tr.flush_to_old().await {
+                            log::warn!("暂存数据回滚到老通道失败: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // 迁移完成后收敛成普通流，稳态不再经过 Transition 变体
+        let cur = std::mem::replace(peer, Stream::Empty);
+        *peer = cur.collapse_transition();
     }
 
     async fn handle_msg_from_peer(&mut self, data: &[u8], peer: &mut Stream) -> bool {

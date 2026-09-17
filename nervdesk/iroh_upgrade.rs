@@ -47,6 +47,17 @@
 use crate::ResultType;
 use anyhow::anyhow;
 
+/// 是否启用了 iroh 传输升级。
+///
+/// 默认**关闭**：把选项 `enable-iroh-upgrade` 设为 `Y` 才启用。
+/// 客户端与服务端共用这一个判断，避免两边不一致。
+pub fn is_enabled() -> bool {
+    crate::config::option2bool(
+        "enable-iroh-upgrade",
+        &crate::config::Config::get_option("enable-iroh-upgrade"),
+    )
+}
+
 /// 升级协议版本。不兼容变更时递增，用于干净地拒绝。
 pub const UPGRADE_PROTOCOL_VERSION: u32 = 1;
 

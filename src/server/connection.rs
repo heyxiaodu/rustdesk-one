@@ -2508,18 +2508,6 @@ impl Connection {
         }
     }
 
-    /// 是否启用了 iroh 传输升级。
-    ///
-    /// 默认**关闭**：只有显式把选项 `enable-iroh-upgrade` 设为 `Y` 才启用，
-    /// 避免影响不用这个功能的用户。
-    #[cfg(feature = "iroh-transport")]
-    fn iroh_upgrade_enabled() -> bool {
-        hbb_common::config::option2bool(
-            "enable-iroh-upgrade",
-            &hbb_common::config::Config::get_option("enable-iroh-upgrade"),
-        )
-    }
-
     /// 处理 iroh 升级：识别升级消息并驱动会话。
     ///
     /// 返回 `true` 表示这条消息已被升级流程消费，调用方不应再走原有逻辑。
@@ -2536,7 +2524,7 @@ impl Connection {
             self.drive_iroh_upgrade().await;
             return false;
         }
-        if !Self::iroh_upgrade_enabled() {
+        if !hbb_common::iroh_upgrade::is_enabled() {
             log::debug!("收到 iroh 升级消息，但 enable-iroh-upgrade 未开启，忽略");
             return true;
         }
