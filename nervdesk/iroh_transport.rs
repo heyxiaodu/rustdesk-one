@@ -183,6 +183,14 @@ pub async fn init_endpoint(config: IrohConfig) -> ResultType<Endpoint> {
     Ok(endpoint.clone())
 }
 
+/// 用配置直接新建一个 endpoint（不走单例）。
+///
+/// 供升级会话使用：它需要自己持有 endpoint 生命周期，
+/// 而不是依赖全局单例。
+pub async fn new_endpoint_from_config(config: IrohConfig) -> ResultType<Endpoint> {
+    build_endpoint(config).await
+}
+
 async fn build_endpoint(config: IrohConfig) -> ResultType<Endpoint> {
     let bind: SocketAddr = config
         .bind_addr

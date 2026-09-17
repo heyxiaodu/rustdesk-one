@@ -142,7 +142,7 @@ jobs:
               return text.replace(old, new)
 
           # 1) 新增两个模块：iroh 传输 + 传输切换时的加密状态迁移
-          mods = ["iroh_transport.rs", "crypto_handoff.rs", "iroh_upgrade.rs"]
+          mods = ["iroh_transport.rs", "crypto_handoff.rs", "iroh_upgrade.rs", "iroh_upgrade_session.rs"]
           dst_dir = pathlib.Path("libs/hbb_common/src")
           if not dst_dir.is_dir(): die("子模块 libs/hbb_common 没拉下来")
           for name in mods:
@@ -174,7 +174,8 @@ jobs:
                      "pub mod udp;\n"
                      "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n"
                      "#[cfg(feature = \"iroh-transport\")]\npub mod crypto_handoff;\n"
-                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade;\n", p)
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade_session;\n", p)
           write_text(p, t, crlf)
 
           # 4) build.py（与 patches/iroh-p1-code.patch 里的改动完全一致）
@@ -230,6 +231,8 @@ jobs:
           assert pathlib.Path("libs/hbb_common/src/crypto_handoff.rs").is_file(), "crypto_handoff.rs 缺失"
           assert "pub mod crypto_handoff;" in lib, "crypto_handoff 模块未注册"
           assert "pub mod iroh_upgrade;" in lib, "iroh_upgrade 模块未注册"
+          assert "pub mod iroh_upgrade_session;" in lib, "iroh_upgrade_session 模块未注册"
+          assert pathlib.Path("libs/hbb_common/src/iroh_upgrade_session.rs").is_file(), "iroh_upgrade_session.rs 缺失"
           proto = pathlib.Path("libs/hbb_common/protos/message.proto").read_text(encoding="utf-8")
           assert "IrohUpgradeOffer iroh_upgrade_offer = 33;" in proto, "proto union 字段未写入"
           assert "message IrohUpgradeCommitAck {}" in proto, "proto 消息未写入"
