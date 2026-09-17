@@ -141,12 +141,14 @@ jobs:
               if n != 1: die("%s: 锚点匹配 %d 处，期望 1 处" % (label, n))
               return text.replace(old, new)
 
-          # 1) 新增 iroh 传输模块
-          src = pathlib.Path("nervdesk/iroh_transport.rs")
-          dst = pathlib.Path("libs/hbb_common/src/iroh_transport.rs")
-          if not src.is_file(): die("缺少 nervdesk/iroh_transport.rs")
-          if not dst.parent.is_dir(): die("子模块 libs/hbb_common 没拉下来")
-          shutil.copyfile(src, dst)
+          # 1) 新增两个模块：iroh 传输 + 传输切换时的加密状态迁移
+          mods = ["iroh_transport.rs", "crypto_handoff.rs"]
+          dst_dir = pathlib.Path("libs/hbb_common/src")
+          if not dst_dir.is_dir(): die("子模块 libs/hbb_common 没拉下来")
+          for name in mods:
+              src = pathlib.Path("nervdesk") / name
+              if not src.is_file(): die("缺少 nervdesk/%s" % name)
+              shutil.copyfile(src, dst_dir / name)
 
           # 2) libs/hbb_common/Cargo.toml
           p = "libs/hbb_common/Cargo.toml"
@@ -169,7 +171,9 @@ jobs:
           p = "libs/hbb_common/src/lib.rs"
           t, crlf = read_text(p)
           t = sub(t, "pub mod udp;\n",
-                     "pub mod udp;\n#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n", p)
+                     "pub mod udp;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod crypto_handoff;\n", p)
           write_text(p, t, crlf)
 
           # 4) build.py（与 patches/iroh-p1-code.patch 里的改动完全一致）
@@ -204,7 +208,9 @@ jobs:
           assert "pub mod iroh_transport;" in lib, "lib.rs 模块未注册"
           assert "'--iroh'" in bp, "build.py 开关未写入"
           assert "features.append('iroh-transport')" in bp, "build.py feature 未透传"
-          assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "模块文件缺失"
+          assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "iroh_transport.rs 缺失"
+          assert pathlib.Path("libs/hbb_common/src/crypto_handoff.rs").is_file(), "crypto_handoff.rs 缺失"
+          assert "pub mod crypto_handoff;" in lib, "crypto_handoff 模块未注册"
           root_cfg = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
           assert 'iroh-transport = ["hbb_common/iroh-transport"]' in root_cfg, "根包 feature 未转发"
           print("=" * 60)
