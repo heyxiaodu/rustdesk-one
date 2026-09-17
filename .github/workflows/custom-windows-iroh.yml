@@ -149,7 +149,11 @@ jobs:
           expected_sha = "bb541d243e0c7b8c22c82ff0acfd6e2fa0ed792acb57427a1d10852e46392d11"
           p_stream = pathlib.Path("libs/hbb_common/src/stream.rs")
           import hashlib
-          actual = hashlib.sha256(p_stream.read_bytes()).hexdigest()
+          # 必须先归一化行尾再比对：.gitattributes 是 `* text=auto`，
+          # Windows 上 checkout 出来是 CRLF，而仓库里存的是 LF。
+          raw = p_stream.read_bytes()
+          normalized = raw.replace(b"\r\n", b"\n")
+          actual = hashlib.sha256(normalized).hexdigest()
           if actual != expected_sha:
               die("libs/hbb_common/src/stream.rs 与预期版本不一致（上游可能改过），拒绝覆盖")
           shutil.copyfile("nervdesk/stream.rs", p_stream)
