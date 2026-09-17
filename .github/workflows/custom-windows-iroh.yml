@@ -142,7 +142,7 @@ jobs:
               return text.replace(old, new)
 
           # 1) 新增两个模块：iroh 传输 + 传输切换时的加密状态迁移
-          mods = ["iroh_transport.rs", "crypto_handoff.rs"]
+          mods = ["iroh_transport.rs", "crypto_handoff.rs", "iroh_upgrade.rs"]
           dst_dir = pathlib.Path("libs/hbb_common/src")
           if not dst_dir.is_dir(): die("子模块 libs/hbb_common 没拉下来")
           for name in mods:
@@ -173,7 +173,8 @@ jobs:
           t = sub(t, "pub mod udp;\n",
                      "pub mod udp;\n"
                      "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n"
-                     "#[cfg(feature = \"iroh-transport\")]\npub mod crypto_handoff;\n", p)
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod crypto_handoff;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade;\n", p)
           write_text(p, t, crlf)
 
           # 4) build.py（与 patches/iroh-p1-code.patch 里的改动完全一致）
@@ -199,6 +200,23 @@ jobs:
                      'default = ["use_dasp"]\niroh-transport = ["hbb_common/iroh-transport"]\n', p)
           write_text(p, t, crlf)
 
+          # 5) protos/message.proto：加 4 条升级消息 + 4 个 union 字段（33~36）
+          #    这些消息走客户端之间的端到端通道，hbbs/hbbr 不解析，
+          #    因此新增它们不需要改动服务器。
+          p = "libs/hbb_common/protos/message.proto"
+          t, crlf = read_text(p)
+          msgs = pathlib.Path("nervdesk/message_proto_iroh.txt").read_text(encoding="utf-8")
+          t = sub(t, "message Message {\n  oneof union {\n",
+                     msgs + "message Message {\n  oneof union {\n", p)
+          fields = ("    // NervDesk 扩展（33~36），见上面的说明\n"
+                    "    IrohUpgradeOffer iroh_upgrade_offer = 33;\n"
+                    "    IrohUpgradeAnswer iroh_upgrade_answer = 34;\n"
+                    "    IrohUpgradeCommit iroh_upgrade_commit = 35;\n"
+                    "    IrohUpgradeCommitAck iroh_upgrade_commit_ack = 36;\n")
+          t = sub(t, "    TerminalResponse terminal_response = 32;\n  }\n}\n",
+                     "    TerminalResponse terminal_response = 32;\n" + fields + "  }\n}\n", p)
+          write_text(p, t, crlf)
+
           # 立刻校验
           cfg = pathlib.Path("libs/hbb_common/Cargo.toml").read_text(encoding="utf-8")
           lib = pathlib.Path("libs/hbb_common/src/lib.rs").read_text(encoding="utf-8")
@@ -211,6 +229,11 @@ jobs:
           assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "iroh_transport.rs 缺失"
           assert pathlib.Path("libs/hbb_common/src/crypto_handoff.rs").is_file(), "crypto_handoff.rs 缺失"
           assert "pub mod crypto_handoff;" in lib, "crypto_handoff 模块未注册"
+          assert "pub mod iroh_upgrade;" in lib, "iroh_upgrade 模块未注册"
+          proto = pathlib.Path("libs/hbb_common/protos/message.proto").read_text(encoding="utf-8")
+          assert "IrohUpgradeOffer iroh_upgrade_offer = 33;" in proto, "proto union 字段未写入"
+          assert "message IrohUpgradeCommitAck {}" in proto, "proto 消息未写入"
+          assert pathlib.Path("libs/hbb_common/src/iroh_upgrade.rs").is_file(), "iroh_upgrade.rs 缺失"
           root_cfg = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
           assert 'iroh-transport = ["hbb_common/iroh-transport"]' in root_cfg, "根包 feature 未转发"
           print("=" * 60)

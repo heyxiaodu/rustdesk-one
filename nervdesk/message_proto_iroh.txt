@@ -1,0 +1,36 @@
+// ===========================================================================
+// iroh/QUIC 传输升级（NervDesk 扩展，不在上游 RustDesk 中）
+//
+// 这些消息走的是**客户端之间的端到端通道**（不是 rendezvous 通道），
+// hbbs/hbbr 只转发字节、不解析内容，所以新增它们**不需要改动服务器**，
+// 现有的 S6 镜像可以继续用。
+//
+// 标准 RustDesk 客户端收到未知字段会按 proto3 规则忽略，
+// 因此绝不会因为多发了这几条消息而出错；发起方只需处理「等不到应答」的超时。
+// ===========================================================================
+
+message IrohUpgradeOffer {
+  // iroh EndpointAddr 的 JSON 序列化形式。
+  //
+  // 刻意用 string 而不是结构化字段，是为了让本 proto 在
+  // **不开 iroh-transport feature 时也能编译**（不引入 iroh 依赖）。
+  string endpoint_addr = 1;
+  // 协议版本；不兼容变更时用于干净地拒绝
+  uint32 version = 2;
+}
+
+message IrohUpgradeAnswer {
+  bool accepted = 1;
+  // 接受时回带自己的 EndpointAddr，方便对端反向连接
+  string endpoint_addr = 2;
+  // 拒绝原因，仅用于日志
+  string reason = 3;
+}
+
+// 在**老通道**上发送，利用老通道的有序性做同步点：
+// 收到 Commit 之前老通道上的所有数据都已按序处理完毕。
+message IrohUpgradeCommit {}
+
+// 同样在**老通道**上发送。收到 Ack 后发起方才能切换。
+message IrohUpgradeCommitAck {}
+
