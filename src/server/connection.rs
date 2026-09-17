@@ -2525,7 +2525,8 @@ impl Connection {
     /// 返回 `true` 表示这条消息已被升级流程消费，调用方不应再走原有逻辑。
     #[cfg(feature = "iroh-transport")]
     async fn handle_iroh_upgrade(&mut self, msg: &Message) -> bool {
-        use hbb_common::iroh_upgrade_session::{IncomingUpgrade, Role, UpgradeSession};
+        use hbb_common::iroh_upgrade::Role;
+        use hbb_common::iroh_upgrade_session::{IncomingUpgrade, UpgradeSession};
 
         let incoming = msg.union.as_ref().and_then(IncomingUpgrade::from_union);
 
