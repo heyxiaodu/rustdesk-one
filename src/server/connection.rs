@@ -443,6 +443,22 @@ impl Subscriber for ConnInner {
     }
 }
 
+// iroh 升级会话的定时驱动间隔。
+//
+// **为什么用 cfg 常量而不是给 select! 分支加 #[cfg]：**
+// tokio 的 `select!` 宏语法里没有属性位（分支只能是
+// `<pattern> = <expr> (, if <cond>)? => <handler>`），
+// 在分支上写 `#[cfg(...)]` 会直接编译失败：
+//     error: no rules expected `#`
+// 所以这里把开关挪到「表达式」和「语句」两个合法位置上。
+//
+// 未编译该功能时给一个很长的间隔：这条分支实际上永远不会就绪，
+// 等价于不存在，不会有每秒 10 次的空唤醒。
+#[cfg(feature = "iroh-transport")]
+const IROH_TICK_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "iroh-transport"))]
+const IROH_TICK_INTERVAL: Duration = Duration::from_secs(3600);
+
 const TEST_DELAY_TIMEOUT: Duration = Duration::from_secs(1);
 const SEC30: Duration = Duration::from_secs(30);
 const H1: Duration = Duration::from_secs(3600);
@@ -930,6 +946,20 @@ impl Connection {
                         _ => {}
                     }
                 },
+                // iroh 升级会话必须**定时**驱动，不能只在收到消息时驱动：
+                // 被控端（响应方）的读方向可能长时间空闲（视频是它发出去的，
+                // 输入事件是突发的），那样 poll_accept 就永远不会被调用，
+                // iroh 连接建立后一直没人接受，升级会卡住。
+                // 注意：tokio 的 `select!` 不支持在分支上写 `#[cfg]`
+                // （会报 `no rules expected #`），开关只能放在下面这两处：
+                // 表达式里的 cfg 常量，以及分支体内的语句级 cfg。
+                _ = tokio::time::sleep(IROH_TICK_INTERVAL) => {
+                    #[cfg(feature = "iroh-transport")]
+                    // 终态之后就别再空转了（见 UpgradeSession::needs_tick）
+                    if conn.iroh_upgrade.as_ref().is_some_and(|s| s.needs_tick()) {
+                        conn.drive_iroh_upgrade().await;
+                    }
+                }
                 res = conn.stream.next() => {
                     if let Some(res) = res {
                         match res {

@@ -210,6 +210,19 @@ impl UpgradeSession {
         self.switch_armed
     }
 
+    /// 这个会话还需要被定时驱动吗？
+    ///
+    /// 连接层的主循环是 `select!`，升级会话靠一条 100ms 定时分支驱动。
+    /// 会话一旦进入终态（成功切换 / 被拒绝 / 失败回退），那条分支就再没有
+    /// 任何事可做 —— 如果不把它关掉，每个长连接都会永远以 10Hz 空转，
+    /// 阻止 CPU 进入深度空闲。所以 `select!` 的条件守卫应该用这个函数。
+    ///
+    /// 注意：只有「会话已经存在」时才需要判断，会话为 `None` 时
+    /// 根本不应该有定时分支（`Option::is_some_and` 天然满足这一点）。
+    pub fn needs_tick(&self) -> bool {
+        !self.upgrade.state().is_terminal()
+    }
+
     /// 取出已就绪的新流，并把老流的加密状态迁移过去。
     ///
     /// **调用方必须把返回的流替换掉原来的 `Connection.stream`。**
@@ -296,10 +309,10 @@ impl UpgradeSession {
             Some((stream, peer)) => {
                 self.ready = Some(stream);
                 self.peer_id = Some(peer);
+                // 同 poll_dial：先装过渡层，再推进状态机
+                self.emit_install_if_ready();
                 let actions = self.upgrade.step(Event::IrohConnected);
                 self.apply(actions).await;
-                // 连接已就绪：先把过渡层装好，再让上层发 Commit
-                self.emit_install_if_ready();
                 Ok(true)
             }
             None => Ok(false),
@@ -318,10 +331,12 @@ impl UpgradeSession {
                 self.ready = Some(stream);
                 self.peer_id = Some(peer);
                 self.dial_rx = None;
+                // 顺序关键：**先装过渡层，再推进状态机**。
+                // 状态机会产出 Send(Commit)，而 Commit 必须走过渡层出去，
+                // 否则提交窗口内的应用数据不会被暂存，会静默丢失。
+                self.emit_install_if_ready();
                 let actions = self.upgrade.step(Event::IrohConnected);
                 self.apply(actions).await;
-                // 连接已就绪：先把过渡层装好，再让上层发 Commit
-                self.emit_install_if_ready();
                 Ok(true)
             }
             Ok(Err(e)) => {
@@ -534,6 +549,113 @@ mod tests {
             0,
         );
         assert!(s.take_ready(&fake).is_none(), "未武装时不得换流");
+    }
+
+    /// 终态之后必须**主动关掉**定时分支，否则每个长连接恒定 10Hz 空转。
+    #[test]
+    fn needs_tick_stops_at_terminal() {
+        // 刚建好、还没 start：仍待驱动
+        let s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        assert!(s.needs_tick());
+
+        // 发起方：已发 Offer，等 Answer —— 要处理超时，仍需驱动
+        let mut s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Initiator, "addr-A".to_owned());
+        s.upgrade.step(Event::Start);
+        assert_eq!(s.state(), &State::OfferSent);
+        assert!(s.needs_tick(), "等 Answer 时仍需驱动（要处理超时）");
+
+        // 对端明确拒绝 -> 终态，定时分支必须关掉
+        s.upgrade.step(Event::AnswerReceived {
+            accepted: false,
+            endpoint_addr: "",
+            reason: "版本不兼容",
+        });
+        assert!(matches!(s.state(), State::Rejected(_)), "应进入 Rejected 终态");
+        assert!(!s.needs_tick(), "被拒绝后不应再空转");
+
+        // 响应方：建连失败回退 -> 终态
+        let mut s = UpgradeSession::new(Role::Responder, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Responder, "addr-A".to_owned());
+        s.upgrade.step(Event::OfferReceived {
+            endpoint_addr: "addr-B",
+            version: UPGRADE_PROTOCOL_VERSION,
+        });
+        assert_eq!(s.state(), &State::Connecting);
+        assert!(s.needs_tick(), "等 iroh 建连时仍需驱动");
+        s.upgrade.step(Event::IrohFailed("boom"));
+        assert!(matches!(s.state(), State::Failed(_)), "应进入 Failed 终态");
+        assert!(!s.needs_tick(), "建连失败回退后不应再空转");
+
+        // 成功切到 iroh -> 终态（这正是 10Hz 空转的修复点）
+        let mut s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Initiator, "addr-A".to_owned());
+        s.upgrade.step(Event::Start);
+        s.upgrade.step(Event::AnswerReceived {
+            accepted: true,
+            endpoint_addr: "addr-B",
+            reason: "",
+        });
+        s.upgrade.step(Event::IrohConnected);
+        assert_eq!(s.state(), &State::CommitSent);
+        assert!(s.needs_tick(), "等 CommitAck 时仍需驱动");
+        s.upgrade.step(Event::CommitAckReceived);
+        assert!(s.state().is_switched());
+        assert!(!s.needs_tick(), "切换完成后不应再空转");
+    }
+
+    /// **把指令顺序钉死**：发起方在 iroh 连接就绪后，
+    /// 必须先是 `Install`（装过渡层），再 `Send(Commit)`，最后 `CommitSent`。
+    ///
+    /// 顺序写反的后果：Commit 走老通道而过渡层还没装，
+    /// 提交窗口内的应用数据不会被暂存 —— 静默丢失。
+    #[tokio::test]
+    async fn install_must_come_before_commit() {
+        use crate::bytes_codec::BytesCodec;
+        use crate::tcp::{DynTcpStream, FramedStream};
+        use iroh::SecretKey;
+        use tokio_util::codec::Framed;
+
+        let mut s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
+        s.upgrade = Upgrade::new(Role::Initiator, "addr-A".to_owned());
+        s.upgrade.step(Event::Start);
+        s.upgrade.step(Event::AnswerReceived {
+            accepted: true,
+            endpoint_addr: "addr-B",
+            reason: "",
+        });
+        assert_eq!(s.state(), &State::Connecting);
+
+        // 直接往拨号通道塞一个成功结果，模拟拨号完成
+        let (a, _b) = tokio::io::duplex(4096);
+        let framed = FramedStream(
+            Framed::new(DynTcpStream(Box::new(a)), BytesCodec::new()),
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            0,
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(Ok((framed, SecretKey::generate().public()))).ok();
+        s.dial_rx = Some(rx);
+
+        assert!(s.poll_dial().await.unwrap());
+        let orders = s.drain_orders();
+        let labels: Vec<&str> = orders
+            .iter()
+            .map(|o| match o {
+                Order::Install(_) => "Install",
+                Order::Send(_) => "Send",
+                Order::CommitSent => "CommitSent",
+                Order::CommitAckReceived => "CommitAckReceived",
+                Order::CommitAckSent => "CommitAckSent",
+                Order::Abort => "Abort",
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["Install", "Send", "CommitSent"],
+            "必须先安装过渡层，再发 Commit（顺序反了会静默丢数据）"
+        );
     }
 
     /// 只有响应方、且处于 Connecting 阶段才需要轮询接受连接；

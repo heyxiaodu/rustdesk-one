@@ -40,6 +40,9 @@ use crate::bytes_codec::BytesCodec;
 use crate::tcp::{DynTcpStream, FramedStream};
 use crate::ResultType;
 use anyhow::anyhow;
+// `Bytes` 只在测试里用到（用 super::* 带进测试模块），
+// 不加 cfg 会在正常编译时产生 unused_imports 告警。
+#[cfg(test)]
 use bytes::Bytes;
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey, TransportAddr, endpoint::presets};

@@ -15,6 +15,23 @@ use crate::{
 // Restart msgbox text is kept as a legacy UI fallback; Flutter handles the type as a control event.
 const RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT: Duration = Duration::from_secs(5);
 const KCP_CLOSE_REASON_FLUSH_DELAY: Duration = Duration::from_millis(30);
+
+// iroh 升级会话的定时驱动间隔。
+//
+// **为什么用 cfg 常量而不是给 select! 分支加 #[cfg]：**
+// tokio 的 `select!` 宏语法里没有属性位（分支只能是
+// `<pattern> = <expr> (, if <cond>)? => <handler>`），
+// 在分支上写 `#[cfg(...)]` 会直接编译失败：
+//     error: no rules expected `#`
+// 所以这里把开关挪到「表达式」和「语句」两个合法位置上。
+//
+// 未编译该功能时给一个很长的间隔：这条分支实际上永远不会就绪，
+// 等价于不存在，不会有每秒 10 次的空唤醒。
+#[cfg(feature = "iroh-transport")]
+const IROH_TICK_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "iroh-transport"))]
+const IROH_TICK_INTERVAL: Duration = Duration::from_secs(3600);
+
 #[cfg(feature = "unix-file-copy-paste")]
 use crate::{clipboard::try_empty_clipboard_files, clipboard_file::unix_file_clip};
 #[cfg(any(
@@ -247,10 +264,14 @@ impl<T: InvokeUiSession> Remote<T> {
 
                 loop {
                     tokio::select! {
-                        // 升级会话需要定时驱动（拨号结果、进来的 iroh 连接、超时）
-                        #[cfg(feature = "iroh-transport")]
-                        _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                            self.drive_iroh_upgrade(&mut peer).await;
+                        // 升级会话需要定时驱动（拨号结果、进来的 iroh 连接、超时）。
+                        // 同样：select! 分支上不能写 #[cfg]（会报
+                        // `no rules expected #`），开关放在常量和语句里。
+                        _ = tokio::time::sleep(IROH_TICK_INTERVAL) => {
+                            #[cfg(feature = "iroh-transport")]
+                            if self.iroh_upgrade.as_ref().is_some_and(|s| s.needs_tick()) {
+                                self.drive_iroh_upgrade(&mut peer).await;
+                            }
                         }
                         res = peer.next() => {
                             if let Some(res) = res {
