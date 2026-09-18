@@ -1,6 +1,6 @@
 //! 传输切换过渡层：把「老通道 → iroh 通道」这个切换过程封装成一个可测组件。
 //!
-//! 由 feature `iroh-transport` 控制，默认关闭。
+//! 由 feature `iroh-transport` 控制（仅在 iroh 版构建中编译）。
 //!
 //! # 为什么需要这一层
 //!

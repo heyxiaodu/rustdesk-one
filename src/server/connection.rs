@@ -304,7 +304,7 @@ pub struct Connection {
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
-    /// iroh 传输升级会话（NervDesk 扩展，默认不启用）
+    /// iroh 传输升级会话（NervDesk 扩展，默认开启）
     #[cfg(feature = "iroh-transport")]
     iroh_upgrade: Option<hbb_common::iroh_upgrade_session::UpgradeSession>,
     server: super::ServerPtrWeak,

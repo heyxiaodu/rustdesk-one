@@ -1,6 +1,6 @@
 //! 升级会话：把 [`super::iroh_upgrade`] 的状态机接到真实的 iroh 传输上。
 //!
-//! 由 feature `iroh-transport` 控制，默认关闭。
+//! 由 feature `iroh-transport` 控制（仅在 iroh 版构建中编译）。
 //!
 //! # 分层
 //!

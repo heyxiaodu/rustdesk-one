@@ -1,6 +1,6 @@
 //! 用 iroh(QUIC) 承载 RustDesk 的点对点数据通道。
 //!
-//! 由 feature `iroh-transport` 控制，默认关闭。
+//! 由 feature `iroh-transport` 控制（仅在 iroh 版构建中编译）。
 //!
 //! # 设计要点
 //!

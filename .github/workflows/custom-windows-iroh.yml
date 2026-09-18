@@ -1,5 +1,5 @@
 # ############################################################################
-#  【实验性】iroh/QUIC 传输版 —— 用于验证工具链与传输层，不是日常使用版本
+#  【默认开启】iroh/QUIC 传输版 —— 供两台 Windows 真机实测的版本
 # ############################################################################
 #  与 custom-windows-build.yml 的区别只有 4 点：
 #    1. Rust 工具链从 1.75 抬到 1.91（iroh 1.x 的 MSRV；1.75 是官方为 sciter 锁的）
@@ -8,9 +8,9 @@
 #       开启 iroh 后 Cargo.lock 必须先补全（实测是纯增量更新）
 #    4. build.py 多传一个 --iroh
 #
-#  ⚠️ 即使构建成功，当前版本也还**没有接通信令**（P2 未做），
-#     所以 iroh 通道暂时不会被实际使用。这次构建的主要目的是回答
-#     「rustc 1.91 能不能编过整个 RustDesk」这个未知数。
+#  ⚠️ 信令、P2（会话驱动）与 P3（过渡层）都已接通并带端到端测试；
+#     升级开关默认开启（选项 enable-iroh-upgrade 缺省即开，设 "N" 才关）。
+#     剩下的验证是两台 Windows 真机实测，见 docs/05。
 # ############################################################################
 
 # ============================================================================
@@ -40,7 +40,7 @@ on:
       release_tag:
         description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
         required: true
-        default: 'custom-iroh-1.4.9'
+        default: 'custom-iroh-default-1.4.9'
   # 推送到 nervdesk- 开头的分支时自动构建。
   # 这样「上传本文件」这个动作本身就会直接开始编译，不用再点按钮。
   push:
@@ -66,7 +66,7 @@ env:
   SCITER_RUST_VERSION: "1.91"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  TAG_NAME: ${{ github.event.inputs.release_tag || 'custom-iroh-1.4.9' }}
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'custom-iroh-default-1.4.9' }}
   UPLOAD_ARTIFACT: "true"
   # 固定成 "-2"：官方 CI 用这个值判断"跳过需要 RustDesk 私钥的代码签名"。
   # 我们没有他们的签名服务，跳过是对的（代价是首次运行会有 SmartScreen 提示）。
@@ -169,7 +169,7 @@ jobs:
           t, crlf = read_text(p)
           t = sub(t, 'webrtc = ["dep:webrtc"]\n',
                      'webrtc = ["dep:webrtc"]\n'
-                     '# 用 iroh(QUIC) 承载点对点数据通道，默认关闭。\n'
+                     '# 用 iroh(QUIC) 承载点对点数据通道（iroh 版构建）。\n'
                      '# 开启后可用 `cargo check -p hbb_common --features iroh-transport` 验证。\n'
                      '#\n'
                      '# 注意：iroh 1.2 的 MSRV 是 rustc 1.91，而 RustDesk 的 CI 锁定 1.75\n'

@@ -100,7 +100,7 @@ pub struct Remote<T: InvokeUiSession> {
     chroma: Arc<RwLock<Option<Chroma>>>,
     last_record_state: bool,
     sent_close_reason: bool,
-    /// iroh 传输升级会话（NervDesk 扩展，默认关闭）
+    /// iroh 传输升级会话（NervDesk 扩展，默认开启）
     #[cfg(feature = "iroh-transport")]
     iroh_upgrade: Option<hbb_common::iroh_upgrade_session::UpgradeSession>,
 }

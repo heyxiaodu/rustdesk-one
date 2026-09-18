@@ -1,6 +1,7 @@
 //! iroh 传输升级的状态机。
 //!
-//! 由 feature `iroh-transport` 控制，默认关闭。
+//! 由 feature `iroh-transport` 控制；开启该 feature 后**默认启用升级**，
+//! 可用选项 `enable-iroh-upgrade = "N"` 显式关闭。
 //!
 //! # 协议
 //!
@@ -49,13 +50,17 @@ use anyhow::anyhow;
 
 /// 是否启用了 iroh 传输升级。
 ///
-/// 默认**关闭**：把选项 `enable-iroh-upgrade` 设为 `Y` 才启用。
+/// **_默认开启_**：选项未设置、或设为 `Y` 都启用；只有显式设为 `N` 才关闭。
+/// （RustDesk 的 `option2bool` 对 `enable-` 前缀的选项本来就是「缺省即开」的
+/// 语义，这里写 `!= "N"` 只是把默认值**显式定格**，不依赖上游语义的巧合。）
 /// 客户端与服务端共用这一个判断，避免两边不一致。
 pub fn is_enabled() -> bool {
-    crate::config::option2bool(
-        "enable-iroh-upgrade",
-        &crate::config::Config::get_option("enable-iroh-upgrade"),
-    )
+    is_enabled_from_raw(&crate::config::Config::get_option("enable-iroh-upgrade"))
+}
+
+/// `is_enabled()` 的纯函数版（便于单元测试，不碰全局配置）。
+pub fn is_enabled_from_raw(value: &str) -> bool {
+    value != "N"
 }
 
 /// 升级协议版本。不兼容变更时递增，用于干净地拒绝。
@@ -429,5 +434,17 @@ mod tests {
     fn empty_local_addr_is_rejected() {
         let u = Upgrade::new(Role::Initiator, String::new());
         assert!(u.make_offer_payload().is_err());
+    }
+
+    /// 升级开关**默认开启**，只有显式 `"N"` 才关闭。
+    ///
+    /// 这是 NervDesk 的默认值契约：iroh 版客户端装上就能用，
+    /// 不需要用户去配置 `enable-iroh-upgrade`。
+    #[test]
+    fn is_enabled_defaults_on_with_opt_out() {
+        assert!(is_enabled_from_raw("")); // 未设置 → 默认开启
+        assert!(is_enabled_from_raw("Y")); // 显式 Y → 开启
+        assert!(is_enabled_from_raw("1")); // 兼容其它真值写法
+        assert!(!is_enabled_from_raw("N")); // 唯一的关闭方式
     }
 }
