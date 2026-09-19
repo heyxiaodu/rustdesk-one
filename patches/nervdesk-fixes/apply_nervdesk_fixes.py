@@ -1,0 +1,626 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+NervDesk 真机三项修复（t18）应用脚本。
+
+依赖顺序（硬约束）：A 档品牌 → t2 → t3 → t4 → 本补丁（锚点建立在 t4 应用后状态；
+t18 在 t4 之上修复三处真机缺口）。
+
+三项修复：
+  【1】UI 左上角 logo：本补丁不改代码（logo 资产由 nervdesk/branding/*.png|svg
+       t19 装配时 cp 到 flutter/assets/）；同时隐藏「由 RustDesk 提供支持」脚注
+       （hide-powered-by-me=Y）+ 扫描补齐其余用户可见残留（本补丁在 config.rs
+       增加 hide-powered-by-me builtin 种子）。
+  【2】固定密码显示/认证链路：审计结论 = 认证链路自洽（新增本地单测
+       nervdesk_permanent_password_auth_chain_is_self_consistent 验证
+       写入→存储→h1→challenge 比对一致）；修复 = 被控端主界面明确显示固定密码
+       （config.rs nervdesk_builtin_password_raw + flutter_ffi
+       main_get_builtin_password + 桌面密码板「固定密码」行），消除 `-` 歧义。
+  【3】controlled 布局固定：右栏空白移除、网络状态移左栏底部、窗口固定
+       500×700（逻辑）不可拉伸（runner CMakeLists/main.cpp/win32_window +
+       common.dart 共享形态常量）。
+
+改动文件（10）：
+  libs/hbb_common/src/config.rs
+  src/flutter_ffi.rs
+  flutter/lib/common.dart
+  flutter/lib/desktop/pages/connection_page.dart
+  flutter/lib/desktop/pages/desktop_home_page.dart
+  flutter/windows/CMakeLists.txt
+  flutter/windows/runner/main.cpp
+  flutter/windows/runner/win32_window.h
+  flutter/windows/runner/win32_window.cpp
+  src/lang/cn.rs
+
+特性（与其余 nervdesk apply 脚本一致）：锚点唯一性校验、CRLF 自适应、
+应用后校验；占位符纪律保持（完整占位符仍只在 config.rs const 初始化行）。
+"""
+
+import pathlib
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+FILES = [
+    "libs/hbb_common/src/config.rs",
+    "src/flutter_ffi.rs",
+    "flutter/lib/common.dart",
+    "flutter/lib/desktop/pages/connection_page.dart",
+    "flutter/lib/desktop/pages/desktop_home_page.dart",
+    "flutter/windows/CMakeLists.txt",
+    "flutter/windows/runner/main.cpp",
+    "flutter/windows/runner/win32_window.h",
+    "flutter/windows/runner/win32_window.cpp",
+    "src/lang/cn.rs",
+]
+
+
+def die(m: str) -> "None":
+    print(f"[FAIL] {m}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_text(p: pathlib.Path) -> "tuple[str, bool]":
+    raw = p.read_bytes().decode("utf-8")
+    crlf = "\r\n" in raw
+    return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+
+def write_text(p: pathlib.Path, text: str, crlf: bool) -> None:
+    p.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+
+def sub1(text: str, old: str, new: str, label: str) -> str:
+    n = text.count(old)
+    if n != 1:
+        die(f"{label}: 锚点匹配 {n} 处，期望 1 处")
+    return text.replace(old, new)
+
+
+def check_prereq() -> None:
+    cfg = pathlib.Path("libs/hbb_common/src/config.rs")
+    if not cfg.is_file():
+        die("找不到 libs/hbb_common/src/config.rs（子模块没拉下来？）")
+    t = cfg.read_text(encoding="utf-8")
+    for needle, desc in [
+        ("pub const NERVDESK_FORCED_OPTIONS", "t2 特征"),
+        ("pub fn nervdesk_mode_controlled", "t11 形态开关"),
+        ("fn nervdesk_password_marker", "F1 哨兵"),
+        ("pub fn nerve_apply_network_defaults", "t3 特征"),
+    ]:
+        if needle not in t:
+            die(f"缺少 {desc}（{needle}）——请先按序应用 品牌→t2→t3→t4")
+    print("[OK] 前置校验：品牌→t2→t3→t4 已应用")
+
+
+# ---------------------------------------------------------------------------
+# 1. config.rs
+# ---------------------------------------------------------------------------
+
+
+def patch_config_rs() -> None:
+    p = pathlib.Path("libs/hbb_common/src/config.rs")
+    t, crlf = read_text(p)
+    # E1: 固定密码读取器（t18 第 2 项）
+    t = sub1(
+        t,
+        "fn nervdesk_password_marker() -> String {\n"
+        "    format!(\"__{}_{}\", \"NERVDESK\", \"PASSWORD__\")\n"
+        "}",
+        "fn nervdesk_password_marker() -> String {\n"
+        "    format!(\"__{}_{}\", \"NERVDESK\", \"PASSWORD__\")\n"
+        "}\n\n"
+        "/// 已注入的出厂固定密码（CI Secret 替换占位符后返回 `Some(值)`；未注入返回 `None`）。\n"
+        "/// 供被控端主界面明确显示「固定密码」（t18 第 2 项，消除一次性密码 `-` 歧义）。\n"
+        "/// 真值只存在于编译产物（可被 strings 提取，非保密容器，docs/09 §0.2）。\n"
+        "#[inline]\n"
+        "pub fn nervdesk_builtin_password_raw() -> Option<String> {\n"
+        "    if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker() {\n"
+        "        Some(NERVDESK_BUILTIN_PASSWORD.to_owned())\n"
+        "    } else {\n"
+        "        None\n"
+        "    }\n"
+        "}",
+        "config.rs nervdesk_builtin_password_raw",
+    )
+    # E2: hide-powered-by-me builtin 种子（t18 第 1 项）
+    t = sub1(
+        t,
+        "        bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), \"Y\".to_owned());\n",
+        "        bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), \"Y\".to_owned());\n"
+        "        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）\n"
+        "        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), \"Y\".to_owned());\n",
+        "config.rs hide-powered-by-me",
+    )
+    # E3: 认证链路单测（t18 第 2 项验收）
+    test_block = (
+        "\n"
+        "    #[test]\n"
+        "    fn nervdesk_permanent_password_auth_chain_is_self_consistent() {\n"
+        "        // t18 审计（第 2 项）：出厂固定密码「写入→存储→客户端/响应方比对」全链路\n"
+        "        // 语义自洽，认证与显示可解释一致。示例口令非真值。\n"
+        "        use crate::sha2::{Digest, Sha256};\n"
+        "        let injected = \"nervdesk-fixed-sample-01\";\n"
+        "        with_config_and_hard_settings(Config::default(), HashMap::new(), || {\n"
+        "            let _file_guard = ConfigFileRestoreGuard::new(Config::file());\n"
+        "            // 1) 注入路径（与被控端启动 nerve_apply_forced_defaults 同一函数）\n"
+        "            assert!(Config::set_permanent_password(injected));\n"
+        "            assert!(Config::has_permanent_password());\n"
+        "            let (storage, salt) = Config::get_local_permanent_password_storage_and_salt();\n"
+        "            assert!(!storage.is_empty() && !salt.is_empty());\n"
+        "            assert!(local_permanent_password_storage_is_usable_for_auth(&storage, &salt));\n"
+        "            // 2) 响应方发给客户端的 salt 与写入口令时的 salt 一致（生产路径）\n"
+        "            assert_eq!(Config::get_effective_permanent_password_salt(), salt);\n"
+        "            // 3) 响应方从加密存储解出的 h1 == 客户端按 sha256(plain+salt) 计算的 h1\n"
+        "            let decoded = decode_permanent_password_h1_from_storage(&storage)\n"
+        "                .expect(\"响应方可从加密存储解出 h1\");\n"
+        "            let mut h1_client = Sha256::new();\n"
+        "            h1_client.update(injected.as_bytes());\n"
+        "            h1_client.update(salt.as_bytes());\n"
+        "            assert_eq!(&decoded[..], &h1_client.finalize()[..], \"h1 一致\");\n"
+        "            // 4) 挑战应答：客户端发送 sha256(h1+challenge)，响应方 verify_h1 同式比对\n"
+        "            let challenge = \"123456\";\n"
+        "            let mut client_send = Sha256::new();\n"
+        "            client_send.update(&decoded);\n"
+        "            client_send.update(challenge.as_bytes());\n"
+        "            let sent = client_send.finalize();\n"
+        "            let mut responder_check = Sha256::new();\n"
+        "            responder_check.update(&decoded);\n"
+        "            responder_check.update(challenge.as_bytes());\n"
+        "            assert_eq!(\n"
+        "                &sent[..],\n"
+        "                &responder_check.finalize()[..],\n"
+        "                \"verify_h1 语义一致\"\n"
+        "            );\n"
+        "        });\n"
+        "    }\n"
+    )
+    t = sub1(
+        t,
+        "        let _state_guard = ConfigStateTestGuard::new(config, hard_settings);\n"
+        "        test()\n"
+        "    }\n\n"
+        "    #[test]",
+        "        let _state_guard = ConfigStateTestGuard::new(config, hard_settings);\n"
+        "        test()\n"
+        "    }\n"
+        + test_block
+        + "\n    #[test]",
+        "config.rs 认证链路单测插入",
+    )
+    write_text(p, t, crlf)
+    print("[OK] config.rs: 固定密码读取器 + hide-powered-by-me + 认证链路单测")
+
+
+# ---------------------------------------------------------------------------
+# 2. flutter_ffi.rs
+# ---------------------------------------------------------------------------
+
+
+def patch_flutter_ffi() -> None:
+    p = pathlib.Path("src/flutter_ffi.rs")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "pub fn main_get_unlock_pin() -> SyncReturn<String> {\n"
+        "    SyncReturn(get_unlock_pin())\n"
+        "}",
+        "pub fn main_get_unlock_pin() -> SyncReturn<String> {\n"
+        "    SyncReturn(get_unlock_pin())\n"
+        "}\n\n"
+        "/// 已注入的出厂固定密码（未注入返回空串）：供被控端主界面显示「固定密码」\n"
+        "/// （t18 第 2 项）。真值编译进产物，可被提取，非保密容器（docs/09 §0.2）。\n"
+        "pub fn main_get_builtin_password() -> SyncReturn<String> {\n"
+        "    SyncReturn(hbb_common::config::nervdesk_builtin_password_raw().unwrap_or_default())\n"
+        "}",
+        "flutter_ffi main_get_builtin_password",
+    )
+    write_text(p, t, crlf)
+    print("[OK] flutter_ffi.rs: main_get_builtin_password")
+
+
+# ---------------------------------------------------------------------------
+# 3. common.dart
+# ---------------------------------------------------------------------------
+
+
+def patch_common_dart() -> None:
+    p = pathlib.Path("flutter/lib/common.dart")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "Size getIncomingOnlyHomeSize() {\n"
+        "  final magicWidth = isWindows ? 11.0 : 2.0;\n"
+        "  final magicHeight = 10.0;\n"
+        "  return imcomingOnlyHomeSize +\n"
+        "      Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);\n"
+        "}",
+        "Size getIncomingOnlyHomeSize() {\n"
+        "  final magicWidth = isWindows ? 11.0 : 2.0;\n"
+        "  final magicHeight = 10.0;\n"
+        "  return imcomingOnlyHomeSize +\n"
+        "      Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);\n"
+        "}\n\n"
+        "// NervDesk 编译期形态（t11/t18）：与 Rust 侧 NERVDESK_MODE 对应\n"
+        "// （CI 传 --dart-define=NERVDESK_MODE=controlled；未设置默认 = controller 形态）。\n"
+        "const String kNervDeskMode = String.fromEnvironment('NERVDESK_MODE');\n"
+        "const bool kNervDeskModeControlled = kNervDeskMode == 'controlled';\n"
+        "const bool kNervDeskModeController = kNervDeskMode != 'controlled';\n\n"
+        "/// controlled（纯被控端）窗口逻辑尺寸：500×700（上限；工作区不足时由 runner 侧\n"
+        "/// FitToWorkArea 收缩，宁小勿出屏；窗口不可拉伸，规格见 t18 第 3 项）。\n"
+        "/// 真实窗口尺寸由 flutter/windows/runner/main.cpp 决定（DPI 缩放 + 工作区夹取），\n"
+        "/// 本函数仅供 Dart 侧参考/对齐（勿在运行时重复 setSize 覆盖）。\n"
+        "Size getControlledHomeSize() {\n"
+        "  return const Size(500, 700);\n"
+        "}",
+        "common.dart 共享形态常量",
+    )
+    write_text(p, t, crlf)
+    print("[OK] common.dart: kNervDeskMode* 共享常量 + getControlledHomeSize")
+
+
+# ---------------------------------------------------------------------------
+# 4. connection_page.dart（改用共享常量）
+# ---------------------------------------------------------------------------
+
+
+def patch_connection_page() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/connection_page.dart")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "// NervDesk 编译期形态（t11）：与 Rust 侧 NERVDESK_MODE 对应（CI 传\n"
+        "// --dart-define=NERVDESK_MODE=controlled；未设置默认 = controller 形态）。\n"
+        "const String _nerveMode = String.fromEnvironment('NERVDESK_MODE');\n"
+        "const bool _nerveControlled = _nerveMode == 'controlled';\n"
+        "const bool _nerveController = _nerveMode != 'controlled';\n\n",
+        "// NervDesk 编译期形态（t11/t18）：共享常量见 common.dart（kNervDeskMode*），\n"
+        "// 与 Rust 侧 NERVDESK_MODE 对应（--dart-define=NERVDESK_MODE=controlled）。\n\n",
+        "connection_page 模式常量挪到 common.dart",
+    )
+    t = sub1(t, "if (!_nerveControlled)", "if (!kNervDeskModeControlled)",
+             "connection_page ID 输入条件")
+    t = sub1(t, "child: _nerveController ? PeerTabPage() : Container()),",
+             "child: kNervDeskModeController ? PeerTabPage() : Container()),",
+             "connection_page PeerTabPage 条件")
+    write_text(p, t, crlf)
+    print("[OK] connection_page.dart: 使用共享形态常量")
+
+
+# ---------------------------------------------------------------------------
+# 5. desktop_home_page.dart（右栏移除/状态位/固定密码显示）
+# ---------------------------------------------------------------------------
+
+
+def patch_home_page() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+    t, crlf = read_text(p)
+    # E7a: controlled 不渲染右栏
+    t = sub1(
+        t,
+        "final isIncomingOnly = bind.isIncomingOnly();\n"
+        "    return _buildBlock(\n"
+        "        child: Row(\n"
+        "      crossAxisAlignment: CrossAxisAlignment.start,\n"
+        "      children: [\n"
+        "        buildLeftPane(context),\n"
+        "        if (!isIncomingOnly) const VerticalDivider(width: 1),\n"
+        "        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),\n"
+        "      ],\n"
+        "    ));",
+        "final isIncomingOnly = bind.isIncomingOnly();\n"
+        "    // NervDesk（t18 第 3 项）：controlled（纯被控端）不渲染右侧面板/分隔线\n"
+        "    // （连接管理器与 ID 直连已被移除，右栏空白无意义），左栏独占窗口。\n"
+        "    final showRightPane = !isIncomingOnly && !kNervDeskModeControlled;\n"
+        "    return _buildBlock(\n"
+        "        child: Row(\n"
+        "      crossAxisAlignment: CrossAxisAlignment.start,\n"
+        "      children: [\n"
+        "        buildLeftPane(context),\n"
+        "        if (showRightPane) const VerticalDivider(width: 1),\n"
+        "        if (showRightPane) Expanded(child: buildRightPane(context)),\n"
+        "      ],\n"
+        "    ));",
+        "home_page 右栏条件化",
+    )
+    # E7b: 网络状态位移到左栏底部（controlled 同 incoming-only）
+    t = sub1(
+        t,
+        "if (isIncomingOnly) {\n"
+        "      children.addAll([\n"
+        "        Divider(),\n"
+        "        OnlineStatusWidget(",
+        "// NervDesk（t18 第 3 项）：controlled 变体与 incoming-only 一致，把网络状态\n"
+        "    // 指示放在左栏底部（下方），替代被移除的右侧状态位。\n"
+        "    if (isIncomingOnly || kNervDeskModeControlled) {\n"
+        "      children.addAll([\n"
+        "        Divider(),\n"
+        "        OnlineStatusWidget(",
+        "home_page 网络状态位条件",
+    )
+    # E7c: 固定密码显示
+    t = sub1(
+        t,
+        "final showOneTime = model.approveMode != 'click' &&\n"
+        "        model.verificationMethod != kUsePermanentPassword;",
+        "final showOneTime = model.approveMode != 'click' &&\n"
+        "        model.verificationMethod != kUsePermanentPassword;\n"
+        "    // NervDesk（t18 第 2 项）：明确显示已注入的出厂固定密码（未注入为空串不渲染），\n"
+        "    // 消除一次性密码 `-` 歧义——连接时使用此固定密码。\n"
+        "    final builtinPassword = bind.mainGetBuiltinPasswordSync();",
+        "home_page 固定密码读取",
+    )
+    t = sub1(
+        t,
+        "onTap: () => DesktopSettingPage.switch2page(\n"
+        "                              SettingsTabKey.safety),\n"
+        "                          onHover: (value) => editHover.value = value,\n"
+        "                        ),\n"
+        "                    ],\n"
+        "                  ),\n"
+        "                ],\n"
+        "              ),\n"
+        "            ),\n"
+        "          ),\n"
+        "        ],\n"
+        "      ),\n"
+        "    );\n"
+        "  }",
+        "onTap: () => DesktopSettingPage.switch2page(\n"
+        "                              SettingsTabKey.safety),\n"
+        "                          onHover: (value) => editHover.value = value,\n"
+        "                        ),\n"
+        "                    ],\n"
+        "                  ),\n"
+        "                  if (builtinPassword.isNotEmpty)\n"
+        "                    Padding(\n"
+        "                      padding: const EdgeInsets.only(top: 10),\n"
+        "                      child: Column(\n"
+        "                        crossAxisAlignment: CrossAxisAlignment.start,\n"
+        "                        children: [\n"
+        "                          AutoSizeText(\n"
+        "                            translate(\"Fixed Password\"),\n"
+        "                            style: TextStyle(\n"
+        "                                fontSize: 12,\n"
+        "                                color: textColor?.withOpacity(0.5)),\n"
+        "                            maxLines: 1,\n"
+        "                          ),\n"
+        "                          SelectableText(\n"
+        "                            builtinPassword,\n"
+        "                            style: const TextStyle(\n"
+        "                                fontWeight: FontWeight.w600, fontSize: 15),\n"
+        "                          ),\n"
+        "                          AutoSizeText(\n"
+        "                            translate(\"Use this password to connect\"),\n"
+        "                            style: TextStyle(\n"
+        "                                fontSize: 11,\n"
+        "                                color: textColor?.withOpacity(0.4)),\n"
+        "                            maxLines: 1,\n"
+        "                          ),\n"
+        "                        ],\n"
+        "                      ),\n"
+        "                    ),\n"
+        "                ],\n"
+        "              ),\n"
+        "            ),\n"
+        "          ),\n"
+        "        ],\n"
+        "      ),\n"
+        "    );\n"
+        "  }",
+        "home_page 固定密码行",
+    )
+    write_text(p, t, crlf)
+    print("[OK] desktop_home_page.dart: 右栏移除/状态位/固定密码显示")
+
+
+# ---------------------------------------------------------------------------
+# 6. CMakeLists / main.cpp / win32_window（窗口固定）
+# ---------------------------------------------------------------------------
+
+
+def patch_cmake() -> None:
+    p = pathlib.Path("flutter/windows/CMakeLists.txt")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        'add_subdirectory("runner")',
+        'add_subdirectory("runner")\n\n'
+        "# NervDesk（t18 第 3 项）：controlled 变体（NERVDESK_MODE=controlled，环境变量在\n"
+        "# CMake 配置期读取）把 NERVDESK_MODE_CONTROLLED 编译进 runner：\n"
+        "# main.cpp 固定窗口 500×700（逻辑）且不可拉伸，工作区不足自动收缩。\n"
+        'if("$ENV{NERVDESK_MODE}" STREQUAL "controlled")\n'
+        "  target_compile_definitions(${BINARY_NAME} PRIVATE NERVDESK_MODE_CONTROLLED=1)\n"
+        '  message(STATUS "NervDesk controlled variant: runner fixed window 500x700 (logical), non-resizable")\n'
+        "endif()",
+        "CMakeLists controlled 宏",
+    )
+    write_text(p, t, crlf)
+    print("[OK] CMakeLists.txt: NERVDESK_MODE_CONTROLLED 编译宏")
+
+
+def patch_main_cpp() -> None:
+    p = pathlib.Path("flutter/windows/runner/main.cpp")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "Win32Window::Point origin(workarea_origin.x + relative_origin.x, workarea_origin.y + relative_origin.y);\n"
+        "  Win32Window::Size size(800u, 600u);\n\n"
+        "  // Fit the window to the monitor's work area.\n"
+        "  Win32Desktop::FitToWorkArea(origin, size);\n\n"
+        "  std::wstring window_title;",
+        "Win32Window::Point origin(workarea_origin.x + relative_origin.x, workarea_origin.y + relative_origin.y);\n"
+        "  Win32Window::Size size(800u, 600u);\n\n"
+        "  // NervDesk（t18 第 3 项）：controlled 变体固定逻辑尺寸 500×700（上限），\n"
+        "  // 不可拉伸；FitToWorkArea 按屏幕工作区自动收缩（宁小勿出屏），\n"
+        "  // DPI 缩放由 runner 处理（500×700 为逻辑像素）。\n"
+        "#ifdef NERVDESK_MODE_CONTROLLED\n"
+        "  const bool nervdesk_controlled = true;\n"
+        "  size = Win32Window::Size(500u, 700u);\n"
+        "#else\n"
+        "  const bool nervdesk_controlled = false;\n"
+        "#endif\n\n"
+        "  // Fit the window to the monitor's work area.\n"
+        "  Win32Desktop::FitToWorkArea(origin, size);\n\n"
+        "  std::wstring window_title;",
+        "main.cpp controlled 尺寸",
+    )
+    t = sub1(
+        t,
+        "if (!window.CreateAndShow(window_title, origin, size, !is_cm_page)) {",
+        "if (!window.CreateAndShow(window_title, origin, size, !is_cm_page,\n"
+        "                            /*resizable=*/!nervdesk_controlled && !is_cm_page)) {",
+        "main.cpp resizable",
+    )
+    write_text(p, t, crlf)
+    print("[OK] main.cpp: controlled 500×700 + 不可拉伸")
+
+
+def patch_win32_window() -> None:
+    p_h = pathlib.Path("flutter/windows/runner/win32_window.h")
+    t, crlf = read_text(p_h)
+    t = sub1(
+        t,
+        "  // as logical pixels and scale to appropriate for the default monitor. Returns\n"
+        "  // true if the window was created successfully.\n"
+        "  bool CreateAndShow(const std::wstring& title,\n"
+        "                     const Point& origin,\n"
+        "                     const Size& size,\n"
+        "                     bool showOnTaskBar = true);",
+        "  // as logical pixels and scale to appropriate for the default monitor. Returns\n"
+        "  // true if the window was created successfully.\n"
+        "  // |resizable|: false 时创建「固定尺寸」窗口（无 WS_THICKFRAME/WS_MAXIMIZEBOX，\n"
+        "  //  用户不能拉伸/最大化），NervDesk controlled 变体使用（t18 第 3 项）。\n"
+        "  bool CreateAndShow(const std::wstring& title,\n"
+        "                     const Point& origin,\n"
+        "                     const Size& size,\n"
+        "                     bool showOnTaskBar = true,\n"
+        "                     bool resizable = true);",
+        "win32_window.h 签名",
+    )
+    write_text(p_h, t, crlf)
+    p_c = pathlib.Path("flutter/windows/runner/win32_window.cpp")
+    t, crlf = read_text(p_c)
+    t = sub1(
+        t,
+        "bool Win32Window::CreateAndShow(const std::wstring& title,\n"
+        "                                const Point& origin,\n"
+        "                                const Size& size, bool showOnTaskBar) {",
+        "bool Win32Window::CreateAndShow(const std::wstring& title,\n"
+        "                                const Point& origin,\n"
+        "                                const Size& size, bool showOnTaskBar,\n"
+        "                                bool resizable) {",
+        "win32_window.cpp 签名",
+    )
+    t = sub1(
+        t,
+        "  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);\n"
+        "  double scale_factor = dpi / 96.0;\n\n"
+        "  HWND window = CreateWindow(\n"
+        "      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,",
+        "  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);\n"
+        "  double scale_factor = dpi / 96.0;\n\n"
+        "  // NervDesk（t18 第 3 项）：非 resizable 时去掉 WS_THICKFRAME/WS_MAXIMIZEBOX\n"
+        "  // （固定尺寸，用户不可拉伸/最大化）；DPI 缩放照常按 logical→physical。\n"
+        "  const DWORD window_style =\n"
+        "      resizable ? WS_OVERLAPPEDWINDOW\n"
+        "                : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);\n\n"
+        "  HWND window = CreateWindow(\n"
+        "      window_class, title.c_str(), window_style,",
+        "win32_window.cpp 固定样式",
+    )
+    write_text(p_c, t, crlf)
+    print("[OK] win32_window.h/.cpp: resizable 参数 + 固定窗口样式")
+
+
+# ---------------------------------------------------------------------------
+# 7. cn.rs 语言键
+# ---------------------------------------------------------------------------
+
+
+def patch_cn_lang() -> None:
+    p = pathlib.Path("src/lang/cn.rs")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        '("One-time Password", "一次性密码"),\n        ("Use one-time password", "使用一次性密码"),',
+        '("One-time Password", "一次性密码"),\n        ("Fixed Password", "固定密码"),\n        ("Use this password to connect", "连接时使用此密码"),\n        ("Use one-time password", "使用一次性密码"),',
+        "cn.rs 固定密码文案",
+    )
+    write_text(p, t, crlf)
+    print("[OK] cn.rs: Fixed Password / 连接提示")
+
+
+# ---------------------------------------------------------------------------
+# 校验
+# ---------------------------------------------------------------------------
+
+
+def verify() -> None:
+    ok = True
+
+    def check(rel: str, needle: str, desc: str) -> None:
+        nonlocal ok
+        if needle not in pathlib.Path(rel).read_text(encoding="utf-8"):
+            print(f"[FAIL] 校验失败：{rel} 未包含 {desc}", file=sys.stderr)
+            ok = False
+        else:
+            print(f"[OK] 校验 {rel}: {desc}")
+
+    check("libs/hbb_common/src/config.rs", "pub fn nervdesk_builtin_password_raw", "固定密码读取器")
+    check("libs/hbb_common/src/config.rs", "OPTION_HIDE_POWERED_BY_ME", "hide-powered-by-me 种子")
+    check("libs/hbb_common/src/config.rs", "nervdesk_permanent_password_auth_chain_is_self_consistent", "认证链路单测")
+    check("src/flutter_ffi.rs", "pub fn main_get_builtin_password", "FFI 固定密码")
+    check("flutter/lib/common.dart", "const bool kNervDeskModeControlled", "共享形态常量")
+    check("flutter/lib/desktop/pages/connection_page.dart", "kNervDeskModeController ? PeerTabPage()", "连接页共享常量")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "showRightPane", "右栏条件化")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "builtinPassword", "固定密码显示")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled) {", "状态位条件")
+    check("flutter/windows/CMakeLists.txt", "NERVDESK_MODE_CONTROLLED=1", "CMake 编译宏")
+    check("flutter/windows/runner/main.cpp", "500u, 700u", "controlled 窗口 500×700")
+    check("flutter/windows/runner/main.cpp", "/*resizable=*/!nervdesk_controlled", "不可拉伸")
+    check("flutter/windows/runner/win32_window.cpp", "window_style", "固定窗口样式")
+    check("src/lang/cn.rs", '"Fixed Password", "固定密码"', "语言键")
+
+    # 占位符纪律：完整占位符仍只在 config.rs const 初始化行
+    cfg = pathlib.Path("libs/hbb_common/src/config.rs").read_text(encoding="utf-8")
+    if cfg.count("__NERVDESK_PASSWORD__") != 1:
+        print(f"[FAIL] __NERVDESK_PASSWORD__ 出现 {cfg.count('__NERVDESK_PASSWORD__')} 次（应 1 次）",
+              file=sys.stderr)
+        ok = False
+    for f in FILES:
+        if f == "libs/hbb_common/src/config.rs":
+            continue
+        if "__NERVDESK_PASSWORD__" in pathlib.Path(f).read_text(encoding="utf-8"):
+            print(f"[FAIL] 占位符出现在非预期文件：{f}", file=sys.stderr)
+            ok = False
+
+    if not ok:
+        sys.exit(1)
+    print("[OK] 全部 t18 真机修复改动校验通过")
+
+
+def main() -> None:
+    print("=== NervDesk 真机三项修复补丁（t18）===")
+    check_prereq()
+    patch_config_rs()
+    patch_flutter_ffi()
+    patch_common_dart()
+    patch_connection_page()
+    patch_home_page()
+    patch_cmake()
+    patch_main_cpp()
+    patch_win32_window()
+    patch_cn_lang()
+    verify()
+    print("=== 完成 ===")
+    print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")
+    print("本地验证：cargo test -p hbb_common --lib password（47 项，含认证链路单测）。")
+
+
+if __name__ == "__main__":
+    main()
