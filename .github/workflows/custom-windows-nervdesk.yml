@@ -661,41 +661,54 @@ jobs:
               p.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
 
           cfg_p = pathlib.Path("libs/hbb_common/src/config.rs")
-          com_p = pathlib.Path("src/common.rs")
-          for p in (cfg_p, com_p):
-              if not p.is_file():
-                  die("找不到 %s ，子模块可能没拉下来" % p)
+          if not cfg_p.is_file():
+              die("找不到 %s ，子模块可能没拉下来" % cfg_p)
 
           cfg, cfg_crlf = read_text(cfg_p)
+          # 1) ID 服务器：RENDEZVOUS_SERVERS（锚点已验证有效，勿动）
           cfg, n1 = re.subn(r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[[^\]]*\];',
                             'pub const RENDEZVOUS_SERVERS: &[&str] = &["%s"];' % ID, cfg)
           if n1 != 1:
               die("RENDEZVOUS_SERVERS 锚点匹配 %d 处，期望 1 处" % n1)
+          # 2) 公钥：RS_PUB_KEY（锚点已验证有效，勿动）
           cfg, n2 = re.subn(r'pub const RS_PUB_KEY: &str = "[^"]*";',
                             'pub const RS_PUB_KEY: &str = "%s";' % KEY, cfg)
           if n2 != 1:
               die("RS_PUB_KEY 锚点匹配 %d 处，期望 1 处" % n2)
+          # 3) 【t16 修复】t3 参数化 const 单行锚点（匹配数 != 1 即失败）：
+          #    NERVDESK_RELAY_SERVER ← RS_RELAY_SERVER
+          cfg, n3 = re.subn(r'pub const NERVDESK_RELAY_SERVER: &str = "[^"]*";',
+                            'pub const NERVDESK_RELAY_SERVER: &str = "%s";' % RELAY, cfg)
+          if n3 != 1:
+              die("NERVDESK_RELAY_SERVER 锚点匹配 %d 处，期望 1 处" % n3)
+          #    NERVDESK_API_SERVER ← RS_API_SERVER
+          cfg, n4 = re.subn(r'pub const NERVDESK_API_SERVER: &str = "[^"]*";',
+                            'pub const NERVDESK_API_SERVER: &str = "%s";' % API, cfg)
+          if n4 != 1:
+              die("NERVDESK_API_SERVER 锚点匹配 %d 处，期望 1 处" % n4)
           write_text(cfg_p, cfg, cfg_crlf)
 
-          com, com_crlf = read_text(com_p)
-          old = '    "https://admin.rustdesk.com".to_owned()\n}'
-          new = '    "%s".to_owned()\n}' % API
-          if com.count(old) != 1:
-              die("API 服务器锚点匹配 %d 处，期望 1 处" % com.count(old))
-          write_text(com_p, com.replace(old, new), com_crlf)
-
-          # 立刻校验，确保真的写进去了
+          # 立刻校验，确保真的写进去了（全部在 config.rs 参数化 const；
+          # t3 后 common.rs 读取层已接 NERVDESK_API_SERVER，不再注入 common.rs）
           cfg = cfg_p.read_text(encoding="utf-8")
-          com = com_p.read_text(encoding="utf-8")
           assert ('&["%s"];' % ID) in cfg, "RENDEZVOUS_SERVERS 写入失败"
           assert ('"%s";' % KEY) in cfg, "RS_PUB_KEY 写入失败"
-          assert ('"%s".to_owned()' % API) in com, "API 服务器写入失败"
+          assert ('NERVDESK_RELAY_SERVER: &str = "%s";' % RELAY) in cfg, "NERVDESK_RELAY_SERVER 写入失败"
+          assert ('NERVDESK_API_SERVER: &str = "%s";' % API) in cfg, "NERVDESK_API_SERVER 写入失败"
+          # 校验公共地址残留：rs-ny 是官方 ID 服务器；t3 后 common.rs 的旧 API
+          # 注入锚点（admin.rustdesk.com + .to_owned() 拼接形式）应已不存在
+          # （common.rs 测试夹具里另有 admin.rustdesk.com 属合法，保留）。
+          # 旧锚点字面量刻意拆分（与 F1 哨兵同思路），避免自匹配静态自查。
           assert "rs-ny.rustdesk.com" not in cfg, "仍残留官方公共服务器地址"
+          com = pathlib.Path("src/common.rs")
+          old_api_anchor = '"https://admin.rustdesk.com"' + '.to_owned()'
+          if com.is_file() and old_api_anchor in com.read_text(encoding="utf-8"):
+              die("src/common.rs 仍残留旧 API 注入锚点（t3 已参数化为 NERVDESK_API_SERVER const）——补丁未装配？")
 
           print("=" * 60)
-          print("已写入源码：")
+          print("已写入源码（config.rs 参数化 const）：")
           print("  ID  服务器 : %s:21116" % ID)
-          print("  中继服务器 : %s（由 ID 服务器下发，无需写死）" % RELAY)
+          print("  中继服务器 : %s" % RELAY)
           print("  API 服务器 : %s" % API)
           print("  公钥       : %s...%s" % (KEY[:8], KEY[-6:]))
           print("=" * 60)
@@ -705,7 +718,7 @@ jobs:
         shell: bash
         run: |
           grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -5
-          grep -n "https://api" src/common.rs | head -5
+          grep -n "NERVDESK_RELAY_SERVER\|NERVDESK_API_SERVER" libs/hbb_common/src/config.rs | head -5
           # 接线标记复核（M6-1）：两个文件都必须出现升级驱动
           echo "--- wiring markers ---"
           grep -c "drive_iroh_upgrade" src/client/io_loop.rs src/server/connection.rs
