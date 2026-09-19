@@ -1,0 +1,492 @@
+# ############################################################################
+#  NervDesk 定制版（一期）· Android APK —— custom-android-nervdesk.yml
+#  （t5 骨架 · t6 装配完成）
+# ############################################################################
+#  基于 .github-workflow-for-your-fork/custom-android.yml（官方 1.4.9
+#  android CI 改造），按 docs/09 M6 增加 3 处 CI 能力：
+#
+#    A.【M6-4 debug 直装】沿用官方同款：先临时换 debug 签名保证能编过装得上；
+#       可选配置 4 个 ANDROID_* Secrets → 构建后用你的 keystore 重签
+#       （可覆盖安装）。无 Secrets = 每次构建生成全新 debug keystore，
+#       升级需先卸载再装（诚实说明见 docs/07）。
+#    B.【占位符条件管线】Android 只承诺「内置配置 + 基本连接」（M5-4），
+#       M1/M2/M7 行为与 iroh/relay 均为 Windows 线——因此**不强制要求**
+#       NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN；但若编译作用域源码里
+#       出现占位符（__NERVDESK_PASSWORD__ / __NERVDESK_RELAY_TOKEN__，
+#       例如共享的 libs/hbb_common 被 t3 之类动过），则对应 Secret 必须
+#       已配置并就地替换，缺失即**立刻失败**（不静默用假值/不带着占位符编）。
+#    C.【M6-3 占位符自测钩子】构建出的 APK 解包后字节扫描 "__NERVDESK_"，
+#       命中 → 构建失败。
+#
+#  ============================================================================
+#  怎么用（fork 侧）：
+#    1. fork rustdesk/rustdesk（AGPL-3.0，保持 Public），基于 1.4.9 tag
+#       新建分支 nervdesk-custom-android-1.4.9
+#    2. 把本文件上传到该分支 .github/workflows/custom-android-nervdesk.yml
+#       （上传即 push，自动触发构建）
+#    3. Secrets（可选，全部在 fork Settings → Secrets and variables → Actions）：
+#         NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN：仅在编译作用域出现
+#           占位符时需要（见 B）；默认 Android 线不要求
+#         ANDROID_SIGNING_KEY / ANDROID_ALIAS / ANDROID_KEY_STORE_PASSWORD /
+#         ANDROID_KEY_PASSWORD：自备 keystore 重签（覆盖安装）才需要，详见 docs/07
+#    4. 产物：aarch64 / armv7 / x86_64 三个 debug 签名 APK，TAG 默认
+#       nervdesk-custom-android-1.4.9（同一 TAG 只能成功一次，重跑换名）。
+#  ============================================================================
+
+name: Build NervDesk Custom (Android APK, debug installable)
+
+on:
+  # 手动触发（默认分支出现本 workflow 后，Actions 页面会多一个 Run workflow 按钮）
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
+        required: true
+        default: 'nervdesk-custom-android-1.4.9'
+  # 推送到 nervdesk-custom-android- 开头的分支时自动构建。
+  # （与 Windows 的 nervdesk-custom-windows-** 不重叠，避免双 workflow 误触发）
+  push:
+    branches:
+      - 'nervdesk-custom-android-**'
+
+# 发布 Release 需要写权限
+permissions:
+  contents: write
+
+env:
+  # ---------------- 你的服务器信息：只改这一段 ----------------
+  RS_ID_SERVER: "id.nervcode.eu.org"
+  RS_RELAY_SERVER: "relay.nervcode.eu.org:21117"
+  RS_API_SERVER: "https://api.nervcode.eu.org"
+  RS_KEY: "HJtH5YUqy6Dz8FHfypUKPJSGoxbBeSgtDsahkT6MBo4="
+  # -----------------------------------------------------------
+
+  # 以下与官方 Android CI（1.4.9）保持一致，一般不要动
+  VERSION: "1.4.9"
+  ANDROID_FLUTTER_VERSION: "3.24.5"
+  RUST_VERSION: "1.75"          # 官方 Android job 锁 1.75（与 sciter/桌面线一致）
+  CARGO_NDK_VERSION: "3.1.2"
+  NDK_VERSION: "r28c"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-android-1.4.9' }}
+  UPLOAD_ARTIFACT: "true"
+  # 有值（在 repo Secrets 里配了 ANDROID_SIGNING_KEY）时，
+  # 构建完会用你的 keystore 重签 → 可覆盖安装。见 docs/07 第 6 节。
+  ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
+
+jobs:
+  # 生成 flutter_rust_bridge 胶水代码（官方必需步骤，Android 与桌面共用）
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  build-rustdesk-android:
+    name: Android APK ${{ matrix.job.target }}
+    needs: [generate-bridge]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { arch: aarch64, target: aarch64-linux-android,      abi: arm64-v8a,     ndk-script: arm64, libcxx: aarch64-linux-android,   flutter-platform: android-arm64 }
+          - { arch: armv7,   target: armv7-linux-androideabi,   abi: armeabi-v7a,    ndk-script: arm,   libcxx: arm-linux-androideabi,   flutter-platform: android-arm }
+          - { arch: x86_64,  target: x86_64-linux-android,      abi: x86_64,         ndk-script: x64,   libcxx: x86_64-linux-android,   flutter-platform: android-x64 }
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+               clang \
+               cmake \
+               curl \
+               gcc-multilib \
+               git \
+               g++ \
+               g++-multilib \
+               libayatana-appindicator3-dev \
+               libasound2-dev \
+               libc6-dev \
+               libclang-dev \
+               libunwind-dev \
+               libgstreamer1.0-dev \
+               libgstreamer-plugins-base1.0-dev \
+               libgtk-3-dev \
+               libpam0g-dev \
+               libpulse-dev \
+               libva-dev \
+               libxcb-randr0-dev \
+               libxcb-shape0-dev \
+               libxcb-xfixes0-dev \
+               libxdo-dev \
+               libxfixes-dev \
+               llvm-dev \
+               nasm \
+               ninja-build \
+               openjdk-17-jdk-headless \
+               pkg-config \
+               tree \
+               unzip \
+               wget
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      # ======================================================================
+      # 【占位符条件管线（M5-4 边界）】Android 默认不要求两个 NERVDESK Secret；
+      # 但编译作用域（src/libs/flutter/res/build.py/Cargo.toml）里一旦出现
+      # 占位符，就必须有对应 Secret 并就地替换，缺失 = 立即失败。
+      # 注意排除 patches/、nervdesk/（Windows 线专属补丁与 iroh 模块，
+      # Android 不编译它们，不能因其中的占位符误触发密钥要求）。
+      # ======================================================================
+      - name: Replace placeholder secrets if present (Android conditional pipeline)
+        shell: bash
+        env:
+          NERVDESK_PASSWORD: ${{ secrets.NERVDESK_PASSWORD }}
+          NERVDESK_RELAY_TOKEN: ${{ secrets.NERVDESK_RELAY_TOKEN }}
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True); sys.exit(1)
+
+          SCOPE  = ["src", "libs", "flutter", "res", "build.py", "Cargo.toml"]
+          IGNORE = {".git", ".github", "target", "build"}
+          PH_PW  = b"__NERVDESK_PASSWORD__"
+          PH_TOK = b"__NERVDESK_RELAY_TOKEN__"
+
+          files = []
+          for root in SCOPE:
+              rp = pathlib.Path(root)
+              if rp.is_file():
+                  files.append(rp); continue
+              if not rp.is_dir():
+                  continue
+              for p in rp.rglob("*"):
+                  if p.is_file() and not any(part in IGNORE for part in p.parts):
+                      files.append(p)
+
+          n_pw = n_tok = 0
+          for p in files:
+              try:
+                  data = p.read_bytes()
+              except OSError:
+                  continue
+              n_pw += data.count(PH_PW); n_tok += data.count(PH_TOK)
+
+          if n_pw == 0 and n_tok == 0:
+              print("[OK] Android 编译作用域无占位符，跳过 Secret 管线（Android 只承诺内置配置与基本连接，M5-4）")
+              sys.exit(0)
+
+          pw  = os.environ.get("NERVDESK_PASSWORD", "")
+          tok = os.environ.get("NERVDESK_RELAY_TOKEN", "")
+          if n_pw and not pw:
+              die("编译作用域含 __NERVDESK_PASSWORD__ x%d 但 Secret NERVDESK_PASSWORD 未配置" % n_pw)
+          if n_tok and not tok:
+              die("编译作用域含 __NERVDESK_RELAY_TOKEN__ x%d 但 Secret NERVDESK_RELAY_TOKEN 未配置" % n_tok)
+
+          replaced = 0
+          for p in files:
+              try:
+                  data = p.read_bytes()
+              except OSError:
+                  continue
+              c1 = data.count(PH_PW); c2 = data.count(PH_TOK)
+              if c1 or c2:
+                  data = data.replace(PH_PW, pw.encode()).replace(PH_TOK, tok.encode())
+                  p.write_bytes(data)
+                  replaced += c1 + c2
+          print("[OK] Android 占位符条件替换完成：共 %d 处（password=%d, relay_token=%d）" % (replaced, n_pw, n_tok))
+          PYEOF
+
+      - name: Install flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
+
+      - name: Patch flutter
+        run: |
+          cd $(dirname $(dirname $(which flutter)))
+          [[ "3.24.5" == ${{ env.ANDROID_FLUTTER_VERSION }} ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      # 用 vcpkg 编译 RustDesk 的 Android 依赖（ffmpeg 等）。
+      # build_android_deps.sh 需要 ANDROID_NDK_HOME 指向 setup-ndk 装的 NDK。
+      - name: Install vcpkg dependencies
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          if ! ./flutter/build_android_deps.sh "${{ matrix.job.abi }}"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+        shell: bash
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: rustdesk-lib-cache-android
+          key: ${{ matrix.job.target }}
+
+      # ======================================================================
+      # 关键步骤：在这里把你的服务器信息写进源码
+      # 改动 3 行代码（config.rs 2 行 + common.rs 1 行，与 Windows 版同一逻辑），
+      # 编译前进不来就立刻报错，不会白等 1 小时才发现
+      # ======================================================================
+      - name: Inject custom server configuration
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, re, sys
+
+          ID    = os.environ["RS_ID_SERVER"].strip()
+          API   = os.environ["RS_API_SERVER"].strip()
+          KEY   = os.environ["RS_KEY"].strip()
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True)
+              sys.exit(1)
+
+          # 统一按 LF 处理、写完再还原原有行尾，避免 CRLF 使锚点失配
+          def read_text(p):
+              raw = p.read_bytes().decode("utf-8")
+              crlf = "\r\n" in raw
+              return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+          def write_text(p, text, crlf):
+              p.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+          cfg_p = pathlib.Path("libs/hbb_common/src/config.rs")
+          com_p = pathlib.Path("src/common.rs")
+          for p in (cfg_p, com_p):
+              if not p.is_file():
+                  die("找不到 %s ，子模块可能没拉下来" % p)
+
+          cfg, cfg_crlf = read_text(cfg_p)
+          cfg, n1 = re.subn(r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[[^\]]*\];',
+                            'pub const RENDEZVOUS_SERVERS: &[&str] = &["%s"];' % ID, cfg)
+          if n1 != 1:
+              die("RENDEZVOUS_SERVERS 锚点匹配 %d 处，期望 1 处" % n1)
+          cfg, n2 = re.subn(r'pub const RS_PUB_KEY: &str = "[^"]*";',
+                            'pub const RS_PUB_KEY: &str = "%s";' % KEY, cfg)
+          if n2 != 1:
+              die("RS_PUB_KEY 锚点匹配 %d 处，期望 1 处" % n2)
+          write_text(cfg_p, cfg, cfg_crlf)
+
+          com, com_crlf = read_text(com_p)
+          old = '    "https://admin.rustdesk.com".to_owned()\n}'
+          new = '    "%s".to_owned()\n}' % API
+          if com.count(old) != 1:
+              die("API 服务器锚点匹配 %d 处，期望 1 处" % com.count(old))
+          write_text(com_p, com.replace(old, new), com_crlf)
+
+          # 立刻校验，确保真的写进去了
+          cfg = cfg_p.read_text(encoding="utf-8")
+          com = com_p.read_text(encoding="utf-8")
+          assert ('&["%s"];' % ID) in cfg, "RENDEZVOUS_SERVERS 写入失败"
+          assert ('"%s";' % KEY) in cfg, "RS_PUB_KEY 写入失败"
+          assert ('"%s".to_owned()' % API) in com, "API 服务器写入失败"
+          assert "rs-ny.rustdesk.com" not in cfg, "仍残留官方公共服务器地址"
+
+          print("=" * 60)
+          print("已写入源码：")
+          print("  ID  服务器 : %s:21116" % ID)
+          print("  API 服务器 : %s" % API)
+          print("  公钥       : %s...%s" % (KEY[:8], KEY[-6:]))
+          print("=" * 60)
+          PYEOF
+
+      - name: Build rustdesk lib
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          rustup target add ${{ matrix.job.target }}
+          cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
+          ./flutter/ndk_${{ matrix.job.ndk-script }}.sh
+          mkdir -p ./flutter/android/app/src/main/jniLibs/${{ matrix.job.abi }}
+          cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+             ./flutter/android/app/src/main/jniLibs/${{ matrix.job.abi }}/librustdesk.so
+        shell: bash
+
+      - name: Build rustdesk
+        shell: bash
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
+          # Increase Gradle JVM memory for CI builds（官方同款）
+          sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" ./flutter/android/gradle.properties
+          # 官方同款：release 签名依赖 key.properties（CI 上没有），
+          # 临时换成 debug 签名保证能编过、装得上。
+          # 想要"覆盖安装"？构建后会用你的 keystore 重签（见下方 Sign app APK 步骤），
+          # 这套 debug 签名只是中间产物，不影响最终包。
+          sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
+          # 打 rust 库 + libc++ 进 APK 的 jniLibs
+          mkdir -p ./flutter/android/app/src/main/jniLibs/${{ matrix.job.abi }}
+          cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.job.libcxx }}/libc++_shared.so ./flutter/android/app/src/main/jniLibs/${{ matrix.job.abi }}/
+          cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/${{ matrix.job.abi }}/librustdesk.so
+          # build flutter（官方固定用 release 构建类型 + 按 ABI 拆包）
+          pushd flutter
+          flutter build apk --release --target-platform ${{ matrix.job.flutter-platform }} --split-per-abi
+          mv build/app/outputs/flutter-apk/app-${{ matrix.job.abi }}-release.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
+          popd
+          mkdir -p signed-apk; pushd signed-apk
+          mv ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk .
+          popd
+
+      # ======================================================================
+      # 【M6-3 占位符自测钩子】解包 APK 后字节扫描 "__NERVDESK_" 前缀，
+      # 命中立即失败——防止带着占位符的 APK 被发布。
+      # （APK 内文件是压缩存储的，必须解包后扫描，不能直接 grep zip）
+      # ======================================================================
+      - name: Placeholder self-test (APK must not contain __NERVDESK_)
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="signed-apk/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk"
+          tmp="apk_scan_${{ matrix.job.arch }}"
+          rm -rf "$tmp"; mkdir -p "$tmp"
+          unzip -o -q "$apk" -d "$tmp"
+          python3 - "$tmp" <<'PYEOF'
+          import pathlib, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+          root = pathlib.Path(sys.argv[1])
+          PREFIX = b"__NERVDESK_"
+          hits = []
+          scanned = 0
+          for f in root.rglob("*"):
+              if not f.is_file():
+                  continue
+              scanned += 1
+              try:
+                  data = f.read_bytes()
+              except OSError:
+                  continue
+              if PREFIX in data:
+                  hits.append(str(f))
+          if hits:
+              print("[FAIL] APK 内含占位符原样（%d 个文件），拒绝发布：" % len(hits), file=sys.stderr)
+              for h in hits:
+                  print("  " + h, file=sys.stderr)
+              sys.exit(1)
+          print("[OK] APK 无占位符残留（解包 %d 个文件已扫描）" % scanned)
+          PYEOF
+
+      # 自备密钥路线：只有 repo Secrets 里配了 ANDROID_SIGNING_KEY 时才执行。
+      # 用你的 keystore 把上面 debug 签名的中间包重签成"你的签名"，
+      # 从此同一把钥匙签出的版本都能覆盖安装。密钥管理与备份见 docs/07 第 6 节。
+      # https://github.com/r0adkll/sign-android-release/issues/84#issuecomment-1889636075
+      - name: Setup sign tool version variable
+        shell: bash
+        run: |
+          BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | tail -n 1)
+          echo "ANDROID_SIGN_TOOL_VERSION=$BUILD_TOOL_VERSION" >> $GITHUB_ENV
+          echo Last build tool version is: $BUILD_TOOL_VERSION
+
+      - uses: r0adkll/sign-android-release@349ebdef58775b1e0d8099458af0816dc79b6407 # v1
+        name: Sign app APK
+        if: env.ANDROID_SIGNING_KEY != ''
+        id: sign-rustdesk
+        with:
+          releaseDirectory: ./signed-apk
+          signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
+          alias: ${{ secrets.ANDROID_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        env:
+          # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
+          BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
+
+      - name: Upload Artifacts
+        if: env.ANDROID_SIGNING_KEY != '' && env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
+          path: ${{ steps.sign-rustdesk.outputs.signedReleaseFile }}
+
+      - name: Publish signed apk package
+        if: env.ANDROID_SIGNING_KEY != '' && env.UPLOAD_ARTIFACT == 'true'
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          prerelease: true
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            ${{ steps.sign-rustdesk.outputs.signedReleaseFile }}
+
+      # 默认路线（未配签名 Secrets）：直接发布 debug 签名的 APK，全新安装即可用。
+      # 注意：GitHub runner 每次构建都会现场生成一个全新 debug keystore，
+      # 所以**每次构建的签名都不同**——同一台手机上想升级请先卸载旧版再装新版，
+      # 或改用上面的自备密钥路线。
+      - name: Publish unsigned apk package
+        if: env.ANDROID_SIGNING_KEY == '' && env.UPLOAD_ARTIFACT == 'true'
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          prerelease: true
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            signed-apk/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk

@@ -1,0 +1,1110 @@
+# ############################################################################
+#  NervDesk 定制版（一期）· Windows x64 —— custom-windows-nervdesk.yml
+#  （t5 骨架 · t6 装配完成）
+# ############################################################################
+#  基于 build/fork-push/.github/workflows/custom-windows-iroh-branded.yml
+#  （iroh 默认开启 + 品牌装配），按 docs/09 M6 增加 5 处 CI 能力：
+#
+#    A.【M6-1 硬约束】io_loop/connection 接线补丁：构建前强制应用并自检
+#        ⚠️ 历史教训（docs/02 §18 / build/next-session-handoff.md）：
+#        缺接线则产物带 iroh 但升级**永不触发**（真机日志零 iroh 活动）。
+#        本步骤先查标记（drive_iroh_upgrade / IROH_TICK_INTERVAL），
+#        缺则 git apply patches/io_loop-iroh-hook.patch +
+#        patches/connection-iroh-hook.patch，再查仍缺 = 立即失败。
+#    B.【M6-2 Secret 管线】NERVDESK_PASSWORD（替换 __NERVDESK_PASSWORD__，
+#        固定密码+PIN）与 NERVDESK_RELAY_TOKEN（替换 __NERVDESK_RELAY_TOKEN__，
+#        relay 访问令牌）只从 GitHub Actions Secret 读取，**不写进本文件**；
+#        Secret 未配置 → 构建在 checkout 后立刻明确失败（不静默用假值）。
+#    C.【t2/t3/t4 装配完成】按「A档品牌 → t2(features) → t3(network-service) →
+#        t4(branding-depth)」依赖顺序执行各目录的 apply_*.py 锚点自检脚本：
+#        锚点匹配数 != 1 即失败 / CRLF 自适应 / 应用后校验 / 占位符纪律
+#        （__NERVDESK_PASSWORD__ / __NERVDESK_RELAY_TOKEN__ 只允许出现在
+#        config.rs 的 const 与守卫位置）；目录或脚本缺失 = 立即失败。
+#        装配后汇总自检关键标记；占位符由步骤 8（Secret 替换）在编译前换成真值。
+#    D.【M6-3 占位符自测钩子】构建产物（rustdesk 目录 + SignOutput）
+#        grep 不得含 "__NERVDESK_" 前缀占位符原样，含 → 构建失败。
+#    E.【M3-1 产物改名】t4 品牌补丁 BINARY_NAME → nervdesk：本 workflow 的
+#        便携打包输入、SignOutput 产物与 Release 文件随之改为 nervdesk-*。
+#    G.【t12 双变体】build-windows-x64 为矩阵（mode=controlled|controller）：
+#        补丁装配链对两变体字节一致，仅在构建参数处区分——Rust 侧
+#        env NERVDESK_MODE（option_env!）+ Flutter 侧 --dart-define（build.py
+#        dart-define 注入步骤同步追加），两通道缺一不可（UI 与逻辑才一致）。
+#        产物 nervdesk-controlled-* / nervdesk-controller-*（各 exe+msi）；
+#        Release 由 publish-release job 在**同一 TAG** 下发布两套产物集。
+#        全部硬约束（接线/Secret 闸门/F1 不变量+守卫语义/M6-3 扫描）在矩阵内
+#        定义一次、对每个变体各自完整执行。
+#    F. 其余步骤与 custom-windows-iroh-branded.yml 完全一致（工具链/缓存/
+#        打包/发布逐字保留，避免破坏已验证的构建路径）。
+#
+#  ============================================================================
+#  怎么用（fork 侧）：
+#    1. fork rustdesk/rustdesk（AGPL-3.0，保持 Public），基于 1.4.9 tag
+#       新建分支 nervdesk-custom-windows-1.4.9
+#    2. 把本文件上传到该分支 .github/workflows/custom-windows-nervdesk.yml
+#       （上传即 push，自动触发构建；也可在 Actions 页手动 Run workflow）
+#    3. 分支上必须同时带上（tools/push_nervdesk_custom.py 会自动组装）：
+#         nervdesk/  iroh 模块模板（stream.rs / iroh_transport.rs 等）
+#         nervdesk/branding-apply.py + nervdesk/branding/*.ico（A 档品牌）
+#         patches/io_loop-iroh-hook.patch + patches/connection-iroh-hook.patch
+#         patches/nervdesk-features/        （t2：补丁 + apply_nervdesk_features.py）
+#         patches/nervdesk-network-service/ （t3：补丁 + apply_nervdesk_network_service.py）
+#         patches/nervdesk-branding-depth/  （t4：补丁 + apply_nervdesk_branding_depth.py）
+#    4. 在 fork 仓库 Settings → Secrets and variables → Actions 配置：
+#         NERVDESK_PASSWORD  固定密码/PIN 真值（绝不入库、绝不打印）
+#         NERVDESK_RELAY_TOKEN  relay 访问令牌（对应 access.shared_token）
+#       未配置这两个 Secret → 构建明确失败（见步骤 3）。
+#    5. 【t12 双变体 · 如何触发与产物对照】一次构建（workflow_dispatch /
+#       push 到 nervdesk-custom-windows-**）自动跑矩阵两腿，无需额外参数：
+#
+#         | 变体（matrix.mode） | 形态（t11 编译期开关）        | 产物（SignOutput / Release）                          |
+#         |---|---|---|
+#         | controlled          | 纯被控端：托盘隐藏、连接管理器隐藏、ID 直连/发起入口移除、出站会话拒绝（session_add bail），仅密钥/服务常驻 | nervousdesk-controlled-1.4.9-x86_64.exe / .msi |
+#         | controller          | 控制端：托盘保留、连接管理器/ID 直连保留、可发起会话     | nervdesk-controller-1.4.9-x86_64.exe / .msi  |
+#
+#       Release 页同一 TAG（默认 nervdesk-custom-1.4.9）下出现两组文件
+#       （controlled* / controller*，各 exe+msi）；TAG 可改，同一 TAG 只能
+#       成功一次，重跑换名。两变体语义表（含「未设置=默认」列）见
+#       patches/nervdesk-features/nervdesk-features-change-list.md §2.7。
+#    6. 旧 workflow 已废弃（M6-6）：custom-windows-iroh-branded.yml 等由
+#       推送脚本从分支删除；本文件夹内的旧文件已标 DEPRECATED + 迁移说明。
+#  ============================================================================
+
+name: Build NervDesk Custom Windows x64 (iroh wired)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
+        required: true
+        default: 'nervdesk-custom-1.4.9'
+  # 推送到 nervdesk-custom-windows- 开头的分支时自动构建。
+  # （与 Android 的 nervdesk-custom-android-** 不重叠，避免双 workflow 误触发）
+  push:
+    branches:
+      - 'nervdesk-custom-windows-**'
+
+# 发布 Release 需要写权限
+permissions:
+  contents: write
+
+env:
+  # ---------------- 你的服务器信息：只改这一段 ----------------
+  RS_ID_SERVER: "id.nervcode.eu.org"
+  RS_RELAY_SERVER: "relay.nervcode.eu.org:21117"
+  RS_API_SERVER: "https://api.nervcode.eu.org"
+  RS_KEY: "HJtH5YUqy6Dz8FHfypUKPJSGoxbBeSgtDsahkT6MBo4="
+  # -----------------------------------------------------------
+  # 注意：NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN 不放在这里——
+  # 密钥值绝不写进 workflow 文件，只在需要它们的步骤里用
+  # ${{ secrets.* }} 读取（见「Guard CI secrets」与「Replace placeholder」两步骤）。
+
+  # 以下与官方 CI 保持一致，一般不要动
+  VERSION: "1.4.9"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  SCITER_RUST_VERSION: "1.91"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-1.4.9' }}
+  UPLOAD_ARTIFACT: "true"
+  # 固定成 "-2"：官方 CI 用这个值判断"跳过需要 RustDesk 私钥的代码签名"。
+  # 我们没有他们的签名服务，跳过是对的（代价是首次运行会有 SmartScreen 提示）。
+  SIGN_BASE_URL: "-2"
+
+jobs:
+  # 生成 flutter_rust_bridge 胶水代码（官方必需步骤）
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  # 编译任务栏窗口辅助程序（官方必需步骤）
+  build-topmost-window:
+    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
+    with:
+      upload-artifact: true
+      target: windows-2022
+      configuration: Release
+      platform: x64
+      target_version: Windows10
+
+  # ======================================================================
+  # 【t12 双变体】同一矩阵覆盖 controlled（纯被控端）与 controller（控制端）
+  # 两个编译期形态（t11：NERVDESK_MODE）。补丁装配链（接线/品牌/t2~t4/
+  # 占位符替换/服务器注入）对两个变体完全一致，只在「构建参数」处区分：
+  #   - Rust 侧：Build 步骤 env NERVDESK_MODE=${{ matrix.mode }}（option_env!）
+  #   - Flutter 侧：dart-define 注入步骤把 --dart-define=NERVDESK_MODE=...
+  #     追加进 build.py 的 'flutter build windows --release'（String.fromEnvironment）
+  # 两通道缺一不可；产物命名 nervdesk-controlled-* / nervdesk-controller-*
+  # （exe/msi），Release 同一 TAG 下一个产物集两组文件。
+  # 全部硬约束（接线第5步、Secret 闸门、F1 不变量+守卫语义、M6-3 扫描）
+  # 在该矩阵 job 内定义一次、随矩阵对每个变体各自完整执行。
+  # ======================================================================
+  build-windows-x64:
+    name: Windows x64 (${{ matrix.mode }})
+    needs: [generate-bridge, build-topmost-window]
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [controlled, controller]
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      # ======================================================================
+      # 【M6-2 密钥管线 · 前置闸门】Secret 必须配齐，缺一个就立刻失败。
+      # 绝不"用空串当假值继续构建"——占位符没替换就发布是最坏的情况。
+      # ======================================================================
+      - name: Guard CI secrets (NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN)
+        shell: bash
+        env:
+          NERVDESK_PASSWORD: ${{ secrets.NERVDESK_PASSWORD }}
+          NERVDESK_RELAY_TOKEN: ${{ secrets.NERVDESK_RELAY_TOKEN }}
+        run: |
+          ok=1
+          if [ -z "$NERVDESK_PASSWORD" ]; then
+            echo "::error::Secret NERVDESK_PASSWORD 未配置：请在 fork 仓库 Settings → Secrets and variables → Actions 配置固定密码/PIN 真值。"
+            ok=0
+          fi
+          if [ -z "$NERVDESK_RELAY_TOKEN" ]; then
+            echo "::error::Secret NERVDESK_RELAY_TOKEN 未配置：请在 fork 仓库 Settings → Secrets and variables → Actions 配置 relay 访问令牌。"
+            ok=0
+          fi
+          [ "$ok" = 1 ]
+
+      # ======================================================================
+      # 关键步骤：在这里把你的服务器信息写进源码
+      # 改动 3 处，编译前进不来就立刻报错，不会白等 1 小时才发现
+      # ======================================================================
+      # libs/hbb_common 是 git 子模块：GitHub 的 Contents API 无法直接往里写文件
+      # （会返回 409/404），而且 Windows 上 git apply 容易因 CRLF 失配。
+      # 所以模块模板放在 nervdesk/ 下，这里在构建前把它落到源码树里。
+      - name: Apply iroh source changes
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, shutil, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True); sys.exit(1)
+
+          def read_text(p):
+              raw = pathlib.Path(p).read_bytes().decode("utf-8")
+              crlf = "\r\n" in raw
+              return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+          def write_text(p, text, crlf):
+              pathlib.Path(p).write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+          def sub(text, old, new, label):
+              n = text.count(old)
+              if n != 1: die("%s: 锚点匹配 %d 处，期望 1 处" % (label, n))
+              return text.replace(old, new)
+
+          # 1) 新增两个模块：iroh 传输 + 传输切换时的加密状态迁移
+          mods = ["iroh_transport.rs", "crypto_handoff.rs", "iroh_upgrade.rs", "iroh_upgrade_session.rs", "iroh_transition.rs"]
+
+          # stream.rs 是"替换已有文件"，不是新增。
+          # 加一道哈希守卫：万一上游改了这个文件，宁可响亮失败也不要静默覆盖。
+          expected_sha = "bb541d243e0c7b8c22c82ff0acfd6e2fa0ed792acb57427a1d10852e46392d11"
+          p_stream = pathlib.Path("libs/hbb_common/src/stream.rs")
+          import hashlib
+          # 必须先归一化行尾再比对：.gitattributes 是 `* text=auto`，
+          # Windows 上 checkout 出来是 CRLF，而仓库里存的是 LF。
+          raw = p_stream.read_bytes()
+          normalized = raw.replace(b"\r\n", b"\n")
+          actual = hashlib.sha256(normalized).hexdigest()
+          if actual != expected_sha:
+              die("libs/hbb_common/src/stream.rs 与预期版本不一致（上游可能改过），拒绝覆盖")
+          shutil.copyfile("nervdesk/stream.rs", p_stream)
+          dst_dir = pathlib.Path("libs/hbb_common/src")
+          if not dst_dir.is_dir(): die("子模块 libs/hbb_common 没拉下来")
+          for name in mods:
+              src = pathlib.Path("nervdesk") / name
+              if not src.is_file(): die("缺少 nervdesk/%s" % name)
+              shutil.copyfile(src, dst_dir / name)
+
+          # 2) libs/hbb_common/Cargo.toml
+          p = "libs/hbb_common/Cargo.toml"
+          t, crlf = read_text(p)
+          t = sub(t, 'webrtc = ["dep:webrtc"]\n',
+                     'webrtc = ["dep:webrtc"]\n'
+                     '# 用 iroh(QUIC) 承载点对点数据通道（iroh 版构建）。\n'
+                     '# 开启后可用 `cargo check -p hbb_common --features iroh-transport` 验证。\n'
+                     '#\n'
+                     '# 注意：iroh 1.2 的 MSRV 是 rustc 1.91，而 RustDesk 的 CI 锁定 1.75\n'
+                     '# （1.75 是为了 sciter 旧 UI）。启用本 feature 必须同时抬高工具链版本。\n'
+                     'iroh-transport = ["dep:iroh"]\n', p)
+          t = sub(t, 'libloading = "0.8"\n',
+                     'libloading = "0.8"\n'
+                     '# QUIC 传输（可选，见 feature iroh-transport）。锁死小版本，避免 API 漂移。\n'
+                     'iroh = { version = "1.2", optional = true }\n', p)
+          write_text(p, t, crlf)
+
+          # 3) libs/hbb_common/src/lib.rs
+          p = "libs/hbb_common/src/lib.rs"
+          t, crlf = read_text(p)
+          t = sub(t, "pub mod udp;\n",
+                     "pub mod udp;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transport;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod crypto_handoff;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_upgrade_session;\n"
+                     "#[cfg(feature = \"iroh-transport\")]\npub mod iroh_transition;\n", p)
+          write_text(p, t, crlf)
+
+          # 4) build.py（与 patches/iroh-p1-code.patch 里的改动完全一致）
+          p = "build.py"
+          t, crlf = read_text(p)
+          t = sub(t, "    parser.add_argument(\n        '--portable',",
+                     "    parser.add_argument(\n        '--iroh',\n        action='store_true',\n"
+                     "        help='Enable the experimental iroh(QUIC) peer-to-peer transport. '\n"
+                     "             'Requires rustc >= 1.91 and an updated Cargo.lock.'\n    )\n"
+                     "    parser.add_argument(\n        '--portable',", p)
+          t = sub(t, "    if args.flutter:\n        features.append('flutter')\n",
+                     "    if args.flutter:\n        features.append('flutter')\n"
+                     "    if getattr(args, 'iroh', False):\n        features.append('iroh-transport')\n", p)
+          write_text(p, t, crlf)
+
+          # 5) 根包 Cargo.toml：转发 feature
+          #    不加这一步 cargo 会直接报：
+          #    error: the package 'rustdesk' does not contain this feature: iroh-transport
+          #    （第一次跑就死在这里，属于接线遗漏，不是工具链问题）
+          p = "Cargo.toml"
+          t, crlf = read_text(p)
+          t = sub(t, 'default = ["use_dasp"]\n',
+                     'default = ["use_dasp"]\niroh-transport = ["hbb_common/iroh-transport"]\n', p)
+          write_text(p, t, crlf)
+
+          # 5) protos/message.proto：加 4 条升级消息 + 4 个 union 字段（33~36）
+          #    这些消息走客户端之间的端到端通道，hbbs/hbbr 不解析，
+          #    因此新增它们不需要改动服务器。
+          p = "libs/hbb_common/protos/message.proto"
+          t, crlf = read_text(p)
+          msgs = pathlib.Path("nervdesk/message_proto_iroh.txt").read_text(encoding="utf-8")
+          t = sub(t, "message Message {\n  oneof union {\n",
+                     msgs + "message Message {\n  oneof union {\n", p)
+          fields = ("    // NervDesk 扩展（33~36），见上面的说明\n"
+                    "    IrohUpgradeOffer iroh_upgrade_offer = 33;\n"
+                    "    IrohUpgradeAnswer iroh_upgrade_answer = 34;\n"
+                    "    IrohUpgradeCommit iroh_upgrade_commit = 35;\n"
+                    "    IrohUpgradeCommitAck iroh_upgrade_commit_ack = 36;\n")
+          t = sub(t, "    TerminalResponse terminal_response = 32;\n  }\n}\n",
+                     "    TerminalResponse terminal_response = 32;\n" + fields + "  }\n}\n", p)
+          write_text(p, t, crlf)
+
+          # 立刻校验
+          cfg = pathlib.Path("libs/hbb_common/Cargo.toml").read_text(encoding="utf-8")
+          lib = pathlib.Path("libs/hbb_common/src/lib.rs").read_text(encoding="utf-8")
+          bp  = pathlib.Path("build.py").read_text(encoding="utf-8")
+          assert 'iroh-transport = ["dep:iroh"]' in cfg, "Cargo.toml feature 未写入"
+          assert 'iroh = { version = "1.2", optional = true }' in cfg, "Cargo.toml 依赖未写入"
+          assert "pub mod iroh_transport;" in lib, "lib.rs 模块未注册"
+          assert "'--iroh'" in bp, "build.py 开关未写入"
+          assert "features.append('iroh-transport')" in bp, "build.py feature 未透传"
+          assert pathlib.Path("libs/hbb_common/src/iroh_transport.rs").is_file(), "iroh_transport.rs 缺失"
+          assert pathlib.Path("libs/hbb_common/src/crypto_handoff.rs").is_file(), "crypto_handoff.rs 缺失"
+          assert "pub mod crypto_handoff;" in lib, "crypto_handoff 模块未注册"
+          assert "pub mod iroh_upgrade;" in lib, "iroh_upgrade 模块未注册"
+          assert "pub mod iroh_upgrade_session;" in lib, "iroh_upgrade_session 模块未注册"
+          assert pathlib.Path("libs/hbb_common/src/iroh_upgrade_session.rs").is_file(), "iroh_upgrade_session.rs 缺失"
+          assert pathlib.Path("libs/hbb_common/src/iroh_transition.rs").is_file(), "iroh_transition.rs 缺失"
+          assert "pub mod iroh_transition;" in lib, "iroh_transition 模块未注册"
+          proto = pathlib.Path("libs/hbb_common/protos/message.proto").read_text(encoding="utf-8")
+          assert "IrohUpgradeOffer iroh_upgrade_offer = 33;" in proto, "proto union 字段未写入"
+          assert "message IrohUpgradeCommitAck {}" in proto, "proto 消息未写入"
+          assert pathlib.Path("libs/hbb_common/src/iroh_upgrade.rs").is_file(), "iroh_upgrade.rs 缺失"
+          root_cfg = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
+          assert 'iroh-transport = ["hbb_common/iroh-transport"]' in root_cfg, "根包 feature 未转发"
+          print("=" * 60)
+          print("iroh 源码改动已应用并通过校验")
+          print("=" * 60)
+          PYEOF
+
+      # ======================================================================
+      # 【M6-1 硬约束】io_loop/connection 接线补丁 —— 保留与自检
+      # ----------------------------------------------------------------------
+      # ⚠️ 历史教训：缺接线则 iroh 升级永不触发（真机日志全程无 iroh 活动，
+      #    见 docs/03 相关记录；docs/02 §18；build/next-session-handoff.md §3）。
+      #    旧分支是在分支源码里预先提交"已接线"的 io_loop.rs/connection.rs；
+      #    本步骤把它固化成 workflow 内自证：先查标记；缺则 git apply 补丁；
+      #    再查仍缺 = 立即失败，绝不带着"没接线"的产物往下走。
+      # 标记：io_loop.rs 需含 drive_iroh_upgrade + start_iroh_upgrade +
+      #       IROH_TICK_INTERVAL；connection.rs 需含 drive_iroh_upgrade +
+      #       handle_iroh_upgrade + IROH_TICK_INTERVAL。
+      # ======================================================================
+      - name: Apply iroh wiring patches (io_loop/connection) — MUST
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, subprocess, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True); sys.exit(1)
+
+          IO_LOOP = "src/client/io_loop.rs"
+          CONN    = "src/server/connection.rs"
+          CHECKS = {
+              IO_LOOP: ["drive_iroh_upgrade", "start_iroh_upgrade", "IROH_TICK_INTERVAL"],
+              CONN:    ["drive_iroh_upgrade", "handle_iroh_upgrade", "IROH_TICK_INTERVAL"],
+          }
+
+          def wired_ok():
+              for path, markers in CHECKS.items():
+                  p = pathlib.Path(path)
+                  if not p.is_file():
+                      return False
+                  text = p.read_text(encoding="utf-8", errors="replace")
+                  for m in markers:
+                      if m not in text:
+                          print("[INFO] %s 缺标记 %s" % (path, m), file=sys.stderr)
+                          return False
+              return True
+
+          if wired_ok():
+              print("[OK] io_loop/connection 接线已在源码树中（标记齐全），跳过 apply")
+              sys.exit(0)
+
+          print("[INFO] 检测到接线缺失，应用 wiring 补丁……")
+          patches = ["patches/io_loop-iroh-hook.patch", "patches/connection-iroh-hook.patch"]
+          for pf in patches:
+              p = pathlib.Path(pf)
+              if not p.is_file():
+                  die("缺少接线补丁 %s；请随分支上传（该补丁缺失 = 无法保证 iroh 升级接线，拒绝构建）" % pf)
+              r = subprocess.run(["git", "apply", "--check", pf], capture_output=True)
+              if r.returncode != 0:
+                  die("git apply --check 失败：%s\n%s" % (pf, r.stderr.decode("utf-8", "replace").strip()))
+              subprocess.run(["git", "apply", pf], check=True)
+              print("[OK] 已应用 %s" % pf)
+
+          # 再查一次：仍缺 = 接线失败，立即失败（绝不静默继续）
+          if not wired_ok():
+              die("io_loop/connection 接线应用后标记仍缺失——iroh 升级将永不触发，"
+                  "拒绝继续构建（历史教训，docs/02 §18）。请检查补丁版本与 1.4.9 基线是否匹配。")
+          print("=" * 60)
+          print("io_loop/connection 接线已确认（drive_iroh_upgrade / IROH_TICK_INTERVAL）")
+          print("=" * 60)
+          PYEOF
+
+      # ======================================================================
+      # 【A 档品牌（t2/t3/t4 前置依赖）】NervDesk 名称 + 图标。
+      # 必须在本步骤先完成：t4 的 apply 脚本会预校验「品牌已应用」（其
+      # Runner.rc 锚点是品牌化后的状态）。锚点匹配数 != 1 立即失败，绝不静默。
+      # ======================================================================
+      - name: Apply NervDesk branding (name + icons, A 档品牌前置)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          # 1) 文本品牌改动：APP_NAME / 窗口标题 / exe 属性 / About 文案
+          cp nervdesk/branding-apply.py .
+          python3 branding-apply.py
+          # 2) 图标：按 nervdesk/branding/README.md 映射表复制（F3 对齐实际交付
+          #    文件名：tray-icon.ico → res/tray-icon.ico；installer.ico → res/icon.ico）
+          cp nervdesk/branding/app_icon.ico flutter/windows/runner/resources/app_icon.ico
+          cp nervdesk/branding/tray-icon.ico res/tray-icon.ico
+          cp nervdesk/branding/installer.ico res/icon.ico
+          ls -l flutter/windows/runner/resources/app_icon.ico res/tray-icon.ico res/icon.ico
+          # 3) 校验：文本品牌已生效
+          grep -q 'RwLock::new("NervDesk"' libs/hbb_common/src/config.rs && echo "[OK] config.rs APP_NAME=NervDesk"
+          grep -q 'app_name = L"NervDesk"' flutter/windows/runner/main.cpp && echo "[OK] main.cpp 窗口标题"
+          grep -q '"ProductName", "NervDesk"' flutter/windows/runner/Runner.rc && echo "[OK] Runner.rc 属性"
+
+      # ======================================================================
+      # 【t2/t3/t4 装配完成（M6-1/M6-8）】A 档品牌（上一步）完成后，按
+      # 依赖顺序执行各补丁目录的锚点自检脚本：t2(features) → t3(network-service)
+      # → t4(branding-depth)。每个脚本内置：锚点匹配数 != 1 立即失败 /
+      # CRLF 自适应 / 应用后校验 / 占位符纪律（__NERVDESK_PASSWORD__ /
+      # __NERVDESK_RELAY_TOKEN__ 只允许出现在 config.rs 的 const 与守卫位置）。
+      # 目录/脚本缺失 = 立即失败，绝不"静默构建一个没有 NervDesk 行为的产品"。
+      # 应用顺序与脚本自带的前置校验（t3 校验 t2、t4 校验品牌+t2+t3）由
+      # t2/t3/t4 契约固定——本例强制固定顺序，脚本自身也会再次校验。
+      # ======================================================================
+      - name: Apply NervDesk patches via anchor-check scripts (t2→t3→t4)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          # 1) 前置存在性：三个补丁目录、.patch 与 apply 脚本缺一不可
+          for d in \
+            patches/nervdesk-features \
+            patches/nervdesk-network-service \
+            patches/nervdesk-branding-depth; do
+            [ -d "$d" ] || { echo "::error::缺少必需补丁目录 $d（t2/t3/t4 产物，请随分支上传）"; exit 1; }
+            ls "$d"/*.patch >/dev/null 2>&1 || { echo "::error::$d 内没有 .patch 文件"; exit 1; }
+          done
+          [ -f patches/nervdesk-features/apply_nervdesk_features.py ] || { echo "::error::缺少 apply_nervdesk_features.py"; exit 1; }
+          [ -f patches/nervdesk-network-service/apply_nervdesk_network_service.py ] || { echo "::error::缺少 apply_nervdesk_network_service.py"; exit 1; }
+          [ -f patches/nervdesk-branding-depth/apply_nervdesk_branding_depth.py ] || { echo "::error::缺少 apply_nervdesk_branding_depth.py"; exit 1; }
+
+          # 2) 按序应用（脚本自带前置校验：t3 校验 t2 已应用，t4 校验品牌+t2+t3）
+          python3 patches/nervdesk-features/apply_nervdesk_features.py
+          python3 patches/nervdesk-network-service/apply_nervdesk_network_service.py
+          python3 patches/nervdesk-branding-depth/apply_nervdesk_branding_depth.py
+
+          # 3) 汇总锚点自检：三个模块的关键标记必须出现
+          grep -q "NERVDESK_FORCED_OPTIONS" libs/hbb_common/src/config.rs \
+            || { echo "::error::t2 强制选项表未写入（NERVDESK_FORCED_OPTIONS 缺失）"; exit 1; }
+          grep -q "NERVDESK_BUILTIN_RELAY_TOKEN" libs/hbb_common/src/config.rs \
+            || { echo "::error::t3 内置令牌 const 未写入（NERVDESK_BUILTIN_RELAY_TOKEN 缺失）"; exit 1; }
+          grep -q 'BINARY_NAME "nervdesk"' flutter/windows/CMakeLists.txt \
+            || { echo "::error::t4 BINARY_NAME 未改为 nervdesk"; exit 1; }
+          echo "============================================================"
+          echo "[OK] t2/t3/t4 装配完成，锚点自检通过"
+          echo "============================================================"
+
+      # ======================================================================
+      # 【M6-2 密钥管线 · 占位符替换】把补丁/源码里的占位符换成 Secret 真值。
+      #  - __NERVDESK_PASSWORD__   → $NERVDESK_PASSWORD（固定密码 + PIN）
+      #  - __NERVDESK_RELAY_TOKEN__→ $NERVDESK_RELAY_TOKEN（relay 访问令牌）
+      # 规则：
+      #   1. 替换前在「编译作用域」（src/libs/flutter/res/build.py/Cargo.toml/
+      #      nervdesk）里必须各命中 >= 1 处——0 命中 = t2/t3 补丁没装配，
+      #      拒绝静默构建；
+      #   2. 【F1 定向替换不变量】编译作用域内，占位符只允许出现在
+      #      「const 初始化行」（pub const NERVDESK_BUILTIN_*: &str = "..."）或
+      #      「注释行」——任何出现在其它代码行（如守卫右值）的命中都说明
+      #      整树替换会破坏守卫语义（守卫自毁，t7 的 F1），立即失败；
+      #      t9/t3 已把守卫右值改为运行时 marker() 拼接（format!("__{}_{}")），
+      #      源文件里连续占位符只剩 const 初始化行与注释；
+      #   3. 全树（除 .git/.github/target/build）做字节级替换，保留 CRLF；
+      #   4. 替换后全树 0 残留，且 NERVDESK_BUILTIN_PASSWORD /
+      #      NERVDESK_BUILTIN_RELAY_TOKEN 的 const 值必须等于对应 Secret
+      #      （守卫语义词：真值 != marker 哨兵 → 出厂密码写入/令牌注入分支可达）。
+      # 真值只在 runner 环境变量里流转：GitHub 会自动脱敏日志，本脚本
+      # 不打印任何 Secret 内容（只打印替换计数）。
+      # ======================================================================
+      - name: Replace placeholder secrets (__NERVDESK_PASSWORD__ / __NERVDESK_RELAY_TOKEN__)
+        shell: bash
+        env:
+          NERVDESK_PASSWORD: ${{ secrets.NERVDESK_PASSWORD }}
+          NERVDESK_RELAY_TOKEN: ${{ secrets.NERVDESK_RELAY_TOKEN }}
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, re, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True); sys.exit(1)
+
+          PW  = os.environ.get("NERVDESK_PASSWORD", "")
+          TOK = os.environ.get("NERVDESK_RELAY_TOKEN", "")
+          if not PW or not TOK:
+              die("Secret 为空（Guard 步骤应已拦截）——拒绝用假值构建")
+
+          PH_PW  = b"__NERVDESK_PASSWORD__"
+          PH_TOK = b"__NERVDESK_RELAY_TOKEN__"
+          IGNORE = {".git", ".github", "target", "build"}
+          # 编译作用域：占位符必须真出现在会被编译进产物的源码里
+          COMPILE_SCOPE = ["src", "libs", "flutter", "res", "build.py", "Cargo.toml", "nervdesk"]
+
+          def walk(roots):
+              files = []
+              for root in roots:
+                  rp = pathlib.Path(root)
+                  if rp.is_file():
+                      files.append(rp); continue
+                  if not rp.is_dir():
+                      continue
+                  for p in rp.rglob("*"):
+                      if p.is_file() and not any(part in IGNORE for part in p.parts):
+                          files.append(p)
+              return files
+
+          def count_ph(files):
+              c1 = c2 = 0
+              for p in files:
+                  try:
+                      data = p.read_bytes()
+                  except OSError:
+                      continue
+                  c1 += data.count(PH_PW); c2 += data.count(PH_TOK)
+              return c1, c2
+
+          # 【F1 定向替换不变量】占位符只允许出现在 const 初始化行或注释行；
+          # 出现在其它代码行（守卫右值等）→ 整树替换将破坏守卫语义，拒绝构建。
+          def invariant_violations(files):
+              bad = []
+              const_re = re.compile(
+                  r'pub const NERVDESK_BUILTIN_(?:PASSWORD|RELAY_TOKEN): &str = "')
+              for p in files:
+                  try:
+                      lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+                  except OSError:
+                      continue
+                  for i, ln in enumerate(lines, 1):
+                      if PH_PW.decode("latin1") in ln or PH_TOK.decode("latin1") in ln:
+                          s = ln.lstrip()
+                          if const_re.match(s) or s.startswith(("//", "/*", "*")):
+                              continue
+                          bad.append("%s:%d: %s" % (p, i, ln.strip()[:100]))
+              return bad
+
+          n_pw, n_tok = count_ph(walk(COMPILE_SCOPE))
+          if n_pw == 0 or n_tok == 0:
+              die("编译作用域占位符缺失（password=%d, relay_token=%d）：t2/t3 补丁未装配或未含占位符，拒绝静默构建" % (n_pw, n_tok))
+
+          bad = invariant_violations(walk(COMPILE_SCOPE))
+          if bad:
+              die("F1 定向替换不变量被破坏——占位符出现在非 const 初始化/非注释行，"
+                  "整树替换会导致守卫自毁（t7 F1）。违规行：\n  " + "\n  ".join(bad))
+
+          rp_pw = rt_tok = 0
+          for p in walk(["."]):
+              try:
+                  data = p.read_bytes()
+              except OSError:
+                  continue
+              c1 = data.count(PH_PW); c2 = data.count(PH_TOK)
+              if c1 or c2:
+                  data = data.replace(PH_PW, PW.encode()).replace(PH_TOK, TOK.encode())
+                  p.write_bytes(data)
+                  rp_pw += c1; rt_tok += c2
+
+          left_pw, left_tok = count_ph(walk(["."]))
+          if left_pw or left_tok:
+              die("替换后仍有占位符残留（password=%d, relay_token=%d）" % (left_pw, left_tok))
+
+          # 替换后守卫语义词：const 值必须等于 Secret（真值 != marker 哨兵 → 分支可达）
+          const_pw = const_tok = None
+          for p in walk(COMPILE_SCOPE):
+              try:
+                  text = p.read_text(encoding="utf-8", errors="replace")
+              except OSError:
+                  continue
+              m1 = re.search(r'pub const NERVDESK_BUILTIN_PASSWORD: &str = "([^"]*)"', text)
+              m2 = re.search(r'pub const NERVDESK_BUILTIN_RELAY_TOKEN: &str = "([^"]*)"', text)
+              if m1 and m1.group(1) != "__NERVDESK_PASSWORD__":
+                  const_pw = m1.group(1)
+              if m2 and m2.group(1) != "__NERVDESK_RELAY_TOKEN__":
+                  const_tok = m2.group(1)
+          if const_pw != PW:
+              die("NERVDESK_BUILTIN_PASSWORD const 值 != Secret（guard 语义失效：出厂密码写入分支不可达）")
+          if const_tok != TOK:
+              die("NERVDESK_BUILTIN_RELAY_TOKEN const 值 != Secret（guard 语义失效：令牌注入分支不可达）")
+
+          print("=" * 60)
+          print("[OK] 占位符替换完成：__NERVDESK_PASSWORD__ x%d → Secret；__NERVDESK_RELAY_TOKEN__ x%d → Secret" % (rp_pw, rt_tok))
+          print("（真值仅存在于 runner 工作区，不回写仓库、不打印内容）")
+          print("=" * 60)
+          PYEOF
+
+      - name: Inject custom server configuration
+        shell: bash
+        # Windows 上的 Python 默认用 cp1252 编码输出，打印中文会直接
+        # UnicodeEncodeError 崩掉（第一次跑就是死在这里，与补丁逻辑无关）。
+        # 这里强制 UTF-8，避免这种与业务无关的失败。
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, re, sys
+
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+
+          ID    = os.environ["RS_ID_SERVER"].strip()
+          API   = os.environ["RS_API_SERVER"].strip()
+          KEY   = os.environ["RS_KEY"].strip()
+          RELAY = os.environ["RS_RELAY_SERVER"].strip()
+
+          def die(m):
+              print("[FAIL] " + m, file=sys.stderr, flush=True)
+              sys.exit(1)
+
+          # 统一按 LF 处理、写完再还原原有行尾，
+          # 这样 checkout 出来不论 LF 还是 CRLF 都不会踩到「锚点匹配 0 处」。
+          def read_text(p):
+              raw = p.read_bytes().decode("utf-8")
+              crlf = "\r\n" in raw
+              return (raw.replace("\r\n", "\n") if crlf else raw), crlf
+
+          def write_text(p, text, crlf):
+              p.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+
+          cfg_p = pathlib.Path("libs/hbb_common/src/config.rs")
+          com_p = pathlib.Path("src/common.rs")
+          for p in (cfg_p, com_p):
+              if not p.is_file():
+                  die("找不到 %s ，子模块可能没拉下来" % p)
+
+          cfg, cfg_crlf = read_text(cfg_p)
+          cfg, n1 = re.subn(r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[[^\]]*\];',
+                            'pub const RENDEZVOUS_SERVERS: &[&str] = &["%s"];' % ID, cfg)
+          if n1 != 1:
+              die("RENDEZVOUS_SERVERS 锚点匹配 %d 处，期望 1 处" % n1)
+          cfg, n2 = re.subn(r'pub const RS_PUB_KEY: &str = "[^"]*";',
+                            'pub const RS_PUB_KEY: &str = "%s";' % KEY, cfg)
+          if n2 != 1:
+              die("RS_PUB_KEY 锚点匹配 %d 处，期望 1 处" % n2)
+          write_text(cfg_p, cfg, cfg_crlf)
+
+          com, com_crlf = read_text(com_p)
+          old = '    "https://admin.rustdesk.com".to_owned()\n}'
+          new = '    "%s".to_owned()\n}' % API
+          if com.count(old) != 1:
+              die("API 服务器锚点匹配 %d 处，期望 1 处" % com.count(old))
+          write_text(com_p, com.replace(old, new), com_crlf)
+
+          # 立刻校验，确保真的写进去了
+          cfg = cfg_p.read_text(encoding="utf-8")
+          com = com_p.read_text(encoding="utf-8")
+          assert ('&["%s"];' % ID) in cfg, "RENDEZVOUS_SERVERS 写入失败"
+          assert ('"%s";' % KEY) in cfg, "RS_PUB_KEY 写入失败"
+          assert ('"%s".to_owned()' % API) in com, "API 服务器写入失败"
+          assert "rs-ny.rustdesk.com" not in cfg, "仍残留官方公共服务器地址"
+
+          print("=" * 60)
+          print("已写入源码：")
+          print("  ID  服务器 : %s:21116" % ID)
+          print("  中继服务器 : %s（由 ID 服务器下发，无需写死）" % RELAY)
+          print("  API 服务器 : %s" % API)
+          print("  公钥       : %s...%s" % (KEY[:8], KEY[-6:]))
+          print("=" * 60)
+          PYEOF
+
+      - name: Show patched lines
+        shell: bash
+        run: |
+          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -5
+          grep -n "https://api" src/common.rs | head -5
+          # 接线标记复核（M6-1）：两个文件都必须出现升级驱动
+          echo "--- wiring markers ---"
+          grep -c "drive_iroh_upgrade" src/client/io_loop.rs src/server/connection.rs
+          grep -c "IROH_TICK_INTERVAL" src/client/io_loop.rs src/server/connection.rs
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install flutter
+        id: flutter
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Replace engine with rustdesk custom flutter engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          [[ "3.24.5" == ${{ env.FLUTTER_VERSION }} ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.SCITER_RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: "rustfmt"
+
+      - name: Report actual rustc version
+        shell: bash
+        run: |
+          echo "=== 这是本次验证的关键：必须是 1.91 或更高 ==="
+          rustc --version
+          cargo --version
+
+      # 【F-V2 修复】rust-cache 必须按变体隔离：option_env!("NERVDESK_MODE")
+      # 不参与 cargo 指纹，若两腿共用同一缓存键，某一腿的缓存可能被另一腿
+      # 复用 → 把上一腿的编译期形态静默带进本腿产物。
+      # 隔离机制双保险：
+      #   1) prefix-key 直接含 matrix.mode（两腿缓存键必然不同）；
+      #   2) env-vars: NERVDESK_MODE（取值进入缓存键 hash，模式值变化即换键）。
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        env:
+          NERVDESK_MODE: ${{ matrix.mode }}
+        with:
+          prefix-key: windows-2022-custom-${{ matrix.mode }}
+          env-vars: NERVDESK_MODE
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+          head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-x64-windows-static-rel-out.log" || true
+        shell: bash
+
+      - name: Complete Cargo.lock for the --locked build
+        shell: bash
+        run: |
+          # build.py 里所有 cargo 调用都带 --locked，开启 iroh 后必须先补全 lockfile。
+          # 实测 cargo 的更新是纯增量的（既有依赖版本一个都不变），
+          # 所以这里只补新增依赖，不会顺带升级任何东西。
+          cargo fetch
+          echo "Cargo.lock 中 iroh 相关条目数: $(grep -c '^name = "iroh' Cargo.lock)"
+
+      # ======================================================================
+      # 端到端验证 iroh 传输本身（真实连接，不是假流）
+      # ----------------------------------------------------------------------
+      # 这个测试建立两个**真实的 iroh endpoint**，互相投递真实的 protobuf 字节，
+      # 跑完 Offer → Answer → 拨号 → Commit → CommitAck → 换流，
+      # 最后确认数据真的从 QUIC 通道过去了。
+      #
+      # 为什么放在主构建**之前**：它一上线就挖出过一个会让整条连接僵死的缺陷
+      # （iroh 的 accept_bi() 要等对端真的发了数据才返回，而我们拨号后
+      # 要等 CommitAck 才发数据 → 死锁）。传输层有问题就该在这里立刻失败，
+      # 不必先花 40 分钟编 Flutter 再发现。
+      #
+      # 注意：它跑的是 loopback 直连，**不经过 hbbs 信令、也没有真实网络路径**，
+      # 所以它不能替代两台真机的实测 —— 但它能证明"协议逻辑 + iroh 连接"
+      # 这一整段是通的。
+      # ======================================================================
+      - name: Run iroh transport end-to-end test
+        shell: bash
+        run: |
+          mkdir -p libs/hbb_common/tests
+          cp nervdesk/iroh_upgrade_e2e.rs libs/hbb_common/tests/
+          # 单线程跑：每个用例都要绑本地端口建 endpoint，串行更稳
+          cargo test --locked -p hbb_common --features iroh-transport \
+            --test iroh_upgrade_e2e -- --test-threads=1
+
+      # ======================================================================
+      # 【t12 变体 · Flutter dart-define 通道】NERVDESK_MODE 必须同时进入
+      # Rust 侧（option_env! ← Build 步骤 env，见下）与 Flutter 侧
+      # （String.fromEnvironment ← --dart-define）。build.py 的
+      # 'flutter build windows --release' 没有透传参数，这里用锚点精确追加
+      # dart-define（锚点 != 1 处立即失败）。两通道缺一不可：
+      # 只传 env 则 UI 层仍是默认形态（Rust 逻辑与 Flutter UI 不一致）。
+      # ======================================================================
+      - name: Wire NERVDESK_MODE into flutter build (dart-define channel)
+        shell: bash
+        env:
+          NERVDESK_MODE: ${{ matrix.mode }}
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+              sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+          mode = os.environ["NERVDESK_MODE"]
+          if mode not in ("controlled", "controller"):
+              print("[FAIL] NERVDESK_MODE 非法：" + mode, file=sys.stderr); sys.exit(1)
+          p = pathlib.Path("build.py")
+          raw = p.read_bytes()
+          crlf = b"\r\n" in raw
+          text = raw.replace(b"\r\n", b"\n").decode("utf-8")
+          anchor = "    system2('flutter build windows --release')\n"
+          n = text.count(anchor)
+          if n != 1:
+              print("[FAIL] build.py flutter windows 锚点匹配 %d 处，期望 1 处" % n, file=sys.stderr); sys.exit(1)
+          new = "    system2('flutter build windows --release --dart-define=NERVDESK_MODE=%s')\n" % mode
+          out = text.replace(anchor, new)
+          p.write_bytes(out.replace("\n", "\r\n").encode("utf-8") if crlf else out.encode("utf-8"))
+          assert ("--dart-define=NERVDESK_MODE=%s" % mode) in p.read_text(encoding="utf-8"), "dart-define 未写入 build.py"
+          print("=" * 60)
+          print("[OK] build.py 已注入 --dart-define=NERVDESK_MODE=%s" % mode)
+          print("=" * 60)
+          PYEOF
+
+      # 【t12 变体 · Rust 通道】NERVDESK_MODE 环境变量随 cargo/rustc 编译进程
+      # 可见——option_env!("NERVDESK_MODE") 在编译期把形态固化进产物。
+      - name: Build rustdesk (${{ matrix.mode }})
+        env:
+          NERVDESK_MODE: ${{ matrix.mode }}
+        run: |
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram --iroh
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk
+
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath .
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
+          mv -Force .\usbmmidd_v2 ./rustdesk
+
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums -OutFile sha256sums
+
+            $checksum_driver = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*rustdesk_printer_driver_v4-1\.4\.zip$').Matches.Groups[1].Value
+            $downloadsum_driver = Get-FileHash -Path rustdesk_printer_driver_v4-1.4.zip -Algorithm SHA256
+            $checksum_adapter = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$').Matches.Groups[1].Value
+            $downloadsum_adapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256
+            if ($checksum_driver -eq $downloadsum_driver.Hash -and $checksum_adapter -eq $downloadsum_adapter.Hash) {
+                Write-Output "rustdesk_printer_driver_v4-1.4, checksums match, extract the file."
+                Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
+                mkdir ./rustdesk/drivers
+                mv -Force .\rustdesk_printer_driver_v4-1.4 ./rustdesk/drivers/RustDeskPrinterDriver
+                Expand-Archive printer_driver_adapter.zip -DestinationPath .
+                mv -Force .\printer_driver_adapter.dll ./rustdesk
+            } elseif ($checksum_driver -ne $downloadsum_driver.Hash) {
+                Write-Output "rustdesk_printer_driver_v4-1.4, checksums do not match, ignore the file."
+            } else {
+                Write-Output "printer_driver_adapter.dll, checksums do not match, ignore the file."
+            }
+          } catch {
+              Write-Host "Ingore the printer driver error."
+          }
+
+      # ======================================================================
+      # 【M6-3 占位符自测钩子 · 第一道】构建产物（rustdesk 完整程序目录）
+      # 字节级扫描 "__NERVDESK_" 前缀占位符原样；命中立即失败——
+      # 防止"占位符没替换还静默打包发布"。
+      # ======================================================================
+      - name: Placeholder self-test (build dir must not contain __NERVDESK_)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+          PREFIX = b"__NERVDESK_"
+          root = pathlib.Path("rustdesk")
+          if not root.is_dir():
+              print("[FAIL] 找不到产物目录 rustdesk/", file=sys.stderr); sys.exit(1)
+          hits = []
+          for f in root.rglob("*"):
+              if not f.is_file():
+                  continue
+              try:
+                  data = f.read_bytes()
+              except OSError:
+                  continue
+              if PREFIX in data:
+                  hits.append(str(f))
+          if hits:
+              print("[FAIL] 构建产物含占位符原样（%d 个文件），拒绝进入打包：" % len(hits), file=sys.stderr)
+              for h in hits:
+                  print("  " + h, file=sys.stderr)
+              sys.exit(1)
+          print("[OK] rustdesk/ 产物目录无占位符残留（%d 个文件已扫描）" % len(list(root.rglob("*"))))
+          PYEOF
+
+      - name: Verify built DLL contains our server config
+        shell: bash
+        continue-on-error: true
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          data = open(r"rustdesk/librustdesk.dll", "rb").read()
+          for s in (os.environ["RS_ID_SERVER"], os.environ["RS_API_SERVER"]):
+              print(("  FOUND   " if s.encode() in data else "  MISSING ") + s)
+          PYEOF
+
+      - name: find Runner.res
+        continue-on-error: true
+        shell: bash
+        run: |
+          runner_res=$(find . -name "Runner.res");
+          if [ "$runner_res" == "" ]; then
+            echo "Runner.res: not found";
+          else
+            echo "Runner.res: $runner_res";
+            cp $runner_res ./libs/portable/Runner.res;
+            ls -l ./libs/portable/Runner.res;
+          fi
+
+      - name: Download RustDeskTempTopMostWindow artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: topmostwindow-artifacts-x64
+          path: "./rustdesk"
+
+      - name: Upload unsigned app directory (${{ matrix.mode }})
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nervdesk-${{ matrix.mode }}-windows-x64-unsigned
+          path: rustdesk
+
+      # 产物命名（M3-1 / t4 §1.3 + t12 双变体）：BINARY_NAME 已改为 nervdesk，
+      # 便携打包输入 nervdesk.exe；SignOutput 产物按变体命名
+      # nervdesk-{mode}-VERSION-x86_64.{exe,msi}（Release 由 publish-release job 统一发布）。
+      - name: Build self-extracted executable (${{ matrix.mode }})
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/nervdesk.exe
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/nervdesk-${{ matrix.mode }}-${{ env.VERSION }}-x86_64.exe
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+
+      # MSI 品牌参数（A 档 + t4）：--app-name/--manufacturer 按 NervDesk 传参。
+      - name: Build msi (${{ matrix.mode }})
+        run: |
+          pushd ./res/msi
+          python preprocess.py --arp --app-name NervDesk --manufacturer NervDesk -d ../../rustdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
+          mv $msi.FullName ../../SignOutput/nervdesk-${{ matrix.mode }}-${{ env.VERSION }}-x86_64.msi
+          sha256sum ../../SignOutput/nervdesk-${{ matrix.mode }}-*.msi
+
+      # ======================================================================
+      # 【M6-3 占位符自测钩子 · 终检】SignOutput（exe/msi）+ rustdesk/ 目录
+      # 再次字节级扫描。exe/msi 内部载荷可能被压缩，正文以 rustdesk/ 目录
+      # 的扫描为准（打包内容源于该目录）；这里兜住直接写进打包头的场景。
+      # ======================================================================
+      - name: "Placeholder self-test (final: SignOutput + build dir)"
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          try:
+              sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          except Exception:
+              pass
+          PREFIX = b"__NERVDESK_"
+          targets = ["rustdesk", "SignOutput"]
+          hits = []
+          scanned = 0
+          for t in targets:
+              p = pathlib.Path(t)
+              if not p.exists():
+                  continue
+              files = [p] if p.is_file() else [f for f in p.rglob("*") if f.is_file()]
+              for f in files:
+                  scanned += 1
+                  try:
+                      data = f.read_bytes()
+                  except OSError:
+                      continue
+                  if PREFIX in data:
+                      hits.append(str(f))
+          if hits:
+              print("[FAIL] 打包产物含占位符原样（%d 个文件）：" % len(hits), file=sys.stderr)
+              for h in hits:
+                  print("  " + h, file=sys.stderr)
+              sys.exit(1)
+          print("[OK] 终检通过：%s 共 %d 个文件无占位符残留" % (" + ".join(t for t in targets if pathlib.Path(t).exists()), scanned))
+          PYEOF
+
+      # 【t12 双变体】每个变体把 SignOutput（exe+msi）上传为 workflow artifact；
+      # 统一 Release（同一 TAG 下两个产物集）由 publish-release job 完成，
+      # 避免两个矩阵腿并发抢建同一 tag（softprops 同 tag 二次创建会失败）。
+      - name: Upload release artifacts (${{ matrix.mode }})
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nervdesk-${{ matrix.mode }}-windows-x64-release
+          path: |
+            ./SignOutput/*.exe
+            ./SignOutput/*.msi
+
+  # ======================================================================
+  # 【t12 双变体 · Release】同一 TAG（默认 nervdesk-custom-1.4.9）下发布
+  # controlled + controller 两套产物（各自 exe + msi）。
+  # 只在该 job 判定需要：[build-windows-x64] 矩阵两腿全部成功后执行；
+  # 任一腿失败 → 本 job 自动跳过，不发布残缺产物集。
+  # ======================================================================
+  publish-release:
+    name: Publish Release (controlled + controller)
+    needs: [build-windows-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download controlled release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nervdesk-controlled-windows-x64-release
+          path: ./controlled
+
+      - name: Download controller release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nervdesk-controller-windows-x64-release
+          path: ./controller
+
+      - name: Verify both variant artifacts present
+        shell: bash
+        run: |
+          ls -l ./controlled ./controller
+          n_ctrl=$(ls ./controlled/nervdesk-controlled-*.exe ./controlled/nervdesk-controlled-*.msi 2>/dev/null | wc -l)
+          n_ctr=$(ls ./controller/nervdesk-controller-*.exe ./controller/nervdesk-controller-*.msi 2>/dev/null | wc -l)
+          [ "$n_ctrl" -ge 2 ] || { echo "::error::controlled 产物缺失（找到 $n_ctrl / 需 exe+msi）"; exit 1; }
+          [ "$n_ctr" -ge 2 ]  || { echo "::error::controller 产物缺失（找到 $n_ctr / 需 exe+msi）"; exit 1; }
+          sha256sum ./controlled/* ./controller/*
+
+      - name: Publish Release (dual variant)
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          prerelease: true
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            ./controlled/nervdesk-controlled-*.exe
+            ./controlled/nervdesk-controlled-*.msi
+            ./controller/nervdesk-controller-*.exe
+            ./controller/nervdesk-controller-*.msi
