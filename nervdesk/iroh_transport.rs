@@ -251,13 +251,8 @@ pub fn relay_mode_from_config(config: &IrohConfig) -> ResultType<RelayMode> {
     if config.relay_urls.is_empty() {
         return Ok(RelayMode::Disabled);
     }
-    let urls = config
-        .relay_urls
-        .iter()
-        .map(|s| s.parse())
-        .collect::<Result<Vec<_>, _>>()
+    let mut map = RelayMap::try_from_iter(config.relay_urls.iter().map(|s| s.as_str()))
         .map_err(|e| anyhow!("iroh relay 地址解析失败: {e}"))?;
-    let mut map = RelayMap::from_iter(urls);
     if let Some(token) = config.relay_auth_token.as_deref() {
         if !token.is_empty() {
             map = map.with_auth_token(token);
@@ -279,8 +274,8 @@ async fn build_endpoint(config: IrohConfig) -> ResultType<Endpoint> {
         .map_err(|e| anyhow!("iroh 绑定地址无效: {e}"))?
         .alpns(vec![ALPN.to_vec()]);
 
-    if let Some(sk) = config.secret_key {
-        builder = builder.secret_key(sk);
+    if let Some(ref sk) = config.secret_key {
+        builder = builder.secret_key(sk.clone());
     }
 
     builder = builder.relay_mode(relay_mode_from_config(&config)?);
