@@ -257,7 +257,7 @@ jobs:
           root_cfg = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
           assert 'iroh-transport = ["hbb_common/iroh-transport"]' in root_cfg, "根包 feature 未转发"
           print("=" * 60)
-                    print("iroh 源码改动已应用并通过校验")
+          print("iroh 源码改动已应用并通过校验")
           print("=" * 60)
           PYEOF
 
