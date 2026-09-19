@@ -24,12 +24,18 @@
 #       新建分支 nervdesk-custom-android-1.4.9
 #    2. 把本文件上传到该分支 .github/workflows/custom-android-nervdesk.yml
 #       （上传即 push，自动触发构建）
-#    3. Secrets（可选，全部在 fork Settings → Secrets and variables → Actions）：
-#         NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN：仅在编译作用域出现
-#           占位符时需要（见 B）；默认 Android 线不要求
+#    3. 分支上必须同时带上（tools/push_nervdesk_custom.py 会自动组装，与
+#       Windows 同源）：nervdesk/branding-apply.py（A 档品牌，文本）、
+#       nervdesk/branding/*.ico（Android 跳过图标，可留）、
+#       patches/nervdesk-features|network-service|branding-depth/
+#       （补丁 + apply_*.py 锚点自检脚本——t17：Android 装配链与 Windows
+#       同序 品牌 → t2 → t3 → t4，缺则 config.rs 无 t3 const，Inject 失败）。
+#    4. Secrets（fork Settings → Secrets and variables → Actions）：
+#         NERVDESK_PASSWORD / NERVDESK_RELAY_TOKEN：装配链应用后 config.rs
+#           出现占位符即必须配置（已配），否则条件管线立即失败
 #         ANDROID_SIGNING_KEY / ANDROID_ALIAS / ANDROID_KEY_STORE_PASSWORD /
 #         ANDROID_KEY_PASSWORD：自备 keystore 重签（覆盖安装）才需要，详见 docs/07
-#    4. 产物：aarch64 / armv7 / x86_64 三个 debug 签名 APK，TAG 默认
+#    5. 产物：aarch64 / armv7 / x86_64 三个 debug 签名 APK，TAG 默认
 #       nervdesk-custom-android-1.4.9（同一 TAG 只能成功一次，重跑换名）。
 #  ============================================================================
 
@@ -152,9 +158,70 @@ jobs:
           submodules: recursive
 
       # ======================================================================
-      # 【占位符条件管线（M5-4 边界）】Android 默认不要求两个 NERVDESK Secret；
-      # 但编译作用域（src/libs/flutter/res/build.py/Cargo.toml）里一旦出现
-      # 占位符，就必须有对应 Secret 并就地替换，缺失 = 立即失败。
+      # 【t17 修复 · A 档品牌】Android 与 Windows 同源装配链（品牌 → t2 → t3 → t4）。
+      # 只做文本品牌（branding-apply.py：APP_NAME 等）；**跳过图标**——Android
+      # 不用 exe/托盘/MSI 图标（nervdesk/branding/*.ico 是 Windows 资产）。
+      # ======================================================================
+      - name: Apply NervDesk branding (A 档品牌, text-only, no icons)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          [ -f nervdesk/branding-apply.py ] || { echo "::error::缺少 nervdesk/branding-apply.py（A 档品牌，随分支上传）"; exit 1; }
+          cp nervdesk/branding-apply.py .
+          python3 branding-apply.py
+          grep -q 'RwLock::new("NervDesk"' libs/hbb_common/src/config.rs && echo "[OK] config.rs APP_NAME=NervDesk（Android 文本品牌已生效；图标跳过）"
+
+      # ======================================================================
+      # 【t17 修复 · t2/t3/t4 补丁装配（M6-1 同序）】Android 必须与 Windows
+      # 一样应用 t2(features) → t3(network-service) → t4(branding-depth) 锚点
+      # 自检脚本——否则 config.rs 缺 t3 的 NERVDESK_RELAY_SERVER /
+      # NERVDESK_API_SERVER const，Inject server 步骤按参数化 const 锚点
+      # 注入时匹配 0 处而失败（run 35450604764 实测）。脚本自带前置校验
+      # （t3 校验 t2、t4 校验品牌+t2+t3）/锚点唯一性/CRLF/占位符纪律；
+      # 目录或脚本缺失 = 立即失败。**不引入 iroh 模块**（Android 无 iroh 传输，
+      # 与既有行为一致），也不做 Flutter 形态编译参数注入（Android 不涉及
+      # NERVDESK_MODE 形态 UI，M5-4）。
+      # ======================================================================
+      - name: Apply NervDesk patches via anchor-check scripts (t2→t3→t4)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          for d in \
+            patches/nervdesk-features \
+            patches/nervdesk-network-service \
+            patches/nervdesk-branding-depth; do
+            [ -d "$d" ] || { echo "::error::缺少必需补丁目录 $d（t2/t3/t4 产物，请随分支上传）"; exit 1; }
+            ls "$d"/*.patch >/dev/null 2>&1 || { echo "::error::$d 内没有 .patch 文件"; exit 1; }
+          done
+          [ -f patches/nervdesk-features/apply_nervdesk_features.py ] || { echo "::error::缺少 apply_nervdesk_features.py"; exit 1; }
+          [ -f patches/nervdesk-network-service/apply_nervdesk_network_service.py ] || { echo "::error::缺少 apply_nervdesk_network_service.py"; exit 1; }
+          [ -f patches/nervdesk-branding-depth/apply_nervdesk_branding_depth.py ] || { echo "::error::缺少 apply_nervdesk_branding_depth.py"; exit 1; }
+          python3 patches/nervdesk-features/apply_nervdesk_features.py
+          python3 patches/nervdesk-network-service/apply_nervdesk_network_service.py
+          python3 patches/nervdesk-branding-depth/apply_nervdesk_branding_depth.py
+          # 汇总锚点自检（与 Windows 同）：三个模块的关键标记必须出现
+          grep -q "NERVDESK_FORCED_OPTIONS" libs/hbb_common/src/config.rs \
+            || { echo "::error::t2 强制选项表未写入（NERVDESK_FORCED_OPTIONS 缺失）"; exit 1; }
+          grep -q "NERVDESK_BUILTIN_RELAY_TOKEN" libs/hbb_common/src/config.rs \
+            || { echo "::error::t3 内置令牌 const 未写入（NERVDESK_BUILTIN_RELAY_TOKEN 缺失）"; exit 1; }
+          grep -q 'BINARY_NAME "nervdesk"' flutter/windows/CMakeLists.txt \
+            || { echo "::error::t4 BINARY_NAME 未改为 nervdesk"; exit 1; }
+          echo "============================================================"
+          echo "[OK] Android 装配链（品牌→t2→t3→t4）应用完成，锚点自检通过"
+          echo "============================================================"
+
+      # ======================================================================
+      # 【占位符条件管线（M5-4 边界）】**在装配链之后执行**（t17：t2/t3 补丁
+      # 就在上一步把 __NERVDESK_PASSWORD__ / __NERVDESK_RELAY_TOKEN__ 写进
+      # config.rs，本步骤才看得到并触发 Secret 要求，行为与 Windows 一致）。
+      # Android 默认不强制要求两个 NERVDESK Secret；但编译作用域
+      # （src/libs/flutter/res/build.py/Cargo.toml）里一旦出现占位符，就必须有
+      # 对应 Secret 并就地替换，缺失 = 立即失败。
       # 注意排除 patches/、nervdesk/（Windows 线专属补丁与 iroh 模块，
       # Android 不编译它们，不能因其中的占位符误触发密钥要求）。
       # ======================================================================
