@@ -20,16 +20,24 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  // ============================================================================
  // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
  // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
-@@ -3326,6 +3338,8 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3326,6 +3338,16 @@ pub fn nerve_apply_forced_defaults() {
          bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
 +        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）
 +        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());
++        // t21：固定密码经既有 builtin 桥读出（不新增 FFI、不依赖 bridge 再生成）——
++        // generated_bridge.dart 由 CI codegen 在 pristine 源码上生成，新增 FFI 的
++        // Dart 声明进不了产物（r3 失败根因）；改用既有 mainGetBuildinOption(
++        // 'nervdesk-fixed-password')。值只在内存（BUILTIN_SETTINGS），不落盘，
++        // 暴露面与编译进二进制的 const 相同（非保密容器，docs/09 §0.2）。
++        if let Some(pw) = nervdesk_builtin_password_raw() {
++            bs.insert("nervdesk-fixed-password".to_owned(), pw);
++        }
      }
      if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
          && !Config::has_permanent_password()
-@@ -3522,6 +3536,46 @@ mod tests {
+@@ -3522,6 +3544,46 @@ mod tests {
          test()
      }
  
@@ -184,17 +192,20 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
        children.addAll([
          Divider(),
          OnlineStatusWidget(
-@@ -296,6 +301,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -296,6 +301,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
      final textColor = Theme.of(context).textTheme.titleLarge?.color;
      final showOneTime = model.approveMode != 'click' &&
          model.verificationMethod != kUsePermanentPassword;
-+    // NervDesk（t18 第 2 项）：明确显示已注入的出厂固定密码（未注入为空串不渲染），
++    // NervDesk（t18 第 2 项 + t21）：明确显示已注入的出厂固定密码（未注入为空串不渲染），
 +    // 消除一次性密码 `-` 歧义——连接时使用此固定密码。
-+    final builtinPassword = bind.mainGetBuiltinPasswordSync();
++    // t21：经既有 builtin 桥 mainGetBuildinOption（SyncReturn 生成为同名字面量，无
++    // Sync 后缀）读取 nervdesk-fixed-password（config.rs 启动时种子）；不新增 FFI，
++    // 避免依赖 CI codegen 再生成 generated_bridge.dart（r3 失败根因）。
++    final builtinPassword = bind.mainGetBuildinOption(key: 'nervdesk-fixed-password');
      return Container(
        margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
        child: Row(
-@@ -379,6 +387,34 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -379,6 +390,34 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                          ),
                      ],
                    ),
