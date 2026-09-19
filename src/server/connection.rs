@@ -304,6 +304,9 @@ pub struct Connection {
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
+    /// iroh 传输升级会话（NervDesk 扩展，默认开启）
+    #[cfg(feature = "iroh-transport")]
+    iroh_upgrade: Option<hbb_common::iroh_upgrade_session::UpgradeSession>,
     server: super::ServerPtrWeak,
     hash: Hash,
     read_jobs: Vec<fs::TransferJob>,
@@ -440,6 +443,22 @@ impl Subscriber for ConnInner {
     }
 }
 
+// iroh 升级会话的定时驱动间隔。
+//
+// **为什么用 cfg 常量而不是给 select! 分支加 #[cfg]：**
+// tokio 的 `select!` 宏语法里没有属性位（分支只能是
+// `<pattern> = <expr> (, if <cond>)? => <handler>`），
+// 在分支上写 `#[cfg(...)]` 会直接编译失败：
+//     error: no rules expected `#`
+// 所以这里把开关挪到「表达式」和「语句」两个合法位置上。
+//
+// 未编译该功能时给一个很长的间隔：这条分支实际上永远不会就绪，
+// 等价于不存在，不会有每秒 10 次的空唤醒。
+#[cfg(feature = "iroh-transport")]
+const IROH_TICK_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "iroh-transport"))]
+const IROH_TICK_INTERVAL: Duration = Duration::from_secs(3600);
+
 const TEST_DELAY_TIMEOUT: Duration = Duration::from_secs(1);
 const SEC30: Duration = Duration::from_secs(30);
 const H1: Duration = Duration::from_secs(3600);
@@ -505,6 +524,8 @@ impl Connection {
             require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
+            #[cfg(feature = "iroh-transport")]
+            iroh_upgrade: None,
             server,
             hash,
             read_jobs: Vec::new(),
@@ -925,6 +946,20 @@ impl Connection {
                         _ => {}
                     }
                 },
+                // iroh 升级会话必须**定时**驱动，不能只在收到消息时驱动：
+                // 被控端（响应方）的读方向可能长时间空闲（视频是它发出去的，
+                // 输入事件是突发的），那样 poll_accept 就永远不会被调用，
+                // iroh 连接建立后一直没人接受，升级会卡住。
+                // 注意：tokio 的 `select!` 不支持在分支上写 `#[cfg]`
+                // （会报 `no rules expected #`），开关只能放在下面这两处：
+                // 表达式里的 cfg 常量，以及分支体内的语句级 cfg。
+                _ = tokio::time::sleep(IROH_TICK_INTERVAL) => {
+                    #[cfg(feature = "iroh-transport")]
+                    // 终态之后就别再空转了（见 UpgradeSession::needs_tick）
+                    if conn.iroh_upgrade.as_ref().is_some_and(|s| s.needs_tick()) {
+                        conn.drive_iroh_upgrade().await;
+                    }
+                }
                 res = conn.stream.next() => {
                     if let Some(res) = res {
                         match res {
@@ -2503,7 +2538,143 @@ impl Connection {
         }
     }
 
+    /// 处理 iroh 升级：识别升级消息并驱动会话。
+    ///
+    /// 返回 `true` 表示这条消息已被升级流程消费，调用方不应再走原有逻辑。
+    #[cfg(feature = "iroh-transport")]
+    async fn handle_iroh_upgrade(&mut self, msg: &Message) -> bool {
+        use hbb_common::iroh_upgrade::Role;
+        use hbb_common::iroh_upgrade_session::{IncomingUpgrade, UpgradeSession};
+
+        let incoming = msg.union.as_ref().and_then(IncomingUpgrade::from_union);
+
+        // 不是升级消息：仍然驱动一次会话（响应方要轮询进来的 iroh 连接），
+        // 但把消息留给原有逻辑处理。
+        if incoming.is_none() {
+            self.drive_iroh_upgrade().await;
+            return false;
+        }
+        if !hbb_common::iroh_upgrade::is_enabled() {
+            log::debug!("收到 iroh 升级消息，但 enable-iroh-upgrade 未开启，忽略");
+            return true;
+        }
+        if self.iroh_upgrade.is_none() {
+            let cfg = match hbb_common::iroh_transport::config_from_options() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("构造 iroh 配置失败，放弃升级: {e}");
+                    return true;
+                }
+            };
+            self.iroh_upgrade = Some(UpgradeSession::new(Role::Responder, cfg));
+            log::info!("iroh 升级会话已创建（响应方）");
+        }
+        let orders = match self.iroh_upgrade.as_mut() {
+            Some(session) => match session.handle(incoming.as_ref().unwrap()).await {
+                Ok(o) => o,
+                Err(e) => {
+                    log::warn!("iroh 升级处理失败: {e}");
+                    return true;
+                }
+            },
+            None => return true,
+        };
+        self.run_iroh_orders(orders).await;
+        true
+    }
+
+    /// 驱动一次会话（不处理具体消息）。
+    #[cfg(feature = "iroh-transport")]
+    async fn drive_iroh_upgrade(&mut self) {
+        let orders = match self.iroh_upgrade.as_mut() {
+            Some(session) => {
+                if let Err(e) = session.poll_accept().await {
+                    log::warn!("iroh accept 轮询失败: {e}");
+                }
+                session.drain_orders()
+            }
+            None => return,
+        };
+        if !orders.is_empty() {
+            self.run_iroh_orders(orders).await;
+        }
+    }
+
+    /// 按序执行会话给出的指令。
+    ///
+    /// 顺序由会话保证（例如「先安装过渡层、再发 Commit」），
+    /// 这里只需照单执行，不要自行调整顺序。
+    #[cfg(feature = "iroh-transport")]
+    async fn run_iroh_orders(&mut self, orders: Vec<hbb_common::iroh_upgrade_session::Order>) {
+        use hbb_common::iroh_upgrade_session::Order;
+        use hbb_common::iroh_transition::TransitionStream;
+        use hbb_common::stream::Stream;
+
+        for order in orders {
+            match order {
+                Order::Send(m) => {
+                    if let Err(e) = self.stream.send(&m).await {
+                        log::warn!("发送 iroh 升级消息失败: {e}");
+                    }
+                }
+                Order::Install(new_framed) => {
+                    // 加密状态迁移只对 TCP 通道成立（见 crypto_handoff 模块）。
+                    if !matches!(self.stream, Stream::Tcp(_)) {
+                        log::warn!("当前通道不是 TCP，放弃 iroh 升级");
+                        continue;
+                    }
+                    let old = std::mem::replace(&mut self.stream, Stream::Empty);
+                    self.stream =
+                        Stream::Transition(Box::new(TransitionStream::new(old, new_framed)));
+                    log::info!("iroh 过渡层已安装，等待提交窗口");
+                }
+                Order::CommitSent => {
+                    if let Stream::Transition(t) = &mut self.stream {
+                        t.on_commit_sent();
+                    }
+                }
+                Order::CommitAckSent => {
+                    if let Stream::Transition(t) = &mut self.stream {
+                        t.on_commit_ack_sent();
+                        if let Err(e) = t.flush_to_new().await {
+                            log::warn!("暂存数据冲刷到新通道失败: {e}");
+                        }
+                    }
+                }
+                Order::CommitAckReceived => {
+                    if let Stream::Transition(t) = &mut self.stream {
+                        t.on_commit_ack_received();
+                        if let Err(e) = t.flush_to_new().await {
+                            log::warn!("暂存数据冲刷到新通道失败: {e}");
+                        }
+                    }
+                }
+                Order::Abort => {
+                    if let Stream::Transition(t) = &mut self.stream {
+                        t.abort();
+                        if let Err(e) = t.flush_to_old().await {
+                            log::warn!("暂存数据回滚到老通道失败: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // 迁移完成后把 Transition 收敛成普通流：稳态不再经过它，
+        // 也就不承担那一层额外的分支与 Box::pin 分配。
+        let cur = std::mem::replace(&mut self.stream, Stream::Empty);
+        self.stream = cur.collapse_transition();
+    }
+
     async fn on_message(&mut self, msg: Message) -> bool {
+        #[cfg(feature = "iroh-transport")]
+        {
+            // 升级消息自己消化掉；不是升级消息时也会顺手驱动一下会话
+            // （响应方需要轮询是否有进来的 iroh 连接）。
+            if self.handle_iroh_upgrade(&msg).await {
+                return true;
+            }
+        }
         if let Some(message::Union::Misc(misc)) = &msg.union {
             // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
