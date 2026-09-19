@@ -61,7 +61,8 @@
 #         | controlled          | 纯被控端：托盘隐藏、连接管理器隐藏、ID 直连/发起入口移除、出站会话拒绝（session_add bail），仅密钥/服务常驻 | nervousdesk-controlled-1.4.9-x86_64.exe / .msi |
 #         | controller          | 控制端：托盘保留、连接管理器/ID 直连保留、可发起会话     | nervdesk-controller-1.4.9-x86_64.exe / .msi  |
 #
-#       Release 页同一 TAG（默认 nervdesk-custom-1.4.9）下出现两组文件
+#       Release 页同一 TAG（默认 nervdesk-custom-1.4.9-r2，真机反馈修复版，旧 TAG
+#       保留可回退）下出现两组文件
 #       （controlled* / controller*，各 exe+msi）；TAG 可改，同一 TAG 只能
 #       成功一次，重跑换名。两变体语义表（含「未设置=默认」列）见
 #       patches/nervdesk-features/nervdesk-features-change-list.md §2.7。
@@ -77,7 +78,7 @@ on:
       release_tag:
         description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
         required: true
-        default: 'nervdesk-custom-1.4.9'
+        default: 'nervdesk-custom-1.4.9-r2'
   # 推送到 nervdesk-custom-windows- 开头的分支时自动构建。
   # （与 Android 的 nervdesk-custom-android-** 不重叠，避免双 workflow 误触发）
   push:
@@ -106,7 +107,7 @@ env:
   SCITER_RUST_VERSION: "1.91"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-1.4.9' }}
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-1.4.9-r2' }}
   UPLOAD_ARTIFACT: "true"
   # 固定成 "-2"：官方 CI 用这个值判断"跳过需要 RustDesk 私钥的代码签名"。
   # 我们没有他们的签名服务，跳过是对的（代价是首次运行会有 SmartScreen 提示）。
@@ -431,6 +432,16 @@ jobs:
           cp nervdesk/branding/tray-icon.ico res/tray-icon.ico
           cp nervdesk/branding/installer.ico res/icon.ico
           ls -l flutter/windows/runner/resources/app_icon.ico res/tray-icon.ico res/icon.ico
+          # 2b)【t19/t18】UI 图形资产（logo/图标）：flutter/pubspec.yaml 已声明
+          #     assets/ 整目录，覆盖即可；loadLogo() 按 logo_light/dark → logo.png
+          #     顺序解析。目标目录必须存在（锚点），覆盖后校验文件在位。
+          [ -d flutter/assets ] || { echo "::error::flutter/assets/ 不存在（锚点失配）"; exit 1; }
+          cp nervdesk/branding/nervdesk-logo.png      flutter/assets/logo.png
+          cp nervdesk/branding/nervdesk-logo.png      flutter/assets/logo_light.png   # 亮色同源
+          cp nervdesk/branding/nervdesk-logo-dark.png flutter/assets/logo_dark.png
+          cp nervdesk/branding/nervdesk-icon.png      flutter/assets/icon.png
+          cp nervdesk/branding/nervdesk-icon.svg      flutter/assets/icon.svg
+          ls -l flutter/assets/logo.png flutter/assets/logo_light.png flutter/assets/logo_dark.png flutter/assets/icon.png flutter/assets/icon.svg
           # 3) 校验：文本品牌已生效
           grep -q 'RwLock::new("NervDesk"' libs/hbb_common/src/config.rs && echo "[OK] config.rs APP_NAME=NervDesk"
           grep -q 'app_name = L"NervDesk"' flutter/windows/runner/main.cpp && echo "[OK] main.cpp 窗口标题"
@@ -1079,7 +1090,7 @@ jobs:
             ./SignOutput/*.msi
 
   # ======================================================================
-  # 【t12 双变体 · Release】同一 TAG（默认 nervdesk-custom-1.4.9）下发布
+  # 【t12 双变体 · Release】同一 TAG（默认 nervdesk-custom-1.4.9-r2）下发布
   # controlled + controller 两套产物（各自 exe + msi）。
   # 只在该 job 判定需要：[build-windows-x64] 矩阵两腿全部成功后执行；
   # 任一腿失败 → 本 job 自动跳过，不发布残缺产物集。
