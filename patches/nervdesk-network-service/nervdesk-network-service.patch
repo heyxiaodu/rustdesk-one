@@ -1,0 +1,158 @@
+diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
+--- a/libs/hbb_common/src/config.rs
++++ b/libs/hbb_common/src/config.rs
+@@ -3304,11 +3304,78 @@ pub fn nerve_apply_forced_defaults() {
+         log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
+         let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
+     }
++    // NervDesk 定制（M4 网络）：内置地址锁定 + 网络设置隐藏 + iroh relay 令牌
++    nerve_apply_network_defaults();
+ }
+ 
+ #[cfg(not(target_os = "windows"))]
+ pub fn nerve_apply_forced_defaults() {}
+ 
++// ============================================================================
++// NervDesk 定制（M4 网络：内置地址参数化 / 界面隐藏强制 / relay 令牌编译期内置）
++// 仅 Windows 生效（M5 平台承诺）；其它平台保持上游行为。
++// ============================================================================
++
++/// 内置中继服务器（hbbr）：写入 `relay-server` 选项，恒优先于 ID 服务器下发的列表。
++/// 非机密值（域名端口公开），CI 仍可替换此 const 参数化。
++pub const NERVDESK_RELAY_SERVER: &str = "relay.nervcode.eu.org:21117";
++
++/// 内置 API 服务器：common.rs 的 get_api_server_ 最终兜底改读此 const（注入点）。
++/// 非机密值，CI 可替换。
++pub const NERVDESK_API_SERVER: &str = "https://api.nervcode.eu.org";
++
++/// iroh relay 访问令牌占位符：构建期由 CI Secret（NERVDESK_RELAY_TOKEN）替换。
++/// 未替换时不注入任何令牌（保持既有「不配 = 无令牌」语义）；
++/// 令牌编译进二进制可被提取，真正的防线是 relay 侧 access.shared_token +
++/// EndpointId 白名单（docs/04 §5），详见 docs/09 §M4-8。
++pub const NERVDESK_BUILTIN_RELAY_TOKEN: &str = "__NERVDESK_RELAY_TOKEN__";
++
++/// F1 修复：relay 令牌哨兵同样运行时拼接（`format!("__{}_{}", "NERVDESK",
++/// "RELAY_TOKEN__")`），guard 右值不被 CI 整树替换；产物 rodata 中无连续
++/// 占位符串，M6-3 扫描不误报。
++#[inline]
++fn nervdesk_relay_token_marker() -> String {
++    format!("__{}_{}", "NERVDESK", "RELAY_TOKEN__")
++}
++
++/// M4 网络层固化（在 nerve_apply_forced_defaults 之后调用）：
++/// 1) 隐藏「设置 → 网络 / 服务器 / 代理」编辑入口（builtin）；
++/// 2) 把内置服务器地址写进 OVERWRITE_SETTINGS —— 用户配置/注册表/命令行的写入
++///    被 is_option_can_save 丢弃（与 common.rs 读取层强制构成双重保证）；
++/// 3) iroh relay 令牌：占位符已被 CI 替换时编译期内置；读侧
++///    iroh_transport::config_from_options() 调用 get_option("iroh-relay-token") 即命中。
++#[cfg(target_os = "windows")]
++pub fn nerve_apply_network_defaults() {
++    {
++        let mut bs = BUILTIN_SETTINGS.write().unwrap();
++        bs.insert(keys::OPTION_HIDE_NETWORK_SETTINGS.to_owned(), "Y".to_owned());
++        bs.insert(keys::OPTION_HIDE_SERVER_SETTINGS.to_owned(), "Y".to_owned());
++        bs.insert(keys::OPTION_HIDE_PROXY_SETTINGS.to_owned(), "Y".to_owned());
++    }
++    {
++        let builtin_rendezvous: String = RENDEZVOUS_SERVERS.join(",");
++        let mut ow = OVERWRITE_SETTINGS.write().unwrap();
++        if !builtin_rendezvous.is_empty() {
++            ow.insert(
++                keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_owned(),
++                builtin_rendezvous,
++            );
++        }
++        ow.insert(keys::OPTION_RELAY_SERVER.to_owned(), NERVDESK_RELAY_SERVER.to_owned());
++        ow.insert(keys::OPTION_API_SERVER.to_owned(), NERVDESK_API_SERVER.to_owned());
++        ow.insert(keys::OPTION_KEY.to_owned(), RS_PUB_KEY.to_owned());
++        if NERVDESK_BUILTIN_RELAY_TOKEN != nervdesk_relay_token_marker() {
++            ow.insert(
++                "iroh-relay-token".to_owned(),
++                NERVDESK_BUILTIN_RELAY_TOKEN.to_owned(),
++            );
++        }
++    }
++}
++
++#[cfg(not(target_os = "windows"))]
++pub fn nerve_apply_network_defaults() {}
++
+ pub fn common_load<
+     T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug,
+ >(
+diff --git a/src/common.rs b/src/common.rs
+--- a/src/common.rs
++++ b/src/common.rs
+@@ -1028,6 +1028,18 @@ pub fn is_setup(name: &str) -> bool {
+ }
+ 
+ pub fn get_custom_rendezvous_server(custom: String) -> String {
++    // NervDesk 定制（M4-6 最严格）：Windows 上内置 ID 服务器地址恒优先，
++    // 屏蔽 exe 改名 / config 选项 / PROD_RENDEZVOUS_SERVER 等一切覆盖路径。
++    #[cfg(target_os = "windows")]
++    {
++        let builtin: Vec<String> = config::RENDEZVOUS_SERVERS
++            .iter()
++            .map(|x| x.to_string())
++            .collect();
++        if !builtin.is_empty() {
++            return builtin.join(",");
++        }
++    }
+     #[cfg(windows)]
+     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
+         if !lic.host.is_empty() {
+@@ -1062,6 +1074,15 @@ pub fn get_api_server(api: String, custom: String) -> String {
+ }
+ 
+ fn get_api_server_(api: String, custom: String) -> String {
++    // NervDesk 定制（M4-6）：Windows 上 API 服务器恒为编译期内置值
++    // （NERVDESK_API_SERVER const，CI 可替换；config.rs 参数化注入点）。
++    #[cfg(target_os = "windows")]
++    {
++        let builtin = config::NERVDESK_API_SERVER;
++        if !builtin.is_empty() {
++            return builtin.to_owned();
++        }
++    }
+     #[cfg(windows)]
+     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
+         if !lic.api.is_empty() {
+@@ -1080,7 +1101,8 @@ fn get_api_server_(api: String, custom: String) -> String {
+             return format!("http://{}", s);
+         }
+     }
+-    "https://admin.rustdesk.com".to_owned()
++    // NervDesk 定制（M4-3）：API 兜底改读 config.rs 内置 const（参数化注入点）。
++    config::NERVDESK_API_SERVER.to_owned()
+ }
+ 
+ #[inline]
+diff --git a/src/platform/windows.rs b/src/platform/windows.rs
+--- a/src/platform/windows.rs
++++ b/src/platform/windows.rs
+@@ -1,6 +1,5 @@
+ use super::{CursorData, ResultType};
+ use crate::{
+-    common::PORTABLE_APPNAME_RUNTIME_ENV_KEY,
+     custom_server::*,
+     ipc,
+     privacy_mode::win_topmost_window::{self, WIN_TOPMOST_INJECTED_PROCESS_EXE},
+@@ -2124,12 +2123,11 @@ pub fn prepare_custom_client_update() -> ResultType<bool> {
+ }
+ 
+ pub fn get_license_from_exe_name() -> ResultType<CustomServer> {
+-    let mut exe = std::env::current_exe()?.to_str().unwrap_or("").to_owned();
+-    // if defined portable appname entry, replace original executable name with it.
+-    if let Ok(portable_exe) = std::env::var(PORTABLE_APPNAME_RUNTIME_ENV_KEY) {
+-        exe = portable_exe;
+-    }
+-    get_custom_server_from_string(&exe)
++    // NervDesk 定制（M4-6 最严格）：屏蔽「exe 文件名携带服务器配置」的覆盖路径
++    // （改名为 `nervdesk host=xxx,key=xxx.exe` 不再生效），强制使用编译期内置地址。
++    // 本补丁只进 NervDesk 产物线；官方行为不在该源码上保留。
++    let _ = std::env::current_exe();
++    Err(anyhow!("NervDesk: exe name server override disabled"))
+ }
+ 
+ // We can't directly use `RegKey::set_value` to update the registry value, because it will fail with `ERROR_ACCESS_DENIED`

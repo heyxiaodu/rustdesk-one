@@ -1,0 +1,96 @@
+diff --git a/flutter/windows/CMakeLists.txt b/flutter/windows/CMakeLists.txt
+--- a/flutter/windows/CMakeLists.txt
++++ b/flutter/windows/CMakeLists.txt
+@@ -4,7 +4,7 @@ project(rustdesk LANGUAGES CXX)
+ 
+ # The name of the executable created for the application. Change this to change
+ # the on-disk name of your application.
+-set(BINARY_NAME "rustdesk")
++set(BINARY_NAME "nervdesk")
+ 
+ # Explicitly opt into modern CMake behaviors to avoid warnings with recent
+ # versions of CMake.
+diff --git a/flutter/windows/runner/Runner.rc b/flutter/windows/runner/Runner.rc
+--- a/flutter/windows/runner/Runner.rc
++++ b/flutter/windows/runner/Runner.rc
+@@ -93,7 +93,7 @@ BEGIN
+             VALUE "FileDescription", "NervDesk Remote Desktop" "\0"
+             VALUE "FileVersion", VERSION_AS_STRING "\0"
+             VALUE "InternalName", "nervdesk" "\0"
+-            VALUE "LegalCopyright", "Copyright © 2026 NervDesk" "\0"
++            VALUE "LegalCopyright", "Copyright © 2026 NervDesk. Based on RustDesk (AGPL-3.0)." "\0"
+             VALUE "OriginalFilename", "nervdesk.exe" "\0"
+             VALUE "ProductName", "NervDesk" "\0"
+             VALUE "ProductVersion", VERSION_AS_STRING "\0"
+diff --git a/src/platform/windows.rs b/src/platform/windows.rs
+--- a/src/platform/windows.rs
++++ b/src/platform/windows.rs
+@@ -3811,7 +3811,7 @@ pub fn message_box(text: &str) {
+         .encode_utf16()
+         .chain(std::iter::once(0))
+         .collect::<Vec<u16>>();
+-    let caption = "RustDesk Output"
++    let caption = "NervDesk Output"
+         .encode_utf16()
+         .chain(std::iter::once(0))
+         .collect::<Vec<u16>>();
+diff --git a/src/auth_2fa.rs b/src/auth_2fa.rs
+--- a/src/auth_2fa.rs
++++ b/src/auth_2fa.rs
+@@ -14,7 +14,7 @@ lazy_static::lazy_static! {
+     static ref CURRENT_2FA: Mutex<Option<(TOTPInfo, TOTP)>> = Mutex::new(None);
+ }
+ 
+-const ISSUER: &str = "RustDesk";
++const ISSUER: &str = "NervDesk";
+ const TAG_LOGIN: &str = "Connection";
+ 
+ #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+diff --git a/src/server/connection.rs b/src/server/connection.rs
+--- a/src/server/connection.rs
++++ b/src/server/connection.rs
+@@ -5869,7 +5869,7 @@ impl Connection {
+     #[cfg(all(target_os = "windows", feature = "flutter"))]
+     async fn send_printer_request(&mut self, data: Vec<u8>) {
+         // This path is only used to identify the printer job.
+-        let path = format!("RustDesk://FsJob//Printer/{}", get_time());
++        let path = format!("{}FsJob//Printer/{}", crate::get_uri_prefix(), get_time());
+ 
+         let msg = fs::new_send(0, fs::JobType::Printer, path.clone(), 1, false);
+         self.send(msg).await;
+diff --git a/build.py b/build.py
+--- a/build.py
++++ b/build.py
+@@ -453,7 +453,7 @@ def build_flutter_windows(version, features, skip_portable_pack):
+     os.chdir('libs/portable')
+     system2('pip3 install -r requirements.txt')
+     system2(
+-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
++        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/nervdesk.exe')
+     os.chdir('../..')
+     if os.path.exists('./rustdesk_portable.exe'):
+         os.replace('./target/release/rustdesk-portable-packer.exe',
+diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
+--- a/flutter/lib/common.dart
++++ b/flutter/lib/common.dart
+@@ -2858,7 +2858,7 @@ Future<void> onActiveWindowChanged() async {
+     } catch (err) {
+       debugPrintStack(label: "$err");
+     } finally {
+-      debugPrint("Start closing RustDesk...");
++      debugPrint("Start closing NervDesk...");
+       await windowManager.setPreventClose(false);
+       await windowManager.close();
+       if (isMacOS) {
+diff --git a/flutter/lib/desktop/widgets/tabbar_widget.dart b/flutter/lib/desktop/widgets/tabbar_widget.dart
+--- a/flutter/lib/desktop/widgets/tabbar_widget.dart
++++ b/flutter/lib/desktop/widgets/tabbar_widget.dart
+@@ -641,7 +641,7 @@ class _DesktopTabState extends State<DesktopTab>
+                         Offstage(
+                             offstage: !showTitle,
+                             child: const Text(
+-                              "RustDesk",
++                              "NervDesk",
+                               style: TextStyle(fontSize: 13),
+                             ).marginOnly(left: 2))
+                       ]).marginOnly(
