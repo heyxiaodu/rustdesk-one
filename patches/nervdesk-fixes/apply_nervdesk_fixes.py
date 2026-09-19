@@ -127,14 +127,22 @@ def patch_config_rs() -> None:
         "}",
         "config.rs nervdesk_builtin_password_raw",
     )
-    # E2: hide-powered-by-me builtin 种子（t18 第 1 项）
+    # E2: hide-powered-by-me builtin 种子（t18 第 1 项）+ t21 固定密码 builtin 种子
     t = sub1(
         t,
         "        bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), \"Y\".to_owned());\n",
         "        bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), \"Y\".to_owned());\n"
         "        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）\n"
-        "        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), \"Y\".to_owned());\n",
-        "config.rs hide-powered-by-me",
+        "        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), \"Y\".to_owned());\n"
+        "        // t21：固定密码经既有 builtin 桥读出（不新增 FFI、不依赖 bridge 再生成）——\n"
+        "        // generated_bridge.dart 由 CI codegen 在 pristine 源码上生成，新增 FFI 的\n"
+        "        // Dart 声明进不了产物（r3 失败根因）；改用既有 mainGetBuildinOption(\n"
+        "        // 'nervdesk-fixed-password')。值只在内存（BUILTIN_SETTINGS），不落盘，\n"
+        "        // 暴露面与编译进二进制的 const 相同（非保密容器，docs/09 §0.2）。\n"
+        "        if let Some(pw) = nervdesk_builtin_password_raw() {\n"
+        "            bs.insert(\"nervdesk-fixed-password\".to_owned(), pw);\n"
+        "        }\n",
+        "config.rs hide-powered-by-me + fixed-password 种子",
     )
     # E3: 认证链路单测（t18 第 2 项验收）
     test_block = (
@@ -349,9 +357,12 @@ def patch_home_page() -> None:
         "        model.verificationMethod != kUsePermanentPassword;",
         "final showOneTime = model.approveMode != 'click' &&\n"
         "        model.verificationMethod != kUsePermanentPassword;\n"
-        "    // NervDesk（t18 第 2 项）：明确显示已注入的出厂固定密码（未注入为空串不渲染），\n"
+        "    // NervDesk（t18 第 2 项 + t21）：明确显示已注入的出厂固定密码（未注入为空串不渲染），\n"
         "    // 消除一次性密码 `-` 歧义——连接时使用此固定密码。\n"
-        "    final builtinPassword = bind.mainGetBuiltinPasswordSync();",
+        "    // t21：经既有 builtin 桥 mainGetBuildinOption（SyncReturn 生成为同名字面量，无\n"
+        "    // Sync 后缀）读取 nervdesk-fixed-password（config.rs 启动时种子）；不新增 FFI，\n"
+        "    // 避免依赖 CI codegen 再生成 generated_bridge.dart（r3 失败根因）。\n"
+        "    final builtinPassword = bind.mainGetBuildinOption(key: 'nervdesk-fixed-password');",
         "home_page 固定密码读取",
     )
     t = sub1(
@@ -573,6 +584,10 @@ def verify() -> None:
 
     check("libs/hbb_common/src/config.rs", "pub fn nervdesk_builtin_password_raw", "固定密码读取器")
     check("libs/hbb_common/src/config.rs", "OPTION_HIDE_POWERED_BY_ME", "hide-powered-by-me 种子")
+    check("libs/hbb_common/src/config.rs", 'bs.insert("nervdesk-fixed-password"', "t21 固定密码 builtin 种子")
+    check("src/flutter_ffi.rs", "pub fn main_get_builtin_password", "t21 ① FFI 导出存在")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "mainGetBuildinOption(key: 'nervdesk-fixed-password')", "t21 ② Dart 用既有桥读取")
+
     check("libs/hbb_common/src/config.rs", "nervdesk_permanent_password_auth_chain_is_self_consistent", "认证链路单测")
     check("src/flutter_ffi.rs", "pub fn main_get_builtin_password", "FFI 固定密码")
     check("flutter/lib/common.dart", "const bool kNervDeskModeControlled", "共享形态常量")
@@ -585,6 +600,12 @@ def verify() -> None:
     check("flutter/windows/runner/main.cpp", "/*resizable=*/!nervdesk_controlled", "不可拉伸")
     check("flutter/windows/runner/win32_window.cpp", "window_style", "固定窗口样式")
     check("src/lang/cn.rs", '"Fixed Password", "固定密码"', "语言键")
+
+    # t21 反向断言：r3 报错根因（mainGetBuiltinPasswordSync）必须从 Dart 代码消失
+    for f in FILES:
+        if "mainGetBuiltinPasswordSync" in pathlib.Path(f).read_text(encoding="utf-8"):
+            print(f"[FAIL] {f} 含 r3 报错方法名 mainGetBuiltinPasswordSync", file=sys.stderr)
+            ok = False
 
     # 占位符纪律：完整占位符仍只在 config.rs const 初始化行
     cfg = pathlib.Path("libs/hbb_common/src/config.rs").read_text(encoding="utf-8")
