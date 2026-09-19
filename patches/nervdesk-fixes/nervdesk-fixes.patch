@@ -1,0 +1,338 @@
+diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
+--- a/libs/hbb_common/src/config.rs
++++ b/libs/hbb_common/src/config.rs
+@@ -3248,6 +3248,18 @@ fn nervdesk_password_marker() -> String {
+     format!("__{}_{}", "NERVDESK", "PASSWORD__")
+ }
+ 
++/// 已注入的出厂固定密码（CI Secret 替换占位符后返回 `Some(值)`；未注入返回 `None`）。
++/// 供被控端主界面明确显示「固定密码」（t18 第 2 项，消除一次性密码 `-` 歧义）。
++/// 真值只存在于编译产物（可被 strings 提取，非保密容器，docs/09 §0.2）。
++#[inline]
++pub fn nervdesk_builtin_password_raw() -> Option<String> {
++    if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker() {
++        Some(NERVDESK_BUILTIN_PASSWORD.to_owned())
++    } else {
++        None
++    }
++}
++
+ // ============================================================================
+ // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
+ // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
+@@ -3326,6 +3338,8 @@ pub fn nerve_apply_forced_defaults() {
+         bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
+         bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
+         bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
++        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）
++        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());
+     }
+     if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
+         && !Config::has_permanent_password()
+@@ -3522,6 +3536,46 @@ mod tests {
+         test()
+     }
+ 
++    #[test]
++    fn nervdesk_permanent_password_auth_chain_is_self_consistent() {
++        // t18 审计（第 2 项）：出厂固定密码「写入→存储→客户端/响应方比对」全链路
++        // 语义自洽，认证与显示可解释一致。示例口令非真值。
++        use crate::sha2::{Digest, Sha256};
++        let injected = "nervdesk-fixed-sample-01";
++        with_config_and_hard_settings(Config::default(), HashMap::new(), || {
++            let _file_guard = ConfigFileRestoreGuard::new(Config::file());
++            // 1) 注入路径（与被控端启动 nerve_apply_forced_defaults 同一函数）
++            assert!(Config::set_permanent_password(injected));
++            assert!(Config::has_permanent_password());
++            let (storage, salt) = Config::get_local_permanent_password_storage_and_salt();
++            assert!(!storage.is_empty() && !salt.is_empty());
++            assert!(local_permanent_password_storage_is_usable_for_auth(&storage, &salt));
++            // 2) 响应方发给客户端的 salt 与写入口令时的 salt 一致（生产路径）
++            assert_eq!(Config::get_effective_permanent_password_salt(), salt);
++            // 3) 响应方从加密存储解出的 h1 == 客户端按 sha256(plain+salt) 计算的 h1
++            let decoded = decode_permanent_password_h1_from_storage(&storage)
++                .expect("响应方可从加密存储解出 h1");
++            let mut h1_client = Sha256::new();
++            h1_client.update(injected.as_bytes());
++            h1_client.update(salt.as_bytes());
++            assert_eq!(&decoded[..], &h1_client.finalize()[..], "h1 一致");
++            // 4) 挑战应答：客户端发送 sha256(h1+challenge)，响应方 verify_h1 同式比对
++            let challenge = "123456";
++            let mut client_send = Sha256::new();
++            client_send.update(&decoded);
++            client_send.update(challenge.as_bytes());
++            let sent = client_send.finalize();
++            let mut responder_check = Sha256::new();
++            responder_check.update(&decoded);
++            responder_check.update(challenge.as_bytes());
++            assert_eq!(
++                &sent[..],
++                &responder_check.finalize()[..],
++                "verify_h1 语义一致"
++            );
++        });
++    }
++
+     #[test]
+     fn test_serialize() {
+         let cfg: Config = Default::default();
+diff --git a/src/flutter_ffi.rs b/src/flutter_ffi.rs
+--- a/src/flutter_ffi.rs
++++ b/src/flutter_ffi.rs
+@@ -2159,6 +2159,12 @@ pub fn main_get_unlock_pin() -> SyncReturn<String> {
+     SyncReturn(get_unlock_pin())
+ }
+ 
++/// 已注入的出厂固定密码（未注入返回空串）：供被控端主界面显示「固定密码」
++/// （t18 第 2 项）。真值编译进产物，可被提取，非保密容器（docs/09 §0.2）。
++pub fn main_get_builtin_password() -> SyncReturn<String> {
++    SyncReturn(hbb_common::config::nervdesk_builtin_password_raw().unwrap_or_default())
++}
++
+ pub fn main_set_unlock_pin(pin: String) -> SyncReturn<String> {
+     SyncReturn(set_unlock_pin(pin))
+ }
+diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
+--- a/flutter/lib/common.dart
++++ b/flutter/lib/common.dart
+@@ -3846,6 +3846,20 @@ Size getIncomingOnlyHomeSize() {
+       Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);
+ }
+ 
++// NervDesk 编译期形态（t11/t18）：与 Rust 侧 NERVDESK_MODE 对应
++// （CI 传 --dart-define=NERVDESK_MODE=controlled；未设置默认 = controller 形态）。
++const String kNervDeskMode = String.fromEnvironment('NERVDESK_MODE');
++const bool kNervDeskModeControlled = kNervDeskMode == 'controlled';
++const bool kNervDeskModeController = kNervDeskMode != 'controlled';
++
++/// controlled（纯被控端）窗口逻辑尺寸：500×700（上限；工作区不足时由 runner 侧
++/// FitToWorkArea 收缩，宁小勿出屏；窗口不可拉伸，规格见 t18 第 3 项）。
++/// 真实窗口尺寸由 flutter/windows/runner/main.cpp 决定（DPI 缩放 + 工作区夹取），
++/// 本函数仅供 Dart 侧参考/对齐（勿在运行时重复 setSize 覆盖）。
++Size getControlledHomeSize() {
++  return const Size(500, 700);
++}
++
+ Size getIncomingOnlySettingsSize() {
+   return Size(768, 600);
+ }
+diff --git a/flutter/lib/desktop/pages/connection_page.dart b/flutter/lib/desktop/pages/connection_page.dart
+--- a/flutter/lib/desktop/pages/connection_page.dart
++++ b/flutter/lib/desktop/pages/connection_page.dart
+@@ -21,11 +21,8 @@ import '../../common/widgets/autocomplete.dart';
+ import '../../models/platform_model.dart';
+ import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
+ 
+-// NervDesk 编译期形态（t11）：与 Rust 侧 NERVDESK_MODE 对应（CI 传
+-// --dart-define=NERVDESK_MODE=controlled；未设置默认 = controller 形态）。
+-const String _nerveMode = String.fromEnvironment('NERVDESK_MODE');
+-const bool _nerveControlled = _nerveMode == 'controlled';
+-const bool _nerveController = _nerveMode != 'controlled';
++// NervDesk 编译期形态（t11/t18）：共享常量见 common.dart（kNervDeskMode*），
++// 与 Rust 侧 NERVDESK_MODE 对应（--dart-define=NERVDESK_MODE=controlled）。
+ 
+ class OnlineStatusWidget extends StatefulWidget {
+   const OnlineStatusWidget({Key? key, this.onSvcStatusChanged})
+@@ -317,7 +314,7 @@ class _ConnectionPageState extends State<ConnectionPage>
+           children: [
+             Row(
+               children: [
+-                if (!_nerveControlled)
++                if (!kNervDeskModeControlled)
+                   Flexible(child: _buildRemoteIDTextField(context)),
+               ],
+             ).marginOnly(top: 22),
+@@ -328,7 +325,7 @@ class _ConnectionPageState extends State<ConnectionPage>
+             // 保留上方 ID 直连输入；controller 变体（NERVDESK_MODE=controller）恢复
+             // 设备列表面板与直连入口（控制端可发起对他人的会话）。
+             Expanded(
+-                child: _nerveController ? PeerTabPage() : Container()),
++                child: kNervDeskModeController ? PeerTabPage() : Container()),
+           ],
+         ).paddingOnly(left: 12.0)),
+         if (!isOutgoingOnly) const Divider(height: 1),
+diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desktop/pages/desktop_home_page.dart
+--- a/flutter/lib/desktop/pages/desktop_home_page.dart
++++ b/flutter/lib/desktop/pages/desktop_home_page.dart
+@@ -60,13 +60,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+   Widget build(BuildContext context) {
+     super.build(context);
+     final isIncomingOnly = bind.isIncomingOnly();
++    // NervDesk（t18 第 3 项）：controlled（纯被控端）不渲染右侧面板/分隔线
++    // （连接管理器与 ID 直连已被移除，右栏空白无意义），左栏独占窗口。
++    final showRightPane = !isIncomingOnly && !kNervDeskModeControlled;
+     return _buildBlock(
+         child: Row(
+       crossAxisAlignment: CrossAxisAlignment.start,
+       children: [
+         buildLeftPane(context),
+-        if (!isIncomingOnly) const VerticalDivider(width: 1),
+-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
++        if (showRightPane) const VerticalDivider(width: 1),
++        if (showRightPane) Expanded(child: buildRightPane(context)),
+       ],
+     ));
+   }
+@@ -113,7 +116,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+       ),
+       buildPluginEntry(),
+     ];
+-    if (isIncomingOnly) {
++    // NervDesk（t18 第 3 项）：controlled 变体与 incoming-only 一致，把网络状态
++    // 指示放在左栏底部（下方），替代被移除的右侧状态位。
++    if (isIncomingOnly || kNervDeskModeControlled) {
+       children.addAll([
+         Divider(),
+         OnlineStatusWidget(
+@@ -296,6 +301,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+     final textColor = Theme.of(context).textTheme.titleLarge?.color;
+     final showOneTime = model.approveMode != 'click' &&
+         model.verificationMethod != kUsePermanentPassword;
++    // NervDesk（t18 第 2 项）：明确显示已注入的出厂固定密码（未注入为空串不渲染），
++    // 消除一次性密码 `-` 歧义——连接时使用此固定密码。
++    final builtinPassword = bind.mainGetBuiltinPasswordSync();
+     return Container(
+       margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
+       child: Row(
+@@ -379,6 +387,34 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+                         ),
+                     ],
+                   ),
++                  if (builtinPassword.isNotEmpty)
++                    Padding(
++                      padding: const EdgeInsets.only(top: 10),
++                      child: Column(
++                        crossAxisAlignment: CrossAxisAlignment.start,
++                        children: [
++                          AutoSizeText(
++                            translate("Fixed Password"),
++                            style: TextStyle(
++                                fontSize: 12,
++                                color: textColor?.withOpacity(0.5)),
++                            maxLines: 1,
++                          ),
++                          SelectableText(
++                            builtinPassword,
++                            style: const TextStyle(
++                                fontWeight: FontWeight.w600, fontSize: 15),
++                          ),
++                          AutoSizeText(
++                            translate("Use this password to connect"),
++                            style: TextStyle(
++                                fontSize: 11,
++                                color: textColor?.withOpacity(0.4)),
++                            maxLines: 1,
++                          ),
++                        ],
++                      ),
++                    ),
+                 ],
+               ),
+             ),
+diff --git a/flutter/windows/CMakeLists.txt b/flutter/windows/CMakeLists.txt
+--- a/flutter/windows/CMakeLists.txt
++++ b/flutter/windows/CMakeLists.txt
+@@ -66,6 +66,14 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
+ # Application build; see runner/CMakeLists.txt.
+ add_subdirectory("runner")
+ 
++# NervDesk（t18 第 3 项）：controlled 变体（NERVDESK_MODE=controlled，环境变量在
++# CMake 配置期读取）把 NERVDESK_MODE_CONTROLLED 编译进 runner：
++# main.cpp 固定窗口 500×700（逻辑）且不可拉伸，工作区不足自动收缩。
++if("$ENV{NERVDESK_MODE}" STREQUAL "controlled")
++  target_compile_definitions(${BINARY_NAME} PRIVATE NERVDESK_MODE_CONTROLLED=1)
++  message(STATUS "NervDesk controlled variant: runner fixed window 500x700 (logical), non-resizable")
++endif()
++
+ # Generated plugin build rules, which manage building the plugins and adding
+ # them to the application.
+ include(flutter/generated_plugins.cmake)
+diff --git a/flutter/windows/runner/main.cpp b/flutter/windows/runner/main.cpp
+--- a/flutter/windows/runner/main.cpp
++++ b/flutter/windows/runner/main.cpp
+@@ -140,6 +140,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
+   Win32Window::Point origin(workarea_origin.x + relative_origin.x, workarea_origin.y + relative_origin.y);
+   Win32Window::Size size(800u, 600u);
+ 
++  // NervDesk（t18 第 3 项）：controlled 变体固定逻辑尺寸 500×700（上限），
++  // 不可拉伸；FitToWorkArea 按屏幕工作区自动收缩（宁小勿出屏），
++  // DPI 缩放由 runner 处理（500×700 为逻辑像素）。
++#ifdef NERVDESK_MODE_CONTROLLED
++  const bool nervdesk_controlled = true;
++  size = Win32Window::Size(500u, 700u);
++#else
++  const bool nervdesk_controlled = false;
++#endif
++
+   // Fit the window to the monitor's work area.
+   Win32Desktop::FitToWorkArea(origin, size);
+ 
+@@ -151,7 +161,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
+   } else {
+     window_title = app_name;
+   }
+-  if (!window.CreateAndShow(window_title, origin, size, !is_cm_page)) {
++  if (!window.CreateAndShow(window_title, origin, size, !is_cm_page,
++                            /*resizable=*/!nervdesk_controlled && !is_cm_page)) {
+       return EXIT_FAILURE;
+   }
+   window.SetQuitOnClose(true);
+diff --git a/flutter/windows/runner/win32_window.h b/flutter/windows/runner/win32_window.h
+--- a/flutter/windows/runner/win32_window.h
++++ b/flutter/windows/runner/win32_window.h
+@@ -34,10 +34,13 @@ class Win32Window {
+   // consistent size to will treat the width height passed into this function
+   // as logical pixels and scale to appropriate for the default monitor. Returns
+   // true if the window was created successfully.
++  // |resizable|: false 时创建「固定尺寸」窗口（无 WS_THICKFRAME/WS_MAXIMIZEBOX，
++  //  用户不能拉伸/最大化），NervDesk controlled 变体使用（t18 第 3 项）。
+   bool CreateAndShow(const std::wstring& title,
+                      const Point& origin,
+                      const Size& size,
+-                     bool showOnTaskBar = true);
++                     bool showOnTaskBar = true,
++                     bool resizable = true);
+ 
+   // Release OS resources associated with window.
+   void Destroy();
+diff --git a/flutter/windows/runner/win32_window.cpp b/flutter/windows/runner/win32_window.cpp
+--- a/flutter/windows/runner/win32_window.cpp
++++ b/flutter/windows/runner/win32_window.cpp
+@@ -160,7 +160,8 @@ Win32Window::~Win32Window() {
+ 
+ bool Win32Window::CreateAndShow(const std::wstring& title,
+                                 const Point& origin,
+-                                const Size& size, bool showOnTaskBar) {
++                                const Size& size, bool showOnTaskBar,
++                                bool resizable) {
+   Destroy();
+ 
+   const wchar_t* window_class =
+@@ -172,8 +173,14 @@ bool Win32Window::CreateAndShow(const std::wstring& title,
+   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+   double scale_factor = dpi / 96.0;
+ 
++  // NervDesk（t18 第 3 项）：非 resizable 时去掉 WS_THICKFRAME/WS_MAXIMIZEBOX
++  // （固定尺寸，用户不可拉伸/最大化）；DPI 缩放照常按 logical→physical。
++  const DWORD window_style =
++      resizable ? WS_OVERLAPPEDWINDOW
++                : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
++
+   HWND window = CreateWindow(
+-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
++      window_class, title.c_str(), window_style,
+       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
+       Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+       nullptr, nullptr, GetModuleHandle(nullptr), this);
+diff --git a/src/lang/cn.rs b/src/lang/cn.rs
+--- a/src/lang/cn.rs
++++ b/src/lang/cn.rs
+@@ -393,6 +393,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
+         ("Accept sessions via both", "允许密码或点击访问"),
+         ("Please wait for the remote side to accept your session request...", "请等待对方接受你的连接..."),
+         ("One-time Password", "一次性密码"),
++        ("Fixed Password", "固定密码"),
++        ("Use this password to connect", "连接时使用此密码"),
+         ("Use one-time password", "使用一次性密码"),
+         ("One-time password length", "一次性密码长度"),
+         ("Request access to your device", "请求访问你的设备"),

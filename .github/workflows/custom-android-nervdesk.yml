@@ -36,7 +36,7 @@
 #         ANDROID_SIGNING_KEY / ANDROID_ALIAS / ANDROID_KEY_STORE_PASSWORD /
 #         ANDROID_KEY_PASSWORD：自备 keystore 重签（覆盖安装）才需要，详见 docs/07
 #    5. 产物：aarch64 / armv7 / x86_64 三个 debug 签名 APK，TAG 默认
-#       nervdesk-custom-android-1.4.9-r2（真机反馈修复版；旧 TAG 保留可回退，同一 TAG 只能成功一次，重跑换名）。
+#       nervdesk-custom-android-1.4.9-r3（含 t18 代码修复的完整版；旧 TAG 保留可回退，同一 TAG 只能成功一次，重跑换名）。
 #  ============================================================================
 
 name: Build NervDesk Custom (Android APK, debug installable)
@@ -48,7 +48,7 @@ on:
       release_tag:
         description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
         required: true
-        default: 'nervdesk-custom-android-1.4.9-r2'
+        default: 'nervdesk-custom-android-1.4.9-r3'
   # 推送到 nervdesk-custom-android- 开头的分支时自动构建。
   # （与 Windows 的 nervdesk-custom-windows-** 不重叠，避免双 workflow 误触发）
   push:
@@ -75,7 +75,7 @@ env:
   NDK_VERSION: "r28c"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-android-1.4.9-r2' }}
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-android-1.4.9-r3' }}
   UPLOAD_ARTIFACT: "true"
   # 有值（在 repo Secrets 里配了 ANDROID_SIGNING_KEY）时，
   # 构建完会用你的 keystore 重签 → 可覆盖安装。见 docs/07 第 6 节。
@@ -213,6 +213,33 @@ jobs:
             || { echo "::error::t4 BINARY_NAME 未改为 nervdesk"; exit 1; }
           echo "============================================================"
           echo "[OK] Android 装配链（品牌→t2→t3→t4）应用完成，锚点自检通过"
+          echo "============================================================"
+
+      # ======================================================================
+      # 【t20/t18 真机三项修复】与 Windows 同源策略：t4 之后应用
+      # nervdesk-fixes（依赖顺序 A档品牌→t2→t3→t4→fixes，脚本自带前置校验），
+      # 避免两平台树分叉；Android 亦编译 config.rs/flutter_ffi.rs/common.dart/
+      # cn.rs，其固定密码导出与 powered-by 隐藏种子在 Android 同样生效。
+      # 目录或脚本缺失 = 立即失败；应用后汇总锚点自检。
+      # ======================================================================
+      - name: Apply NervDesk t18 fixes (after t4)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          [ -d patches/nervdesk-fixes ] || { echo "::error::缺少 patches/nervdesk-fixes（t18 产物，请随分支上传）"; exit 1; }
+          ls patches/nervdesk-fixes/*.patch >/dev/null 2>&1 || { echo "::error::patches/nervdesk-fixes 内没有 .patch 文件"; exit 1; }
+          [ -f patches/nervdesk-fixes/apply_nervdesk_fixes.py ] || { echo "::error::缺少 apply_nervdesk_fixes.py"; exit 1; }
+          python3 patches/nervdesk-fixes/apply_nervdesk_fixes.py
+          # 汇总锚点自检（t18 关键标记）
+          grep -q "nervdesk_builtin_password_raw" libs/hbb_common/src/config.rs \
+            || { echo "::error::t18 固定密码 raw 访问器未写入（config.rs）"; exit 1; }
+          grep -q "main_get_builtin_password" src/flutter_ffi.rs \
+            || { echo "::error::t18 flutter_ffi 固定密码导出未写入"; exit 1; }
+          echo "============================================================"
+          echo "[OK] nervdesk-fixes（t18）装配完成，锚点自检通过"
           echo "============================================================"
 
       # ======================================================================
