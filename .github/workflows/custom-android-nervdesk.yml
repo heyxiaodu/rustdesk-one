@@ -36,7 +36,7 @@
 #         ANDROID_SIGNING_KEY / ANDROID_ALIAS / ANDROID_KEY_STORE_PASSWORD /
 #         ANDROID_KEY_PASSWORD：自备 keystore 重签（覆盖安装）才需要，详见 docs/07
 #    5. 产物：aarch64 / armv7 / x86_64 三个 debug 签名 APK，TAG 默认
-#       nervdesk-custom-android-1.4.9（同一 TAG 只能成功一次，重跑换名）。
+#       nervdesk-custom-android-1.4.9-r2（真机反馈修复版；旧 TAG 保留可回退，同一 TAG 只能成功一次，重跑换名）。
 #  ============================================================================
 
 name: Build NervDesk Custom (Android APK, debug installable)
@@ -48,7 +48,7 @@ on:
       release_tag:
         description: '发布标签（同一标签只能成功一次，重跑请换个名字）'
         required: true
-        default: 'nervdesk-custom-android-1.4.9'
+        default: 'nervdesk-custom-android-1.4.9-r2'
   # 推送到 nervdesk-custom-android- 开头的分支时自动构建。
   # （与 Windows 的 nervdesk-custom-windows-** 不重叠，避免双 workflow 误触发）
   push:
@@ -75,7 +75,7 @@ env:
   NDK_VERSION: "r28c"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-android-1.4.9' }}
+  TAG_NAME: ${{ github.event.inputs.release_tag || 'nervdesk-custom-android-1.4.9-r2' }}
   UPLOAD_ARTIFACT: "true"
   # 有值（在 repo Secrets 里配了 ANDROID_SIGNING_KEY）时，
   # 构建完会用你的 keystore 重签 → 可覆盖安装。见 docs/07 第 6 节。
