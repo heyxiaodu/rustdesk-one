@@ -37,7 +37,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      }
      if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
          && !Config::has_permanent_password()
-@@ -3522,6 +3544,46 @@ mod tests {
+@@ -3527,6 +3549,46 @@ mod tests {
          test()
      }
  
@@ -347,3 +347,74 @@ diff --git a/src/lang/cn.rs b/src/lang/cn.rs
          ("Use one-time password", "使用一次性密码"),
          ("One-time password length", "一次性密码长度"),
          ("Request access to your device", "请求访问你的设备"),
+diff --git a/src/platform/windows.rs b/src/platform/windows.rs
+--- a/src/platform/windows.rs
++++ b/src/platform/windows.rs
+@@ -2715,6 +2715,51 @@ pub fn send_message_to_hnwd(
+     return true;
+ }
+ 
++/// r5（t23）：Windows 单实例互斥（GUI 形态）。
++/// 无参 GUI 启动时用命名 Mutex 检测已运行的同形态实例；已存在 → 聚焦已有主窗口并
++/// 返回 false（调用方退出）。防 10048（二次实例重复 bind）与注册互踢重演；
++/// 带参数的启动（--service/--server/--install/--cm/深链等）不参与互斥，交既有
++/// main.cpp FindWindowW/whitelist 机制（深链需把链接派发给已有实例）。
++/// 诚实边界：这是进程级互斥（同用户会话），不替代服务/ACL 防停用（M7）。
++pub fn enforce_single_instance_gui() -> bool {
++    if std::env::args().count() > 1 {
++        // 带参数启动：服务/安装/深链等交既有机制，不拦
++        return true;
++    }
++    use winapi::um::synchapi::CreateMutexW;
++    let app = crate::get_app_name();
++    let name: Vec<u16> = format!("{}_SingleInstance", app)
++        .encode_utf16()
++        .chain(std::iter::once(0))
++        .collect();
++    unsafe {
++        let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
++        if handle.is_null() {
++            log::warn!("NervDesk: CreateMutexW 失败，跳过单实例检查（fail-open）");
++            return true;
++        }
++        if GetLastError() == ERROR_ALREADY_EXISTS {
++            CloseHandle(handle);
++            focus_existing_main_window(&app);
++            return false;
++        }
++        // 持有句柄（进程生命周期），不释放：后续实例会拿到 ERROR_ALREADY_EXISTS
++        std::mem::forget(handle);
++    }
++    true
++}
++
++fn focus_existing_main_window(app: &str) {
++    let title: Vec<u16> = app.encode_utf16().chain(std::iter::once(0)).collect();
++    unsafe {
++        let w = FindWindowW(std::ptr::null(), title.as_ptr());
++        if !w.is_null() {
++            ShowWindow(w, SW_NORMAL);
++            SetForegroundWindow(w);
++        }
++    }
++}
++
+ pub fn get_logon_user_token(user: &str, pwd: &str) -> ResultType<HANDLE> {
+     let user_split = user.split("\\").collect::<Vec<&str>>();
+     let wuser = wide_string(user_split.get(1).unwrap_or(&user));
+diff --git a/src/core_main.rs b/src/core_main.rs
+--- a/src/core_main.rs
++++ b/src/core_main.rs
+@@ -32,6 +32,12 @@ pub fn core_main() -> Option<Vec<String>> {
+     if !crate::common::global_init() {
+         return None;
+     }
++    // r5（t23）：Windows 单实例互斥——无参 GUI 重复启动时退出并聚焦已有实例
++    // （防 10048 / 注册互踢；带参数启动跳过，见 windows.rs 注释）
++    #[cfg(windows)]
++    if !crate::platform::windows::enforce_single_instance_gui() {
++        return None;
++    }
+     crate::load_custom_client();
+     #[cfg(windows)]
+     if !crate::platform::windows::bootstrap() {

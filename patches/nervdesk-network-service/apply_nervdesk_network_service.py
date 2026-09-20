@@ -84,7 +84,12 @@ NETWORK_BLOCK = """// ==========================================================
 
 /// 内置中继服务器（hbbr）：写入 `relay-server` 选项，恒优先于 ID 服务器下发的列表。
 /// 非机密值（域名端口公开），CI 仍可替换此 const 参数化。
-pub const NERVDESK_RELAY_SERVER: &str = "relay.nervcode.eu.org:21117";
+/// 内置中继服务器（hbbr / 2.x ws relay）：写入 `relay-server` 选项，恒优先于
+/// ID 服务器下发的列表。r5（t23）：改用 **api.nervcode.eu.org 裸域**——客户端
+/// `socket_client::check_ws` 对「域:relay端口」目标会构造 `wss://api.nervcode.eu.org/ws/relay`
+/// （2.x ws relay），无端口时按既有 relay 端口补全后同路径；legacy 服务器亦可
+/// 自适应。非机密值，CI 仍可替换此 const 参数化。
+pub const NERVDESK_RELAY_SERVER: &str = "api.nervcode.eu.org";
 
 /// 内置 API 服务器：common.rs 的 get_api_server_ 最终兜底改读此 const（注入点）。
 /// 非机密值，CI 可替换。
@@ -313,7 +318,7 @@ def verify() -> None:
 
     # 反向校验：地址值正确（M4-1/2/3）
     cfg = pathlib.Path("libs/hbb_common/src/config.rs").read_text(encoding="utf-8")
-    for addr in ['"relay.nervcode.eu.org:21117"', '"https://api.nervcode.eu.org"']:
+    for addr in ['"api.nervcode.eu.org"', '"https://api.nervcode.eu.org"']:
         if addr not in cfg:
             print(f"[FAIL] 内置地址缺失 {addr}", file=sys.stderr)
             ok = False

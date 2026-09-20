@@ -56,6 +56,8 @@ FILES = [
     "flutter/windows/runner/win32_window.h",
     "flutter/windows/runner/win32_window.cpp",
     "src/lang/cn.rs",
+    "src/platform/windows.rs",
+    "src/core_main.rs",
 ]
 
 
@@ -567,6 +569,105 @@ def patch_cn_lang() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 8. r5（t23）：Windows 单实例互斥（windows.rs + core_main.rs）
+# ---------------------------------------------------------------------------
+
+_PATCH_WIN_OLD = r"""        if show_window {
+            ShowWindow(window, SW_NORMAL);
+            SetForegroundWindow(window);
+        }
+    }
+    return true;
+}"""
+
+_PATCH_WIN_NEW = r"""        if show_window {
+            ShowWindow(window, SW_NORMAL);
+            SetForegroundWindow(window);
+        }
+    }
+    return true;
+}
+
+/// r5（t23）：Windows 单实例互斥（GUI 形态）。
+/// 无参 GUI 启动时用命名 Mutex 检测已运行的同形态实例；已存在 → 聚焦已有主窗口并
+/// 返回 false（调用方退出）。防 10048（二次实例重复 bind）与注册互踢重演；
+/// 带参数的启动（--service/--server/--install/--cm/深链等）不参与互斥，交既有
+/// main.cpp FindWindowW/whitelist 机制（深链需把链接派发给已有实例）。
+/// 诚实边界：这是进程级互斥（同用户会话），不替代服务/ACL 防停用（M7）。
+pub fn enforce_single_instance_gui() -> bool {
+    if std::env::args().count() > 1 {
+        // 带参数启动：服务/安装/深链等交既有机制，不拦
+        return true;
+    }
+    use winapi::um::synchapi::CreateMutexW;
+    let app = crate::get_app_name();
+    let name: Vec<u16> = format!("{}_SingleInstance", app)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
+        if handle.is_null() {
+            log::warn!("NervDesk: CreateMutexW 失败，跳过单实例检查（fail-open）");
+            return true;
+        }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(handle);
+            focus_existing_main_window(&app);
+            return false;
+        }
+        // 持有句柄（进程生命周期），不释放：后续实例会拿到 ERROR_ALREADY_EXISTS
+        std::mem::forget(handle);
+    }
+    true
+}
+
+fn focus_existing_main_window(app: &str) {
+    let title: Vec<u16> = app.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let w = FindWindowW(std::ptr::null(), title.as_ptr());
+        if !w.is_null() {
+            ShowWindow(w, SW_NORMAL);
+            SetForegroundWindow(w);
+        }
+    }
+}"""
+
+
+def patch_windows_single_instance() -> None:
+    p = pathlib.Path("src/platform/windows.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _PATCH_WIN_OLD, _PATCH_WIN_NEW, "windows.rs 单实例互斥")
+    write_text(p, t, crlf)
+    print("[OK] windows.rs: enforce_single_instance_gui（r5）")
+
+
+def patch_core_main() -> None:
+    p = pathlib.Path("src/core_main.rs")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "    if !crate::common::global_init() {\n"
+        "        return None;\n"
+        "    }\n"
+        "    crate::load_custom_client();",
+        "    if !crate::common::global_init() {\n"
+        "        return None;\n"
+        "    }\n"
+        "    // r5（t23）：Windows 单实例互斥——无参 GUI 重复启动时退出并聚焦已有实例\n"
+        "    // （防 10048 / 注册互踢；带参数启动跳过，见 windows.rs 注释）\n"
+        "    #[cfg(windows)]\n"
+        "    if !crate::platform::windows::enforce_single_instance_gui() {\n"
+        "        return None;\n"
+        "    }\n"
+        "    crate::load_custom_client();",
+        "core_main 单实例调用",
+    )
+    write_text(p, t, crlf)
+    print("[OK] core_main.rs: 单实例互斥调用（r5）")
+
+
+# ---------------------------------------------------------------------------
 # 校验
 # ---------------------------------------------------------------------------
 
@@ -600,6 +701,11 @@ def verify() -> None:
     check("flutter/windows/runner/main.cpp", "/*resizable=*/!nervdesk_controlled", "不可拉伸")
     check("flutter/windows/runner/win32_window.cpp", "window_style", "固定窗口样式")
     check("src/lang/cn.rs", '"Fixed Password", "固定密码"', "语言键")
+    check("src/platform/windows.rs", "pub fn enforce_single_instance_gui", "r5 单实例互斥")
+    check("src/platform/windows.rs", "CreateMutexW", "r5 命名互斥体")
+    check("src/core_main.rs", "enforce_single_instance_gui()", "r5 入口调用")
+    check("src/core_main.rs", "// r5（t23）：Windows 单实例互斥", "r5 注释标记")
+
 
     # t21 反向断言：r3 报错根因（mainGetBuiltinPasswordSync）必须从 Dart 代码消失
     for f in FILES:
@@ -637,6 +743,8 @@ def main() -> None:
     patch_main_cpp()
     patch_win32_window()
     patch_cn_lang()
+    patch_windows_single_instance()
+    patch_core_main()
     verify()
     print("=== 完成 ===")
     print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")
