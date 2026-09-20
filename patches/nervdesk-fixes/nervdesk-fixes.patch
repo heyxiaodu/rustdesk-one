@@ -38,8 +38,8 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 +        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）
 +        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());
 +        // r6（t27 C6）：主界面历史/发现面板收敛（PeerTabPage 已隐藏，纵深一致）
-+        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y");
-+        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y");
++        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y".to_owned());
++        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y".to_owned());
 +        // t21：固定密码经既有 builtin 桥读出（不新增 FFI、不依赖 bridge 再生成）——
 +        // generated_bridge.dart 由 CI codegen 在 pristine 源码上生成，新增 FFI 的
 +        // Dart 声明进不了产物（r3 失败根因）；改用既有 mainGetBuildinOption(
