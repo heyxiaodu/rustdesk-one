@@ -670,47 +670,6 @@ def patch_core_main() -> None:
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# 8b. t26 C1：隐藏受控端会话面板（start_ipc 跳过 CM 进程）——保留（用户未撤 C1）
-# ---------------------------------------------------------------------------
-
-_R5_CM_OLD = r"""async fn start_ipc(
-    mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
-    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
-    mut _rx_desktop_ready: mpsc::Receiver<()>,
-    tx_stream_ready: mpsc::Sender<()>,
-) -> ResultType<()> {
-    use hbb_common::anyhow::anyhow;
-
-    loop {"""
-
-_R5_CM_NEW = r"""async fn start_ipc(
-    mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
-    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
-    mut _rx_desktop_ready: mpsc::Receiver<()>,
-    tx_stream_ready: mpsc::Sender<()>,
-) -> ResultType<()> {
-    use hbb_common::anyhow::anyhow;
-
-    // NervDesk 定制（t26 C1）：受控端隐藏「会话控制面板」（CM 小窗）。
-    // controlled 变体不启动 --cm 面板进程（含 --tray 兜底）；会话 io_loop 不受
-    // 影响。中断途径（r6 用户拍板「彻底静默化」后）：仅控制端断开 / 运维脚本
-    // （taskkill / M7 service-install/watchdog），被控端无任何快捷键途径。
-    if hbb_common::config::nervdesk_mode_controlled() {
-        log::info!("NervDesk controlled: 隐藏会话控制面板（跳过 start_ipc/CM 窗口）");
-        return Ok(());
-    }
-
-    loop {"""
-
-
-def patch_cm_hide_server() -> None:
-    p = pathlib.Path("src/server/connection.rs")
-    t, crlf = read_text(p)
-    t = sub1(t, _R5_CM_OLD, _R5_CM_NEW, "connection.rs start_ipc 隐藏 CM（t26 C1）")
-    write_text(p, t, crlf)
-    print("[OK] connection.rs: 受控端隐藏会话控制面板（t26 C1）")
-
-
 # ---------------------------------------------------------------------------
 # 9. r6（t27）：彻底静默化（无快捷键）+ C4 设置入口 + C5 更新关闭 + C6 历史面板
 # ---------------------------------------------------------------------------
@@ -788,6 +747,226 @@ def patch_r6_tab() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 8b. r7（t30）：按 allow-hide-cm 语义恢复 CM（只隐藏窗口）——消息/文件恢复
+# ---------------------------------------------------------------------------
+
+_R7_CFG_OLD = '    (keys::OPTION_ALLOW_REMOTE_CM_MODIFICATION, "N"),\n];'
+_R7_CFG_NEW = ('    (keys::OPTION_ALLOW_REMOTE_CM_MODIFICATION, "N"),\n'
+               '    // r7（t30）：对齐官方 allow-hide-cm 链——仅隐藏 CM 窗口（进程/信道保留，\n'
+               '    // 消息与文件功能恢复）；配合 approve-mode=password 与 verification-method\n'
+               '    // =use-permanent-password（M1-3 临时 PIN 登录在 controlled Windows 让位于\n'
+               '    // 固定密码；controller 形态不受影响——强制项仅 windows）\n'
+               '    ("allow-hide-cm", "Y"),\n'
+               '    (keys::OPTION_VERIFICATION_METHOD, "use-permanent-password"),\n'
+               '];')
+
+_R7_IPC_OLD = ('                } else if name == "hide_cm" {\n'
+               '                    value = if crate::hbbs_http::sync::is_pro() || crate::common::is_custom_client()\n'
+               '                    {')
+_R7_IPC_NEW = ('                } else if name == "hide_cm" {\n'
+               '                    value = if crate::hbbs_http::sync::is_pro()\n'
+               '                        || crate::common::is_custom_client()\n'
+               '                        || hbb_common::config::nervdesk_mode_controlled()\n'
+               '                    {')
+
+_CHAT_OLD1 = """  RxInt mobileUnreadSum = 0.obs;
+  MessageKey? latestReceivedKey;"""
+_CHAT_NEW1 = """  RxInt mobileUnreadSum = 0.obs;
+  MessageKey? latestReceivedKey;
+  // r7（t30）：受控端消息弹窗通道——server 模式新消息文本（controlled 主窗口
+  // 消费；controller 维持官方原位展示，不依赖此字段）
+  final RxnString lastServerMsg = RxnString();"""
+
+_CHAT_OLD2 = """    if (text.isEmpty) return;
+    if (desktopType == DesktopType.cm) {
+      await showCmWindow();
+    }"""
+_CHAT_NEW2 = """    if (text.isEmpty) return;
+    // r7（t30）：controlled 变体不因消息弹出隐藏的 CM 主窗——消息改由主窗口
+    // 轻量弹窗展示（lastServerMsg）；controller/常规形态维持官方显示行为。
+    if (desktopType == DesktopType.cm && !kNervDeskModeControlled) {
+      await showCmWindow();
+    }
+    if (id != clientModeID) {
+      lastServerMsg.value = text;
+    }"""
+
+_HOME_OLD1 = "  bool isCardClosed = false;"
+_HOME_NEW1 = ("  bool isCardClosed = false;\n"
+              "  // r7（t30）：受控端消息轻量弹窗（仅 controlled）\n"
+              "  Timer? _nerveMsgTimer;\n"
+              "  final RxnString _nervePopupMsg = RxnString();")
+
+_HOME_OLD2 = """  void initState() {
+    super.initState();
+    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {"""
+_HOME_NEW2 = """  void initState() {
+    super.initState();
+    // r7（t30）：controlled 监听受控消息 → 轻量弹窗（不依赖 CM 窗口可见）
+    if (kNervDeskModeControlled) {
+      gFFI.chatModel.addListener(_nerveOnChatMsg);
+    }
+    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {"""
+
+_HOME_OLD3 = """  void dispose() {
+    _uniLinksSubscription?.cancel();"""
+_HOME_NEW3 = """  void dispose() {
+    if (kNervDeskModeControlled) {
+      gFFI.chatModel.removeListener(_nerveOnChatMsg);
+      _nerveMsgTimer?.cancel();
+    }
+    _uniLinksSubscription?.cancel();"""
+
+_HOME_OLD4 = """  Widget _buildBlock({required Widget child}) {"""
+_HOME_NEW4 = r"""  // r7（t30）：受控消息监听（仅 controlled 挂载）
+  void _nerveOnChatMsg() {
+    final m = gFFI.chatModel.lastServerMsg.value;
+    if (m == null || m.isEmpty || !mounted) return;
+    _nerveMsgTimer?.cancel();
+    setState(() => _nervePopupMsg.value = m);
+    _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _nervePopupMsg.value = null);
+    });
+  }
+
+  Widget _nerveMessageBanner() {
+    final m = _nervePopupMsg.value;
+    if (m == null || m.isEmpty) return const SizedBox.shrink();
+    return Positioned(
+      top: 8,
+      left: 12,
+      right: 12,
+      child: Center(
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 420),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.inverseSurface,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mark_chat_unread_outlined,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.onInverseSurface),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    m,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 3,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onInverseSurface),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlock({required Widget child}) {"""
+
+_HOME_OLD5 = """    return _buildBlock(
+        child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        buildLeftPane(context),
+        if (showRightPane) const VerticalDivider(width: 1),
+        if (showRightPane) Expanded(child: buildRightPane(context)),
+      ],
+    ));
+  }"""
+_HOME_NEW5 = """    final pane = _buildBlock(
+        child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        buildLeftPane(context),
+        if (showRightPane) const VerticalDivider(width: 1),
+        if (showRightPane) Expanded(child: buildRightPane(context)),
+      ],
+    ));
+    // r7（t30）：受控端消息轻量弹窗（仅 controlled 叠加）
+    if (!kNervDeskModeControlled) {
+      return pane;
+    }
+    return Stack(children: [pane, _nerveMessageBanner()]);
+  }"""
+
+
+def patch_r7_cm() -> None:
+    # r7：start_ipc 恢复上游原样（连接/CM 进程与信道全保留），加 r7 修订注释
+    p = pathlib.Path("src/server/connection.rs")
+    t, crlf = read_text(p)
+    # 防御：若旧链（t26/r6 版）仍残留 early-return gate，先清除
+    gate = ('    // NervDesk 定制（t26 C1）：受控端隐藏「会话控制面板」（CM 小窗）。\n'
+            '    // controlled 变体不启动 --cm 面板进程（含 --tray 兜底）；会话 io_loop 不受\n'
+            '    // 影响。中断途径（r6 用户拍板「彻底静默化」后）：仅控制端断开 / 运维脚本\n'
+            '    // （taskkill / M7 service-install/watchdog），被控端无任何快捷键途径。\n'
+            '    if hbb_common::config::nervdesk_mode_controlled() {\n'
+            '        log::info!("NervDesk controlled: 隐藏会话控制面板（跳过 start_ipc/CM 窗口）");\n'
+            '        return Ok(());\n'
+            '    }\n\n')
+    t = t.replace(gate, "")
+    t = sub1(
+        t,
+        '    use hbb_common::anyhow::anyhow;\n\n'
+        '    loop {',
+        '    use hbb_common::anyhow::anyhow;\n\n'
+        '    // r7（t30）修订：撤销 t26 的 early-return——改走官方 allow-hide-cm 语义\n'
+        '    // （仅隐藏 CM 窗口、进程与 IPC 全保留），由强制选项 allow-hide-cm=Y +\n'
+        '    // verification-method=use-permanent-password + 既有的 approve-mode=password\n'
+        '    // 触发 password_security::hide_cm()，ipc.rs 对 controlled 应答 hide_cm=true\n'
+        '    // → flutter hideCmWindow 隐藏窗口。消息/文件等会话功能随之恢复。\n'
+        '    loop {',
+        "connection.rs r7 修订注释（CM 启动恢复）",
+    )
+    write_text(p, t, crlf)
+    print("[OK] connection.rs: CM 启动恢复（r7 官方掩体）")
+
+
+def patch_r7_config() -> None:
+    p = pathlib.Path("libs/hbb_common/src/config.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _R7_CFG_OLD, _R7_CFG_NEW, "config.rs hide_cm 链强制项")
+    write_text(p, t, crlf)
+    print("[OK] config.rs: allow-hide-cm / verification 强制（r7）")
+
+
+def patch_r7_ipc() -> None:
+    p = pathlib.Path("src/ipc.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _R7_IPC_OLD, _R7_IPC_NEW, "ipc.rs hide_cm 应答")
+    write_text(p, t, crlf)
+    print("[OK] ipc.rs: hide_cm 应答对 controlled 开放（r7）")
+
+
+def patch_r7_chat_model() -> None:
+    p = pathlib.Path("flutter/lib/models/chat_model.dart")
+    t, crlf = read_text(p)
+    t = sub1(t, _CHAT_OLD1, _CHAT_NEW1, "chat_model lastServerMsg")
+    t = sub1(t, _CHAT_OLD2, _CHAT_NEW2, "chat_model CM-不弹 + 通道写入")
+    write_text(p, t, crlf)
+    print("[OK] chat_model.dart: lastServerMsg + CM gate（r7）")
+
+
+def patch_r7_home() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+    t, crlf = read_text(p)
+    t = sub1(t, _HOME_OLD1, _HOME_NEW1, "home fields")
+    t = sub1(t, _HOME_OLD2, _HOME_NEW2, "home initState")
+    t = sub1(t, _HOME_OLD3, _HOME_NEW3, "home dispose")
+    t = sub1(t, _HOME_OLD4, _HOME_NEW4, "home banner fns")
+    t = sub1(t, _HOME_OLD5, _HOME_NEW5, "home Stack overlay")
+    write_text(p, t, crlf)
+    print("[OK] desktop_home_page.dart: 受控消息轻量弹窗（r7）")
+# ---------------------------------------------------------------------------
 # 校验
 # ---------------------------------------------------------------------------
 
@@ -824,9 +1003,14 @@ def verify() -> None:
     check("src/platform/windows.rs", "pub fn enforce_single_instance_gui", "r5 单实例互斥")
     check("src/platform/windows.rs", "CreateMutexW", "r5 命名互斥体")
     check("src/core_main.rs", "enforce_single_instance_gui()", "r5 入口调用")
-    check("src/server/connection.rs", "nervdesk_mode_controlled()", "t26 隐藏 CM gate")
-    check("src/server/connection.rs", "隐藏会话控制面板", "t26 注释标记")
-    check("src/server/connection.rs", "仅控制端断开 / 运维脚本", "r6 彻底静默化注释")
+    check("src/server/connection.rs", "r7（t30）修订：撤销 t26 的 early-return", "r7 CM 启动恢复")
+    check("libs/hbb_common/src/config.rs", "\"allow-hide-cm\"", "r7 官方链强制项")
+    check("libs/hbb_common/src/config.rs", "use-permanent-password", "r7 verification 强制")
+
+    check("src/ipc.rs", "nervdesk_mode_controlled()", "r7 ipc hide_cm 应答")
+    check("flutter/lib/models/chat_model.dart", "lastServerMsg", "r7 消息通道")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "_nerveMessageBanner", "r7 轻量弹窗")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled) {\n      gFFI.chatModel.addListener", "r7 监听挂载仅 controlled")
 
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
@@ -883,10 +1067,14 @@ def main() -> None:
     patch_cn_lang()
     patch_windows_single_instance()
     patch_core_main()
-    patch_cm_hide_server()
     patch_r6_config()
     patch_r6_home()
     patch_r6_tab()
+    patch_r7_cm()
+    patch_r7_config()
+    patch_r7_ipc()
+    patch_r7_chat_model()
+    patch_r7_home()
     verify()
     print("=== 完成 ===")
     print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")

@@ -20,7 +20,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  // ============================================================================
  // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
  // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
-@@ -3285,6 +3297,10 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
+@@ -3285,6 +3297,16 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
      (keys::OPTION_ENABLE_RECORD_SESSION, "Y"),
      (keys::OPTION_APPROVE_MODE, "password"),
      (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),
@@ -28,10 +28,16 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 +    (keys::OPTION_ALLOW_AUTO_UPDATE, "N"),
 +    (keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW, "N"),
 +    (keys::OPTION_ALLOW_REMOTE_CM_MODIFICATION, "N"),
++    // r7（t30）：对齐官方 allow-hide-cm 链——仅隐藏 CM 窗口（进程/信道保留，
++    // 消息与文件功能恢复）；配合 approve-mode=password 与 verification-method
++    // =use-permanent-password（M1-3 临时 PIN 登录在 controlled Windows 让位于
++    // 固定密码；controller 形态不受影响——强制项仅 windows）
++    ("allow-hide-cm", "Y"),
++    (keys::OPTION_VERIFICATION_METHOD, "use-permanent-password"),
  ];
  
  /// 查询某选项的 NervDesk 强制值；非强制选项返回 None。
-@@ -3326,6 +3342,19 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3326,6 +3348,19 @@ pub fn nerve_apply_forced_defaults() {
          bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
@@ -51,7 +57,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      }
      if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
          && !Config::has_permanent_password()
-@@ -3527,6 +3556,46 @@ mod tests {
+@@ -3527,6 +3562,46 @@ mod tests {
          test()
      }
  
@@ -176,14 +182,25 @@ diff --git a/flutter/lib/desktop/pages/connection_page.dart b/flutter/lib/deskto
 diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desktop/pages/desktop_home_page.dart
 --- a/flutter/lib/desktop/pages/desktop_home_page.dart
 +++ b/flutter/lib/desktop/pages/desktop_home_page.dart
-@@ -60,13 +60,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -50,6 +50,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+   var watchIsCanRecordAudio = false;
+   Timer? _updateTimer;
+   bool isCardClosed = false;
++  // r7（t30）：受控端消息轻量弹窗（仅 controlled）
++  Timer? _nerveMsgTimer;
++  final RxnString _nervePopupMsg = RxnString();
+ 
+   final RxBool _editHover = false.obs;
+   final RxBool _block = false.obs;
+@@ -60,15 +63,76 @@ class _DesktopHomePageState extends State<DesktopHomePage>
    Widget build(BuildContext context) {
      super.build(context);
      final isIncomingOnly = bind.isIncomingOnly();
+-    return _buildBlock(
 +    // NervDesk（t18 第 3 项）：controlled（纯被控端）不渲染右侧面板/分隔线
 +    // （连接管理器与 ID 直连已被移除，右栏空白无意义），左栏独占窗口。
 +    final showRightPane = !isIncomingOnly && !kNervDeskModeControlled;
-     return _buildBlock(
++    final pane = _buildBlock(
          child: Row(
        crossAxisAlignment: CrossAxisAlignment.start,
        children: [
@@ -194,8 +211,68 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
 +        if (showRightPane) Expanded(child: buildRightPane(context)),
        ],
      ));
++    // r7（t30）：受控端消息轻量弹窗（仅 controlled 叠加）
++    if (!kNervDeskModeControlled) {
++      return pane;
++    }
++    return Stack(children: [pane, _nerveMessageBanner()]);
++  }
++
++  // r7（t30）：受控消息监听（仅 controlled 挂载）
++  void _nerveOnChatMsg() {
++    final m = gFFI.chatModel.lastServerMsg.value;
++    if (m == null || m.isEmpty || !mounted) return;
++    _nerveMsgTimer?.cancel();
++    setState(() => _nervePopupMsg.value = m);
++    _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
++      if (mounted) setState(() => _nervePopupMsg.value = null);
++    });
++  }
++
++  Widget _nerveMessageBanner() {
++    final m = _nervePopupMsg.value;
++    if (m == null || m.isEmpty) return const SizedBox.shrink();
++    return Positioned(
++      top: 8,
++      left: 12,
++      right: 12,
++      child: Center(
++        child: Material(
++          elevation: 4,
++          borderRadius: BorderRadius.circular(8),
++          child: Container(
++            constraints: const BoxConstraints(maxWidth: 420),
++            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
++            decoration: BoxDecoration(
++              color: Theme.of(context).colorScheme.inverseSurface,
++              borderRadius: BorderRadius.circular(8),
++            ),
++            child: Row(
++              mainAxisSize: MainAxisSize.min,
++              children: [
++                Icon(Icons.mark_chat_unread_outlined,
++                    size: 16,
++                    color: Theme.of(context).colorScheme.onInverseSurface),
++                const SizedBox(width: 8),
++                Flexible(
++                  child: Text(
++                    m,
++                    overflow: TextOverflow.ellipsis,
++                    maxLines: 3,
++                    style: TextStyle(
++                        color: Theme.of(context).colorScheme.onInverseSurface),
++                  ),
++                ),
++              ],
++            ),
++          ),
++        ),
++      ),
++    );
    }
-@@ -113,7 +116,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+ 
+   Widget _buildBlock({required Widget child}) {
+@@ -113,7 +177,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
        ),
        buildPluginEntry(),
      ];
@@ -206,7 +283,7 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
        children.addAll([
          Divider(),
          OnlineStatusWidget(
-@@ -222,7 +227,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -222,7 +288,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                                    ?.color
                                    ?.withOpacity(0.5)),
                          ).marginOnly(top: 5),
@@ -216,7 +293,7 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
                        ],
                      ),
                    ),
-@@ -296,6 +302,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -296,6 +363,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
      final textColor = Theme.of(context).textTheme.titleLarge?.color;
      final showOneTime = model.approveMode != 'click' &&
          model.verificationMethod != kUsePermanentPassword;
@@ -229,7 +306,7 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
      return Container(
        margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
        child: Row(
-@@ -373,12 +385,43 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -373,12 +446,43 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                                ).marginOnly(right: 8, top: 4),
                              ),
                            ),
@@ -275,6 +352,28 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
                  ],
                ),
              ),
+@@ -697,6 +801,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+   @override
+   void initState() {
+     super.initState();
++    // r7（t30）：controlled 监听受控消息 → 轻量弹窗（不依赖 CM 窗口可见）
++    if (kNervDeskModeControlled) {
++      gFFI.chatModel.addListener(_nerveOnChatMsg);
++    }
+     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
+       await gFFI.serverModel.fetchID();
+       final error = await bind.mainGetError();
+@@ -876,6 +984,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+ 
+   @override
+   void dispose() {
++    if (kNervDeskModeControlled) {
++      gFFI.chatModel.removeListener(_nerveOnChatMsg);
++      _nerveMsgTimer?.cancel();
++    }
+     _uniLinksSubscription?.cancel();
+     Get.delete<RxBool>(tag: 'stop-service');
+     _updateTimer?.cancel();
 diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/desktop/pages/desktop_tab_page.dart
 --- a/flutter/lib/desktop/pages/desktop_tab_page.dart
 +++ b/flutter/lib/desktop/pages/desktop_tab_page.dart
@@ -288,6 +387,35 @@ diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/deskt
                  child: ActionIcon(
                    message: 'Settings',
                    icon: IconFont.menu,
+diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.dart
+--- a/flutter/lib/models/chat_model.dart
++++ b/flutter/lib/models/chat_model.dart
+@@ -70,6 +70,9 @@ class ChatModel with ChangeNotifier {
+   TextEditingController textController = TextEditingController();
+   RxInt mobileUnreadSum = 0.obs;
+   MessageKey? latestReceivedKey;
++  // r7（t30）：受控端消息弹窗通道——server 模式新消息文本（controlled 主窗口
++  // 消费；controller 维持官方原位展示，不依赖此字段）
++  final RxnString lastServerMsg = RxnString();
+ 
+   Offset chatWindowPosition = Offset(20, 80);
+ 
+@@ -351,9 +354,14 @@ class ChatModel with ChangeNotifier {
+       return;
+     }
+     if (text.isEmpty) return;
+-    if (desktopType == DesktopType.cm) {
++    // r7（t30）：controlled 变体不因消息弹出隐藏的 CM 主窗——消息改由主窗口
++    // 轻量弹窗展示（lastServerMsg）；controller/常规形态维持官方显示行为。
++    if (desktopType == DesktopType.cm && !kNervDeskModeControlled) {
+       await showCmWindow();
+     }
++    if (id != clientModeID) {
++      lastServerMsg.value = text;
++    }
+     String? peerId;
+     if (id == clientModeID) {
+       peerId = session.id;
 diff --git a/flutter/windows/CMakeLists.txt b/flutter/windows/CMakeLists.txt
 --- a/flutter/windows/CMakeLists.txt
 +++ b/flutter/windows/CMakeLists.txt
@@ -469,19 +597,29 @@ diff --git a/src/core_main.rs b/src/core_main.rs
 diff --git a/src/server/connection.rs b/src/server/connection.rs
 --- a/src/server/connection.rs
 +++ b/src/server/connection.rs
-@@ -5997,6 +5997,15 @@ async fn start_ipc(
+@@ -5997,6 +5997,11 @@ async fn start_ipc(
  ) -> ResultType<()> {
      use hbb_common::anyhow::anyhow;
  
-+    // NervDesk 定制（t26 C1）：受控端隐藏「会话控制面板」（CM 小窗）。
-+    // controlled 变体不启动 --cm 面板进程（含 --tray 兜底）；会话 io_loop 不受
-+    // 影响。中断途径（r6 用户拍板「彻底静默化」后）：仅控制端断开 / 运维脚本
-+    // （taskkill / M7 service-install/watchdog），被控端无任何快捷键途径。
-+    if hbb_common::config::nervdesk_mode_controlled() {
-+        log::info!("NervDesk controlled: 隐藏会话控制面板（跳过 start_ipc/CM 窗口）");
-+        return Ok(());
-+    }
-+
++    // r7（t30）修订：撤销 t26 的 early-return——改走官方 allow-hide-cm 语义
++    // （仅隐藏 CM 窗口、进程与 IPC 全保留），由强制选项 allow-hide-cm=Y +
++    // verification-method=use-permanent-password + 既有的 approve-mode=password
++    // 触发 password_security::hide_cm()，ipc.rs 对 controlled 应答 hide_cm=true
++    // → flutter hideCmWindow 隐藏窗口。消息/文件等会话功能随之恢复。
      loop {
          if !crate::platform::is_prelogin() {
              break;
+diff --git a/src/ipc.rs b/src/ipc.rs
+--- a/src/ipc.rs
++++ b/src/ipc.rs
+@@ -861,7 +861,9 @@ async fn handle(data: Data, stream: &mut Connection) {
+                         None
+                     };
+                 } else if name == "hide_cm" {
+-                    value = if crate::hbbs_http::sync::is_pro() || crate::common::is_custom_client()
++                    value = if crate::hbbs_http::sync::is_pro()
++                        || crate::common::is_custom_client()
++                        || hbb_common::config::nervdesk_mode_controlled()
+                     {
+                         Some(hbb_common::password_security::hide_cm().to_string())
+                     } else {
