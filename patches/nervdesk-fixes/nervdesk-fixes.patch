@@ -20,12 +20,26 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  // ============================================================================
  // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
  // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
-@@ -3326,6 +3338,16 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3285,6 +3297,10 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
+     (keys::OPTION_ENABLE_RECORD_SESSION, "Y"),
+     (keys::OPTION_APPROVE_MODE, "password"),
+     (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),
++    // r6（t27 C5/§4.3）：无人值守不弹更新；不接受窗口内改权限 / 远端改 CM
++    (keys::OPTION_ALLOW_AUTO_UPDATE, "N"),
++    (keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW, "N"),
++    (keys::OPTION_ALLOW_REMOTE_CM_MODIFICATION, "N"),
+ ];
+ 
+ /// 查询某选项的 NervDesk 强制值；非强制选项返回 None。
+@@ -3326,6 +3342,19 @@ pub fn nerve_apply_forced_defaults() {
          bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
 +        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）
 +        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());
++        // r6（t27 C6）：主界面历史/发现面板收敛（PeerTabPage 已隐藏，纵深一致）
++        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y");
++        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y");
 +        // t21：固定密码经既有 builtin 桥读出（不新增 FFI、不依赖 bridge 再生成）——
 +        // generated_bridge.dart 由 CI codegen 在 pristine 源码上生成，新增 FFI 的
 +        // Dart 声明进不了产物（r3 失败根因）；改用既有 mainGetBuildinOption(
@@ -37,7 +51,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      }
      if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
          && !Config::has_permanent_password()
-@@ -3527,6 +3549,46 @@ mod tests {
+@@ -3527,6 +3556,46 @@ mod tests {
          test()
      }
  
@@ -192,7 +206,17 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
        children.addAll([
          Divider(),
          OnlineStatusWidget(
-@@ -296,6 +301,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -222,7 +227,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+                                   ?.color
+                                   ?.withOpacity(0.5)),
+                         ).marginOnly(top: 5),
+-                        buildPopupMenu(context)
++                        // NervDesk（t27 C4）：controlled 隐藏 ID 板设置入口（三点菜单）
++                        if (!kNervDeskModeControlled) buildPopupMenu(context)
+                       ],
+                     ),
+                   ),
+@@ -296,6 +302,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
      final textColor = Theme.of(context).textTheme.titleLarge?.color;
      final showOneTime = model.approveMode != 'click' &&
          model.verificationMethod != kUsePermanentPassword;
@@ -205,7 +229,18 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
      return Container(
        margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
        child: Row(
-@@ -379,6 +390,34 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+@@ -373,12 +385,43 @@ class _DesktopHomePageState extends State<DesktopHomePage>
+                               ).marginOnly(right: 8, top: 4),
+                             ),
+                           ),
+-                          onTap: () => DesktopSettingPage.switch2page(
+-                              SettingsTabKey.safety),
++                          // NervDesk（t27 C4）：controlled 隐藏改密入口（设置全部封闭）
++                          onTap: kNervDeskModeControlled
++                              ? null
++                              : () => DesktopSettingPage.switch2page(
++                                  SettingsTabKey.safety),
+                           onHover: (value) => editHover.value = value,
                          ),
                      ],
                    ),
@@ -240,6 +275,19 @@ diff --git a/flutter/lib/desktop/pages/desktop_home_page.dart b/flutter/lib/desk
                  ],
                ),
              ),
+diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/desktop/pages/desktop_tab_page.dart
+--- a/flutter/lib/desktop/pages/desktop_tab_page.dart
++++ b/flutter/lib/desktop/pages/desktop_tab_page.dart
+@@ -97,7 +97,8 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
+             body: DesktopTab(
+               controller: tabController,
+               tail: Offstage(
+-                offstage: bind.isIncomingOnly() || bind.isDisableSettings(),
++                offstage: bind.isIncomingOnly() || bind.isDisableSettings() ||
++                    kNervDeskModeControlled,
+                 child: ActionIcon(
+                   message: 'Settings',
+                   icon: IconFont.menu,
 diff --git a/flutter/windows/CMakeLists.txt b/flutter/windows/CMakeLists.txt
 --- a/flutter/windows/CMakeLists.txt
 +++ b/flutter/windows/CMakeLists.txt
@@ -418,3 +466,22 @@ diff --git a/src/core_main.rs b/src/core_main.rs
      crate::load_custom_client();
      #[cfg(windows)]
      if !crate::platform::windows::bootstrap() {
+diff --git a/src/server/connection.rs b/src/server/connection.rs
+--- a/src/server/connection.rs
++++ b/src/server/connection.rs
+@@ -5997,6 +5997,15 @@ async fn start_ipc(
+ ) -> ResultType<()> {
+     use hbb_common::anyhow::anyhow;
+ 
++    // NervDesk 定制（t26 C1）：受控端隐藏「会话控制面板」（CM 小窗）。
++    // controlled 变体不启动 --cm 面板进程（含 --tray 兜底）；会话 io_loop 不受
++    // 影响。中断途径（r6 用户拍板「彻底静默化」后）：仅控制端断开 / 运维脚本
++    // （taskkill / M7 service-install/watchdog），被控端无任何快捷键途径。
++    if hbb_common::config::nervdesk_mode_controlled() {
++        log::info!("NervDesk controlled: 隐藏会话控制面板（跳过 start_ipc/CM 窗口）");
++        return Ok(());
++    }
++
+     loop {
+         if !crate::platform::is_prelogin() {
+             break;

@@ -58,6 +58,7 @@ FILES = [
     "src/lang/cn.rs",
     "src/platform/windows.rs",
     "src/core_main.rs",
+    "src/server/connection.rs",
 ]
 
 
@@ -668,6 +669,125 @@ def patch_core_main() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 8b. t26 C1：隐藏受控端会话面板（start_ipc 跳过 CM 进程）——保留（用户未撤 C1）
+# ---------------------------------------------------------------------------
+
+_R5_CM_OLD = r"""async fn start_ipc(
+    mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
+    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
+    mut _rx_desktop_ready: mpsc::Receiver<()>,
+    tx_stream_ready: mpsc::Sender<()>,
+) -> ResultType<()> {
+    use hbb_common::anyhow::anyhow;
+
+    loop {"""
+
+_R5_CM_NEW = r"""async fn start_ipc(
+    mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
+    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
+    mut _rx_desktop_ready: mpsc::Receiver<()>,
+    tx_stream_ready: mpsc::Sender<()>,
+) -> ResultType<()> {
+    use hbb_common::anyhow::anyhow;
+
+    // NervDesk 定制（t26 C1）：受控端隐藏「会话控制面板」（CM 小窗）。
+    // controlled 变体不启动 --cm 面板进程（含 --tray 兜底）；会话 io_loop 不受
+    // 影响。中断途径（r6 用户拍板「彻底静默化」后）：仅控制端断开 / 运维脚本
+    // （taskkill / M7 service-install/watchdog），被控端无任何快捷键途径。
+    if hbb_common::config::nervdesk_mode_controlled() {
+        log::info!("NervDesk controlled: 隐藏会话控制面板（跳过 start_ipc/CM 窗口）");
+        return Ok(());
+    }
+
+    loop {"""
+
+
+def patch_cm_hide_server() -> None:
+    p = pathlib.Path("src/server/connection.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _R5_CM_OLD, _R5_CM_NEW, "connection.rs start_ipc 隐藏 CM（t26 C1）")
+    write_text(p, t, crlf)
+    print("[OK] connection.rs: 受控端隐藏会话控制面板（t26 C1）")
+
+
+# ---------------------------------------------------------------------------
+# 9. r6（t27）：彻底静默化（无快捷键）+ C4 设置入口 + C5 更新关闭 + C6 历史面板
+# ---------------------------------------------------------------------------
+
+
+def patch_r6_config() -> None:
+    p = pathlib.Path("libs/hbb_common/src/config.rs")
+    t, crlf = read_text(p)
+    # C5/§4.3：FORCED_OPTIONS 追加（t2 区块，本补丁扩展）
+    t = sub1(
+        t,
+        '    (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),\n',
+        '    (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),\n'
+        '    // r6（t27 C5/§4.3）：无人值守不弹更新；不接受窗口内改权限 / 远端改 CM\n'
+        '    (keys::OPTION_ALLOW_AUTO_UPDATE, "N"),\n'
+        '    (keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW, "N"),\n'
+        '    (keys::OPTION_ALLOW_REMOTE_CM_MODIFICATION, "N"),\n',
+        "FORCED_OPTIONS 追加 C5/§4.3",
+    )
+    # C6：builtin 种子
+    t = sub1(
+        t,
+        '        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());\n',
+        '        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());\n'
+        '        // r6（t27 C6）：主界面历史/发现面板收敛（PeerTabPage 已隐藏，纵深一致）\n'
+        '        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y");\n'
+        '        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y");\n',
+        "builtin 种子 C6",
+    )
+    write_text(p, t, crlf)
+    print("[OK] config.rs: C5/§4.3 强制 + C6 种子（r6）")
+
+
+def patch_r6_home() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+    t, crlf = read_text(p)
+    # C4a：ID 板三点菜单
+    t = sub1(
+        t,
+        "                        ).marginOnly(top: 5),\n"
+        "                        buildPopupMenu(context)",
+        "                        ).marginOnly(top: 5),\n"
+        "                        // NervDesk（t27 C4）：controlled 隐藏 ID 板设置入口（三点菜单）\n"
+        "                        if (!kNervDeskModeControlled) buildPopupMenu(context)",
+        "ID 板三点菜单 C4a",
+    )
+    # C4：改密入口
+    t = sub1(
+        t,
+        "onTap: () => DesktopSettingPage.switch2page(\n"
+        "                              SettingsTabKey.safety),",
+        "// NervDesk（t27 C4）：controlled 隐藏改密入口（设置全部封闭）\n"
+        "                          onTap: kNervDeskModeControlled\n"
+        "                              ? null\n"
+        "                              : () => DesktopSettingPage.switch2page(\n"
+        "                                  SettingsTabKey.safety),",
+        "改密入口 C4",
+    )
+    write_text(p, t, crlf)
+    print("[OK] desktop_home_page.dart: C4 设置入口隐藏（r6）")
+
+
+def patch_r6_tab() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_tab_page.dart")
+    t, crlf = read_text(p)
+    t = sub1(
+        t,
+        "offstage: bind.isIncomingOnly() || bind.isDisableSettings(),",
+        "offstage: bind.isIncomingOnly() || bind.isDisableSettings() ||\n"
+        "                    kNervDeskModeControlled,",
+        "tabbar 设置钮 C4b",
+    )
+    write_text(p, t, crlf)
+    print("[OK] desktop_tab_page.dart: tabbar 设置按钮隐藏（r6）")
+
+
+# ---------------------------------------------------------------------------
 # 校验
 # ---------------------------------------------------------------------------
 
@@ -704,8 +824,26 @@ def verify() -> None:
     check("src/platform/windows.rs", "pub fn enforce_single_instance_gui", "r5 单实例互斥")
     check("src/platform/windows.rs", "CreateMutexW", "r5 命名互斥体")
     check("src/core_main.rs", "enforce_single_instance_gui()", "r5 入口调用")
+    check("src/server/connection.rs", "nervdesk_mode_controlled()", "t26 隐藏 CM gate")
+    check("src/server/connection.rs", "隐藏会话控制面板", "t26 注释标记")
+    check("src/server/connection.rs", "仅控制端断开 / 运维脚本", "r6 彻底静默化注释")
+
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
+    check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")
+    check("libs/hbb_common/src/config.rs", "OPTION_ALLOW_AUTO_UPDATE", "t27 C5 更新关闭")
+    check("libs/hbb_common/src/config.rs", "OPTION_DISABLE_GROUP_PANEL", "t27 C6 历史面板")
+    check("libs/hbb_common/src/config.rs", "OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW", "t27 4.3 权限键")
+
+
     check("src/core_main.rs", "// r5（t23）：Windows 单实例互斥", "r5 注释标记")
 
+
+    # t27 反向断言（负向）：被控端「彻底静默化」——Ctrl+Alt+F12 快捷键必须已移除
+    hp = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart").read_text(encoding="utf-8")
+    if "_nerveBreakSessions" in hp or "LogicalKeyboardKey.f12" in hp:
+        print("[FAIL] desktop_home_page.dart 仍含被控端中断快捷键（t27 应移除）", file=sys.stderr)
+        ok = False
 
     # t21 反向断言：r3 报错根因（mainGetBuiltinPasswordSync）必须从 Dart 代码消失
     for f in FILES:
@@ -745,6 +883,10 @@ def main() -> None:
     patch_cn_lang()
     patch_windows_single_instance()
     patch_core_main()
+    patch_cm_hide_server()
+    patch_r6_config()
+    patch_r6_home()
+    patch_r6_tab()
     verify()
     print("=== 完成 ===")
     print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")
