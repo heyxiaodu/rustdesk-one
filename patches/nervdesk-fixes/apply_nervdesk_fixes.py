@@ -736,8 +736,8 @@ def patch_r6_config() -> None:
         '        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());\n',
         '        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());\n'
         '        // r6（t27 C6）：主界面历史/发现面板收敛（PeerTabPage 已隐藏，纵深一致）\n'
-        '        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y");\n'
-        '        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y");\n',
+        '        bs.insert(keys::OPTION_DISABLE_GROUP_PANEL.to_owned(), "Y".to_owned());\n'
+        '        bs.insert(keys::OPTION_DISABLE_DISCOVERY_PANEL.to_owned(), "Y".to_owned());\n',
         "builtin 种子 C6",
     )
     write_text(p, t, crlf)
