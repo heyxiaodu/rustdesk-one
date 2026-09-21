@@ -967,6 +967,366 @@ def patch_r7_home() -> None:
     write_text(p, t, crlf)
     print("[OK] desktop_home_page.dart: 受控消息轻量弹窗（r7）")
 # ---------------------------------------------------------------------------
+# 8c. r8（t32）：PIN 设置锁（unlock_pin）——受控端关键配置保护
+# ---------------------------------------------------------------------------
+
+_R8_CFG_OLD = """        log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
+        let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
+    }
+    // NervDesk 定制（M4 网络）：内置地址锁定 + 网络设置隐藏 + iroh relay 令牌
+    nerve_apply_network_defaults();"""
+_R8_CFG_NEW = """        log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
+        let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
+    }
+    // r8（t32）：PIN 设置锁种子（controlled）——与固定密码同源（change-list 注明
+    // 可变：后续可改 Secret 注入）；仅当前为空且未禁用时写入（管理员 CLI/设置面可改）。
+    // 语义区分：unlock_pin = 设置锁（保护关键配置入口）；allow-numeric-one-time-password
+    // = 临时数字密码（会话登录），两者并存不混淆。
+    if nervdesk_mode_controlled() {
+        if let Some(pin) = nervdesk_builtin_password_raw() {
+            if pin.chars().count() >= 4
+                && Config::get_unlock_pin().is_empty()
+                && !Config::is_disable_unlock_pin()
+            {
+                log::info!("NervDesk: 写入 PIN 设置锁（与固定密码同源）");
+                Config::set_unlock_pin(&pin);
+            }
+        }
+    }
+    // NervDesk 定制（M4 网络）：内置地址锁定 + 网络设置隐藏 + iroh relay 令牌
+    nerve_apply_network_defaults();"""
+
+_HOME_GATE_OLD = """                          // NervDesk（t27 C4）：controlled 隐藏改密入口（设置全部封闭）
+                          onTap: kNervDeskModeControlled
+                              ? null
+                              : () => DesktopSettingPage.switch2page(
+                                  SettingsTabKey.safety),"""
+_HOME_GATE_NEW = """                          // NervDesk（t27 C4 + r8 t32）：controlled 改密入口以 PIN 设置锁保护——
+                          // 未验证 PIN（=固定密码同源）不可进入/修改关键配置；其余入口仍隐藏
+                          onTap: kNervDeskModeControlled
+                              ? () => _nerveUnlockThen(
+                                  () => DesktopSettingPage.switch2page(
+                                      SettingsTabKey.safety))
+                              : () => DesktopSettingPage.switch2page(
+                                  SettingsTabKey.safety),"""
+
+_HOME_FN_OLD = """  Widget _buildBlock({required Widget child}) {"""
+_HOME_FN_NEW = """  // r8（t32）：PIN 设置锁——进入受保护设置前验证 PIN（未过不可改关键配置）。
+  // 与临时密码 PIN（allow-numeric-one-time-password，会话登录）语义不同。
+  void _nerveUnlockThen(Function() onPass) {
+    checkUnlockPinDialog(bind.mainGetUnlockPin(), onPass);
+  }
+
+  Widget _buildBlock({required Widget child}) {"""
+
+
+def patch_r8_pin() -> None:
+    p = pathlib.Path("libs/hbb_common/src/config.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _R8_CFG_OLD, _R8_CFG_NEW, "config.rs PIN 设置锁种子")
+    write_text(p, t, crlf)
+    print("[OK] config.rs: PIN 设置锁种子（r8）")
+
+
+def patch_r8_home() -> None:
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+    t, crlf = read_text(p)
+    if "import 'package:flutter_hbb/common/widgets/dialog.dart';" not in t:
+        anchor = "import 'package:flutter_hbb/common/"
+        i = t.rfind(anchor)
+        assert i >= 0
+        eol = t.find("\n", i)
+        t = t[: eol + 1] + "import 'package:flutter_hbb/common/widgets/dialog.dart';\n" + t[eol + 1 :]
+    t = sub1(t, _HOME_GATE_OLD, _HOME_GATE_NEW, "home 改密 PIN 门")
+    t = sub1(t, _HOME_FN_OLD, _HOME_FN_NEW, "home _nerveUnlockThen")
+    write_text(p, t, crlf)
+    print("[OK] desktop_home_page.dart: PIN 门（r8）")
+# ---------------------------------------------------------------------------
+# 8d. r9（t34）：方案 A 注释正式化（iroh = direct-only；relay 不注入说明）
+# ---------------------------------------------------------------------------
+
+_R9_IROH_OLD = r"""/// 做两件**必不可少**的事：
+///
+/// 1. **读 relay 地址**（选项 `iroh-relay`，逗号分隔）。
+///    不配的话就是 `RelayMode::Disabled`，跨 NAT 时永远连不上 ——
+///    即使用户部署了 relay 也用不到。
+/// 2. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
+///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
+///    （见 [`secret_key_from_rustdesk`]）。"""
+
+_R9_IROH_NEW = r"""/// 方案 A（docs/12）：**iroh = 直连/打洞专用（direct-only 策略）**——
+/// relay 默认不注入：未配置 option `iroh-relay` 时 relay_urls 为空、
+/// `RelayMode::Disabled`；跨 NAT 兜底由 RustDesk relay（`relay-server`
+/// 选项 → `api.nervcode.eu.org` 2.x WS `/ws/relay` / 21117）承担。
+/// 如需 iroh-relay 辅助，请**显式配置 option `iroh-relay`**（逗号分隔地址），
+/// 恢复路径见 docs/12 §2.1。`iroh-relay-token` 解析保留（兼容性，未用项）。
+///
+/// 其余行为：
+///
+/// 1. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
+///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
+///    （见 [`secret_key_from_rustdesk`]）。"""
+
+
+def patch_r9_iroh() -> None:
+    p = pathlib.Path("nervdesk/iroh_transport.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _R9_IROH_OLD, _R9_IROH_NEW, "iroh_transport 注释（方案 A）")
+    write_text(p, t, crlf)
+    print("[OK] nervdesk/iroh_transport.rs: direct-only 注释（r9/t34）")
+
+
+# ---------------------------------------------------------------------------
+# 8e. r8/t35（本地修复）：消息横幅旁路通道（_nerve_ui）+ CM no-activate
+# ---------------------------------------------------------------------------
+
+_FLUTTER_OLD = """    #[inline]
+    pub fn cm_init() {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        start_listen_ipc_thread();
+    }"""
+_FLUTTER_NEW = """    #[inline]
+    pub fn cm_init() {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            start_listen_ipc_thread();
+            // r8/t35：controlled 常驻主窗口旁路消息通道（_nerve_ui）——绕开隐藏 CM，
+            // 横幅事件直达主窗口；CM（--cm）进程不抢占（其独享 _cm 监听）。
+            if hbb_common::config::nervdesk_mode_controlled() && !crate::common::is_cm() {
+                std::thread::spawn(nerv_main_ui_listener);
+            }
+        }
+    }
+
+    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
+    /// ipc `_nerve_ui` 通道），push_event `nerve_chat_banner` → 主窗口横幅。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[tokio::main(flavor = "current_thread")]
+    pub async fn nerv_main_ui_listener() {
+        match crate::ipc::new_listener("_nerve_ui").await {
+            Ok(mut incoming) => {
+                while let Some(result) = incoming.next().await {
+                    let Ok(stream) = result else {
+                        continue;
+                    };
+                    tokio::spawn(async move {
+                        let mut conn = crate::ipc::Connection::new(stream);
+                        loop {
+                            match conn.next().await {
+                                Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
+                                    FlutterHandler {}
+                                        .push_event("nerve_chat_banner", &[("text", &text)], &[]);
+                                }
+                                Ok(Some(_)) => {}
+                                _ => {
+                                    log::debug!("NervDesk: _nerve_ui 通道断开");
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+            Err(err) => log::error!("NervDesk: _nerve_ui 监听失败: {}", err),
+        }
+    }"""
+
+_IPC_OLD = """#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
+_IPC_NEW = """/// r8/t35：受控端旁路投递——把文字消息直接送到常驻主窗口（_nerve_ui），
+/// 绕开隐藏中的 CM 窗口（其激活/置前会造成任务栏跳动）。
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub async fn send_chat_banner_to_main(text: String) -> ResultType<()> {
+    if let Ok(mut c) = connect(1_000, "_nerve_ui").await {
+        c.send(&Data::ChatMessage { text }).await?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
+
+_CONN_OLD = """                    Some(misc::Union::ChatMessage(c)) => {
+                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
+                        self.chat_unanswered = true;"""
+_CONN_NEW = """                    Some(misc::Union::ChatMessage(c)) => {
+                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
+                        // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）
+                        if hbb_common::config::nervdesk_mode_controlled() {
+                            let text = c.text.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = crate::ipc::send_chat_banner_to_main(text).await {
+                                    log::debug!("NervDesk: 主窗口横幅投递失败: {}", err);
+                                }
+                            });
+                        }
+                        self.chat_unanswered = true;"""
+
+_MODEL_OLD = """      } else if (name == 'chat_server_mode') {
+        parent.target?.chatModel
+            .receive(int.parse(evt['id'] as String), evt['text'] ?? '');"""
+_MODEL_NEW = """      } else if (name == 'chat_server_mode') {
+        parent.target?.chatModel
+            .receive(int.parse(evt['id'] as String), evt['text'] ?? '');
+      } else if (name == 'nerve_chat_banner') {
+        // r8/t35：controlled 旁路消息通道（绕开隐藏 CM）→ 主窗口横幅
+        parent.target?.chatModel.lastServerMsg.value = evt['text'] ?? '';"""
+
+_CHAT_OLD = """      if (isDesktop) {
+        windowOnTop(null);"""
+_CHAT_NEW = """      if (isDesktop && !kNervDeskModeControlled) {
+        // r8/t35：controlled（CM 隐藏）禁止激活置前——Windows 会拦截导致任务栏跳动
+        windowOnTop(null);"""
+
+_HOME_F_OLD = """  // r7（t30）：受控端消息轻量弹窗（仅 controlled）
+  Timer? _nerveMsgTimer;
+  final RxnString _nervePopupMsg = RxnString();"""
+_HOME_F_NEW = """  // r7（t30）+ r8（t35）：受控端消息轻量弹窗（仅 controlled；Rx 直听订阅）
+  Timer? _nerveMsgTimer;
+  StreamSubscription? _nerveMsgSub;
+  final RxnString _nervePopupMsg = RxnString();"""
+
+_HOME_I_OLD = """    // r7（t30）：controlled 监听受控消息 → 轻量弹窗（不依赖 CM 窗口可见）
+    if (kNervDeskModeControlled) {
+      gFFI.chatModel.addListener(_nerveOnChatMsg);
+    }"""
+_HOME_I_NEW = """    // r7（t30）+ r8（t35）：controlled 直听 lastServerMsg（Rx）→ 轻量弹窗；
+    // 消息经 _nerve_ui 旁路通道直达主窗口（绕开隐藏 CM 的激活逻辑）。
+    if (kNervDeskModeControlled) {
+      _nerveMsgSub = gFFI.chatModel.lastServerMsg.listen((m) {
+        if (m == null || m.isEmpty || !mounted) return;
+        _nerveMsgTimer?.cancel();
+        setState(() => _nervePopupMsg.value = m);
+        _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
+          if (mounted) setState(() => _nervePopupMsg.value = null);
+        });
+      });
+    }"""
+
+_HOME_D_OLD = """    if (kNervDeskModeControlled) {
+      gFFI.chatModel.removeListener(_nerveOnChatMsg);
+      _nerveMsgTimer?.cancel();
+    }"""
+_HOME_D_NEW = """    if (kNervDeskModeControlled) {
+      _nerveMsgSub?.cancel();
+      _nerveMsgTimer?.cancel();
+    }"""
+
+_T35_FN_OLD = """  // r7（t30）：受控消息监听（仅 controlled 挂载）
+  void _nerveOnChatMsg() {
+    final m = gFFI.chatModel.lastServerMsg.value;
+    if (m == null || m.isEmpty || !mounted) return;
+    _nerveMsgTimer?.cancel();
+    setState(() => _nervePopupMsg.value = m);
+    _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _nervePopupMsg.value = null);
+    });
+  }
+
+"""
+_T35_FN_NEW = ""
+
+_WIN_H_OLD = """                     bool showOnTaskBar = true,
+                     bool resizable = true);"""
+_WIN_H_NEW = """                     bool showOnTaskBar = true,
+                     bool resizable = true,
+                     bool noActivate = false);"""
+
+_WIN_CPP_H_OLD = """bool Win32Window::CreateAndShow(const std::wstring& title,
+                                const Point& origin,
+                                const Size& size, bool showOnTaskBar,
+                                bool resizable) {"""
+_WIN_CPP_H_NEW = """bool Win32Window::CreateAndShow(const std::wstring& title,
+                                const Point& origin,
+                                const Size& size, bool showOnTaskBar,
+                                bool resizable, bool noActivate) {"""
+
+_WIN_CPP_W_OLD = """  const DWORD window_style =
+      resizable ? WS_OVERLAPPEDWINDOW
+                : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
+
+  HWND window = CreateWindow(
+      window_class, title.c_str(), window_style,
+      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
+      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      nullptr, nullptr, GetModuleHandle(nullptr), this);"""
+_WIN_CPP_W_NEW = """  const DWORD window_style =
+      resizable ? WS_OVERLAPPEDWINDOW
+                : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
+
+  DWORD ex_style = 0;
+  // r8/t35：隐藏中的 CM 窗口（controlled）加 WS_EX_NOACTIVATE——
+  // 禁止激活置前（SetForegroundWindow 被 Windows 拦截 → 任务栏跳动根治）。
+  if (noActivate) {
+    ex_style |= WS_EX_NOACTIVATE;
+  }
+  HWND window = CreateWindowEx(
+      ex_style, window_class, title.c_str(), window_style,
+      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
+      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      nullptr, nullptr, GetModuleHandle(nullptr), this);"""
+
+_MAIN_OLD = """                            /*resizable=*/!nervdesk_controlled && !is_cm_page)) {"""
+_MAIN_NEW = """                            /*resizable=*/!nervdesk_controlled && !is_cm_page,
+                            /*noActivate=*/is_cm_page && nervdesk_controlled)) {"""
+
+
+def patch_t35_nerve() -> None:
+    p = pathlib.Path("src/flutter.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _FLUTTER_OLD, _FLUTTER_NEW, "flutter.rs 主窗口旁路监听")
+    write_text(p, t, crlf)
+    p = pathlib.Path("src/ipc.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _IPC_OLD, _IPC_NEW, "ipc.rs 投递助手")
+    write_text(p, t, crlf)
+    p = pathlib.Path("src/server/connection.rs")
+    t, crlf = read_text(p)
+    t = sub1(t, _CONN_OLD, _CONN_NEW, "connection.rs 旁路推送")
+    write_text(p, t, crlf)
+    print("[OK] rust 侧：_nerve_ui 旁路通道（r8/t35）")
+
+
+def patch_t35_dart() -> None:
+    p = pathlib.Path("flutter/lib/models/model.dart")
+    t, crlf = read_text(p)
+    t = sub1(t, _MODEL_OLD, _MODEL_NEW, "model.dart nerve_chat_banner")
+    write_text(p, t, crlf)
+    p = pathlib.Path("flutter/lib/models/chat_model.dart")
+    t, crlf = read_text(p)
+    t = sub1(t, _CHAT_OLD, _CHAT_NEW, "chat_model no-activate")
+    write_text(p, t, crlf)
+    p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+    t, crlf = read_text(p)
+    t = sub1(t, _HOME_F_OLD, _HOME_F_NEW, "home fields")
+    t = sub1(t, _HOME_I_OLD, _HOME_I_NEW, "home initState Rx")
+    t = sub1(t, _HOME_D_OLD, _HOME_D_NEW, "home dispose")
+    # 幂等：旧监听 fn（r7 形态）若存在则移除（环境差异下可能未插入，容忍）
+    if _T35_FN_OLD in t:
+        t = t.replace(_T35_FN_OLD, "")
+    write_text(p, t, crlf)
+    print("[OK] dart 侧：横幅直听 + no-activate（r8/t35）")
+
+
+def patch_t35_runner() -> None:
+    p = pathlib.Path("flutter/windows/runner/win32_window.h")
+    t, crlf = read_text(p)
+    t = sub1(t, _WIN_H_OLD, _WIN_H_NEW, "win32_window.h noActivate")
+    write_text(p, t, crlf)
+    p = pathlib.Path("flutter/windows/runner/win32_window.cpp")
+    t, crlf = read_text(p)
+    t = sub1(t, _WIN_CPP_H_OLD, _WIN_CPP_H_NEW, "win32_window.cpp 签名")
+    t = sub1(t, _WIN_CPP_W_OLD, _WIN_CPP_W_NEW, "win32_window.cpp WS_EX_NOACTIVATE")
+    write_text(p, t, crlf)
+    p = pathlib.Path("flutter/windows/runner/main.cpp")
+    t, crlf = read_text(p)
+    t = sub1(t, _MAIN_OLD, _MAIN_NEW, "main.cpp noActivate 传参")
+    write_text(p, t, crlf)
+    print("[OK] runner 侧：CM 窗口 no-activate（r8/t35）")
+# ---------------------------------------------------------------------------
 # 校验
 # ---------------------------------------------------------------------------
 
@@ -1010,7 +1370,22 @@ def verify() -> None:
     check("src/ipc.rs", "nervdesk_mode_controlled()", "r7 ipc hide_cm 应答")
     check("flutter/lib/models/chat_model.dart", "lastServerMsg", "r7 消息通道")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "_nerveMessageBanner", "r7 轻量弹窗")
-    check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled) {\n      gFFI.chatModel.addListener", "r7 监听挂载仅 controlled")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "lastServerMsg.listen", "t35 旁路横幅直听")
+
+    check("libs/hbb_common/src/config.rs", "PIN 设置锁", "r8 种子注释")
+    check("libs/hbb_common/src/config.rs", "Config::set_unlock_pin(&pin)", "r8 种子写入")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "_nerveUnlockThen", "r8 PIN 门")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "checkUnlockPinDialog(bind.mainGetUnlockPin()", "r8 验证对话框")
+    check("nervdesk/iroh_transport.rs", "方案 A（docs/12）", "r9 注释")
+    check("nervdesk/iroh_transport.rs", "iroh-relay-token` 解析保留", "r9 兼容保留")
+
+    check("src/flutter.rs", "nerv_main_ui_listener", "t35 旁路监听")
+    check("src/ipc.rs", "send_chat_banner_to_main", "t35 投递助手")
+    check("src/server/connection.rs", "send_chat_banner_to_main(text)", "t35 服务端推送")
+    check("flutter/lib/models/model.dart", "nerve_chat_banner", "t35 事件")
+    check("flutter/lib/models/chat_model.dart", "isDesktop && !kNervDeskModeControlled", "t35 no-activate gate")
+    check("flutter/windows/runner/win32_window.cpp", "WS_EX_NOACTIVATE", "t35 窗口 no-activate")
+    check("flutter/windows/runner/main.cpp", "noActivate=*/is_cm_page && nervdesk_controlled", "t35 runner 传参")
 
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
@@ -1075,6 +1450,12 @@ def main() -> None:
     patch_r7_ipc()
     patch_r7_chat_model()
     patch_r7_home()
+    patch_r8_pin()
+    patch_r8_home()
+    patch_r9_iroh()
+    patch_t35_nerve()
+    patch_t35_dart()
+    patch_t35_runner()
     verify()
     print("=== 完成 ===")
     print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")
