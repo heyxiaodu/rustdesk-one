@@ -1,7 +1,25 @@
 diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 --- a/libs/hbb_common/src/config.rs
 +++ b/libs/hbb_common/src/config.rs
-@@ -3248,6 +3248,18 @@ fn nervdesk_password_marker() -> String {
+@@ -1290,6 +1290,17 @@ impl Config {
+     /// Returns `true` when the password is accepted or already matches the effective
+     /// preset password. Returns `false` when changing the password is disabled or
+     /// the new password cannot be prepared for storage.
++    /// r13（t52）：存量本地永久密码存储是否与给定明文一致（幂等比对，不写）。
++    /// 存储形态涵盖本地加密/散列；为空或无法解码视为不一致（触发重写路径）。
++    pub fn stored_permanent_password_matches_plain(plain: &str) -> bool {
++        let (storage, salt) = Self::get_local_permanent_password_storage_and_salt();
++        if storage.is_empty() {
++            return false;
++        }
++        let h1 = compute_permanent_password_h1(plain, &salt);
++        decode_permanent_password_h1_from_storage(&storage) == Some(h1)
++    }
++
+     pub fn set_permanent_password(password: &str) -> bool {
+         if Self::is_disable_change_permanent_password() {
+             return false;
+@@ -3248,6 +3259,18 @@ fn nervdesk_password_marker() -> String {
      format!("__{}_{}", "NERVDESK", "PASSWORD__")
  }
  
@@ -20,7 +38,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  // ============================================================================
  // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
  // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
-@@ -3285,6 +3297,21 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
+@@ -3285,6 +3308,21 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
      (keys::OPTION_ENABLE_RECORD_SESSION, "Y"),
      (keys::OPTION_APPROVE_MODE, "password"),
      (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),
@@ -42,10 +60,16 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  ];
  
  /// 查询某选项的 NervDesk 强制值；非强制选项返回 None。
-@@ -3326,6 +3353,19 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3326,12 +3364,45 @@ pub fn nerve_apply_forced_defaults() {
          bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
+-    }
+-    if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
+-        && !Config::has_permanent_password()
+-    {
+-        log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
+-        let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
 +        // t18：隐藏「由 RustDesk 提供支持」脚注（read: hide-powered-by-me）
 +        bs.insert(keys::OPTION_HIDE_POWERED_BY_ME.to_owned(), "Y".to_owned());
 +        // r6（t27 C6）：主界面历史/发现面板收敛（PeerTabPage 已隐藏，纵深一致）
@@ -59,13 +83,18 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 +        if let Some(pw) = nervdesk_builtin_password_raw() {
 +            bs.insert("nervdesk-fixed-password".to_owned(), pw);
 +        }
-     }
-     if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
-         && !Config::has_permanent_password()
-@@ -3333,6 +3373,21 @@ pub fn nerve_apply_forced_defaults() {
-         log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
-         let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
-     }
++    }
++    if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker() {
++        // r13（t52）：显示（内置 const）与认证（永久密码存储）统一——
++        // 存量不一致（老配置为历史旧值哈希）时**强制重写**为内置值；
++        // 一致则跳过（幂等）。老设备装 r13 一次即自动归位，无需清配置。
++        if !Config::stored_permanent_password_matches_plain(NERVDESK_BUILTIN_PASSWORD) {
++            log::info!("NervDesk: 重写出厂固定密码（内置值变更/升级归位）");
++            let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
++        } else {
++            log::debug!("NervDesk: 内置固定密码与存量永久密码一致（幂等跳过）");
++        }
++    }
 +    // r8（t32）：PIN 设置锁种子（controlled）——与固定密码同源（change-list 注明
 +    // 可变：后续可改 Secret 注入）；仅当前为空且未禁用时写入（管理员 CLI/设置面可改）。
 +    // 语义区分：unlock_pin = 设置锁（保护关键配置入口）；allow-numeric-one-time-password
@@ -80,14 +109,87 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 +                Config::set_unlock_pin(&pin);
 +            }
 +        }
-+    }
+     }
      // NervDesk 定制（M4 网络）：内置地址锁定 + 网络设置隐藏 + iroh relay 令牌
      nerve_apply_network_defaults();
+@@ -3358,6 +3429,12 @@ pub const NERVDESK_RELAY_SERVER: &str = "api.nervcode.eu.org";
+ /// 非机密值，CI 可替换。
+ pub const NERVDESK_API_SERVER: &str = "https://api.nervcode.eu.org";
+ 
++/// r13（t51）：iroh relay 服务端 URL（公开值）。VPS `iroh-relay` 容器
++/// （iroh.nervcode.eu.org，/ping=200 /generate_204=204）已恢复并启用；
++/// 与 `NERVDESK_BUILTIN_RELAY_TOKEN` 配套，两者齐备时跨 NAT 升级可经 iroh relay。
++/// 直连优先语义不变：iroh 仅在直连失败时使用 relay；rustdesk relay 仍为最后兜底。
++pub const NERVDESK_IROH_RELAY: &str = "https://iroh.nervcode.eu.org";
++
+ /// iroh relay 访问令牌占位符：构建期由 CI Secret（NERVDESK_RELAY_TOKEN）替换。
+ /// 未替换时不注入任何令牌（保持既有「不配 = 无令牌」语义）；
+ /// 令牌编译进二进制可被提取，真正的防线是 relay 侧 access.shared_token +
+@@ -3398,6 +3475,10 @@ pub fn nerve_apply_network_defaults() {
+         ow.insert(keys::OPTION_RELAY_SERVER.to_owned(), NERVDESK_RELAY_SERVER.to_owned());
+         ow.insert(keys::OPTION_API_SERVER.to_owned(), NERVDESK_API_SERVER.to_owned());
+         ow.insert(keys::OPTION_KEY.to_owned(), RS_PUB_KEY.to_owned());
++        // r13（t51）：注入 iroh relay（与 iroh-relay-token 同处）——两者齐备时
++        // iroh RelayMap 非空，跨 NAT 升级可经 iroh relay（VPS iroh-relay 已恢复）；
++        // 直连优先由 iroh 自身语义保证（relay 仅兜底），rustdesk 中继仍为最后兜底。
++        ow.insert("iroh-relay".to_owned(), NERVDESK_IROH_RELAY.to_owned());
+         if NERVDESK_BUILTIN_RELAY_TOKEN != nervdesk_relay_token_marker() {
+             ow.insert(
+                 "iroh-relay-token".to_owned(),
+@@ -3410,11 +3491,22 @@ pub fn nerve_apply_network_defaults() {
+ #[cfg(not(target_os = "windows"))]
+ pub fn nerve_apply_network_defaults() {}
+ 
++/// r13（t48）：默认层种子（可改默认值，非强制）——「使用 IPv6 P2P」
++/// （enable-ipv6-punch）默认 Y，controlled/controller 双形态一致；用户设置页可改。
++/// 仅在未设置时写入（已配置不覆盖）。别名核对：无 legacy 'enable-ipv6'
++/// （全库仅此一键，UI 文案 'Enable IPv6 P2P connection'）。
++pub fn nervdesk_seed_defaults() {
++    let mut d = DEFAULT_SETTINGS.write().unwrap();
++    d.entry(keys::OPTION_ENABLE_IPV6_PUNCH.to_owned())
++        .or_insert_with(|| "Y".to_owned());
++}
++
+ pub fn common_load<
+     T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug,
+ >(
+     suffix: &str,
+ ) -> T {
++    nervdesk_seed_defaults();
+     Config::load_::<T>(suffix)
  }
-@@ -3462,6 +3517,15 @@ impl Status {
+ 
+@@ -3462,6 +3554,42 @@ impl Status {
  mod tests {
      use super::{permanent_password::PERMANENT_PASSWORD_ENC_VERSION, *};
  
++    #[test]
++    fn permanent_password_resync_matches_and_idempotent() {
++        // r13（t52）：内置值变更→永久密码自动重同步语义（helper 层纯函数验证）
++        // 示例口令非真值。
++        with_config_and_hard_settings(Config::default(), HashMap::new(), || {
++            let _file_guard = ConfigFileRestoreGuard::new(Config::file());
++            // 空存储视为不一致（触发重写）
++            assert!(!Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-01"));
++            // 写入后一致；换值不一致（触发重写路径）
++            assert!(Config::set_permanent_password("nervdesk-fixed-sample-01"));
++            assert!(Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-01"));
++            assert!(!Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-02"));
++            // 幂等语义：存储为随机 nonce 加密（同值再写密文不同），认证一致性
++            // 以 h1 判定——同值重写前后 h1 不变，且 matches_plain 恒真（守卫据此跳过）
++            let h1_of = |st: &str| decode_permanent_password_h1_from_storage(st);
++            let before = h1_of(&Config::get_local_permanent_password_storage_and_salt().0);
++            assert!(Config::set_permanent_password("nervdesk-fixed-sample-01"));
++            let after = h1_of(&Config::get_local_permanent_password_storage_and_salt().0);
++            assert_eq!(before, after, "同值重写 h1 必须不变（认证幂等）");
++            assert!(Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-01"));
++            // 不一致重写后与内置值一致（升级归位闭环）
++            assert!(Config::set_permanent_password("nervdesk-fixed-sample-02"));
++            assert!(!Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-01"));
++            assert!(Config::stored_permanent_password_matches_plain("nervdesk-fixed-sample-02"));
++        });
++    }
++
 +    #[test]
 +    fn nervdesk_forced_options_contains_enable_iroh_upgrade() {
 +        // r11（t42）：iroh/QUIC 升级开关强制 Y 必须在表内（防回退为上游默认 N）
@@ -100,7 +202,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      static CONFIG_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
  
      struct ConfigStateTestGuard {
-@@ -3527,6 +3591,46 @@ mod tests {
+@@ -3527,6 +3655,46 @@ mod tests {
          test()
      }
  
@@ -341,13 +443,16 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
 diff --git a/src/client/io_loop.rs b/src/client/io_loop.rs
 --- a/src/client/io_loop.rs
 +++ b/src/client/io_loop.rs
-@@ -1489,6 +1489,9 @@ impl<T: InvokeUiSession> Remote<T> {
+@@ -1489,6 +1489,12 @@ impl<T: InvokeUiSession> Remote<T> {
                          tr.on_commit_ack_received();
                          if let Err(e) = tr.flush_to_new().await {
                              log::warn!("暂存数据冲刷到新通道失败: {e}");
 +                        } else {
 +                            // r11（t42）可观测性：数据真正切到 QUIC 通道
 +                            log::info!("iroh/QUIC 数据通道已启用");
++                            // r13（t48）：状态行显示 QUIC 直连（仅显示，不改变传输逻辑）
++                            self.handler
++                                .set_connection_type(true, true, "QUIC 直连（iroh）");
                          }
                      }
                  }
@@ -374,7 +479,21 @@ diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
              .unwrap_or_default();
          for action in actions {
              match action {
-@@ -619,6 +628,21 @@ mod tests {
+@@ -422,6 +431,13 @@ impl UpgradeSession {
+             .to_owned();
+         let peer: EndpointAddr = serde_json::from_str(&peer_json)
+             .map_err(|e| anyhow!("对端 iroh 地址解析失败: {e}"))?;
++        // t49 观测（INFO）：二次连接/重启后对端地址新鲜度取证——
++        // 每次会话 peer_addr 均由最新 Answer 重建（无跨会话缓存，审计结论）。
++        log::info!(
++            "iroh 拨号对端地址摘要: addrs={} 前两项={:?}",
++            peer.addrs.len(),
++            peer.addrs.iter().take(2).collect::<Vec<_>>()
++        );
+         let (tx, rx) = mpsc::unbounded_channel();
+         tokio::spawn(async move {
+             let _ = tx.send(iroh_transport::connect_from(&ep, peer).await);
+@@ -619,6 +635,21 @@ mod tests {
          );
      }
  
@@ -458,7 +577,7 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
  
      // ---- 1) 发起方 start -> Offer ----
      eprintln!("[e2e] 1) 发起方 start（建 endpoint）...");
-@@ -376,3 +408,18 @@ async fn try_accept_is_actually_nonblocking() {
+@@ -376,3 +408,31 @@ async fn try_accept_is_actually_nonblocking() {
          "try_accept 没有在 50ms 后返回，实际用了 {dt:?}"
      );
  }
@@ -477,6 +596,19 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
 +    assert_eq!(resp.session.state(), &State::Switched, "响应方（LAN-IP）没有切到 iroh");
 +    assert!(init.installed.is_some() && resp.installed.is_some(), "LAN-IP 双方都应装上过渡层");
 +}
++
++/// t49：模拟「被控端重启换端口」后的二次连接升级——第一轮完整握手成功后
++/// 丢弃两端（全新 endpoint = 新端口），再跑第二轮完整握手，两轮都必须成功。
++#[tokio::test]
++async fn two_sides_complete_upgrade_twice_after_restart() {
++    let _ = env_logger::builder().is_test(true).try_init();
++    let (a, b) = handshake(Duration::from_secs(30)).await;
++    drop((a, b));
++    let (init, resp) = handshake(Duration::from_secs(30)).await;
++    assert_eq!(init.session.state(), &State::Switched, "第二轮发起方未切到 iroh");
++    assert_eq!(resp.session.state(), &State::Switched, "第二轮响应方未切到 iroh");
++    assert!(init.installed.is_some() && resp.installed.is_some(), "第二轮双方都应装上过渡层");
++}
 diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 --- a/nervdesk/iroh_transport.rs
 +++ b/nervdesk/iroh_transport.rs
@@ -485,12 +617,12 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
  /// 从 RustDesk 配置构造 [`IrohConfig`]。
  ///
 -/// 做两件**必不可少**的事：
-+/// 方案 A（docs/12）：**iroh = 直连/打洞专用（direct-only 策略）**——
-+/// relay 默认不注入：未配置 option `iroh-relay` 时 relay_urls 为空、
-+/// `RelayMode::Disabled`；跨 NAT 兜底由 RustDesk relay（`relay-server`
-+/// 选项 → `api.nervcode.eu.org` 2.x WS `/ws/relay` / 21117）承担。
-+/// 如需 iroh-relay 辅助，请**显式配置 option `iroh-relay`**（逗号分隔地址），
-+/// 恢复路径见 docs/12 §2.1。`iroh-relay-token` 解析保留（兼容性，未用项）。
++/// 方案 A'（docs/12，r13/t51）：**iroh = 直连优先 + iroh relay 兜底**——
++/// option `iroh-relay`（逗号分隔）由神经层注入（= https://iroh.nervcode.eu.org，
++/// 与 `iroh-relay-token` 配套：RelayMap 非空且带鉴权）；未配置时为 direct-only。
++/// 直连优先语义由 iroh 自身保证（relay 仅在直连失败时使用）；跨 NAT 升级经
++/// iroh relay，rustdesk 中继（`relay-server`）仍为最后兜底。`iroh-relay-token`
++/// 解析保留并随注入生效（CI Secret NERVDESK_RELAY_TOKEN → builtin → option）。
  ///
 -/// 1. **读 relay 地址**（选项 `iroh-relay`，逗号分隔）。
 -///    不配的话就是 `RelayMode::Disabled`，跨 NAT 时永远连不上 ——
@@ -576,14 +708,14 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
  
    Offset chatWindowPosition = Offset(20, 80);
  
-@@ -351,9 +354,14 @@ class ChatModel with ChangeNotifier {
+@@ -351,9 +354,15 @@ class ChatModel with ChangeNotifier {
        return;
      }
      if (text.isEmpty) return;
--    if (desktopType == DesktopType.cm) {
-+    // r7（t30）：controlled 变体不因消息弹出隐藏的 CM 主窗——消息改由主窗口
-+    // 轻量弹窗展示（lastServerMsg）；controller/常规形态维持官方显示行为。
-+    if (desktopType == DesktopType.cm && !kNervDeskModeControlled) {
++    // r7（t30）+r53（t51 并入）：**CM 弹窗为主呈现**——被控端收到控制端消息即
++    // 弹出（隐藏中的）CM 管理窗口并展示消息文本（双形态一致，t53 拍板）；
++    // 主窗口横幅保留为次表面。
+     if (desktopType == DesktopType.cm) {
        await showCmWindow();
      }
 +    if (id != clientModeID) {
@@ -592,13 +724,11 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
      String? peerId;
      if (id == clientModeID) {
        peerId = session.id;
-@@ -411,7 +419,8 @@ class ChatModel with ChangeNotifier {
-         debugPrint("Failed to receive msg, client is null");
+@@ -412,6 +421,7 @@ class ChatModel with ChangeNotifier {
          return;
        }
--      if (isDesktop) {
-+      if (isDesktop && !kNervDeskModeControlled) {
-+        // r8/t35：controlled（CM 隐藏）禁止激活置前——Windows 会拦截导致任务栏跳动
+       if (isDesktop) {
++        // r53：CM 弹窗为主呈现——需要置前；WS_EX_NOACTIVATE 已对 controlled 停用
          windowOnTop(null);
          // disable auto jumpTo other tab when hasFocus, and mark unread message
          final currentSelectedTab =
@@ -860,6 +990,23 @@ diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/deskt
                  child: ActionIcon(
                    message: 'Settings',
                    icon: IconFont.menu,
+diff --git a/flutter/lib/desktop/pages/server_page.dart b/flutter/lib/desktop/pages/server_page.dart
+--- a/flutter/lib/desktop/pages/server_page.dart
++++ b/flutter/lib/desktop/pages/server_page.dart
+@@ -55,6 +55,13 @@ class _DesktopServerPageState extends State<DesktopServerPage>
+ 
+   @override
+   void onWindowClose() {
++    if (kNervDeskModeControlled) {
++      // r53（t51 并入）：受控端手动关闭 CM **不得断开控制会话**——仅隐藏窗口
++      // （会话保持，连接由控制端正常断开）；下条消息再弹出。
++      windowManager.setPreventClose(true);
++      windowManager.hide();
++      return;
++    }
+     Future.wait([gFFI.serverModel.closeAll(), gFFI.close()]).then((_) {
+       if (isMacOS) {
+         RdPlatformChannel.instance.terminate();
 diff --git a/flutter/windows/CMakeLists.txt b/flutter/windows/CMakeLists.txt
 --- a/flutter/windows/CMakeLists.txt
 +++ b/flutter/windows/CMakeLists.txt
@@ -905,7 +1052,7 @@ diff --git a/flutter/windows/runner/main.cpp b/flutter/windows/runner/main.cpp
 -  if (!window.CreateAndShow(window_title, origin, size, !is_cm_page)) {
 +  if (!window.CreateAndShow(window_title, origin, size, !is_cm_page,
 +                            /*resizable=*/!nervdesk_controlled && !is_cm_page,
-+                            /*noActivate=*/is_cm_page && nervdesk_controlled)) {
++                            /*noActivate=*/false)) {
        return EXIT_FAILURE;
    }
    window.SetQuitOnClose(true);
@@ -954,8 +1101,8 @@ diff --git a/flutter/windows/runner/win32_window.cpp b/flutter/windows/runner/wi
 +                : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
 +
 +  DWORD ex_style = 0;
-+  // r8/t35：隐藏中的 CM 窗口（controlled）加 WS_EX_NOACTIVATE——
-+  // 禁止激活置前（SetForegroundWindow 被 Windows 拦截 → 任务栏跳动根治）。
++  // r8/t35 引入 noActivate（防隐藏 CM 任务栏跳动）；r53（t51 并入）：CM 弹窗为
++  // 主呈现、需激活置前 → controlled 不再传 noActivate（参数保留留用）。
 +  if (noActivate) {
 +    ex_style |= WS_EX_NOACTIVATE;
 +  }

@@ -1334,8 +1334,12 @@ def verify() -> None:
     check("libs/hbb_common/src/config.rs", "Config::set_unlock_pin(&pin)", "r8 种子写入")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "_nerveUnlockThen", "r8 PIN 门")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "checkUnlockPinDialog(bind.mainGetUnlockPin()", "r8 验证对话框")
-    check("nervdesk/iroh_transport.rs", "方案 A（docs/12）", "r9 注释")
-    check("nervdesk/iroh_transport.rs", "iroh-relay-token` 解析保留", "r9 兼容保留")
+    check("nervdesk/iroh_transport.rs", "（docs/12，r13/t51）", "r9/t51 注释")
+
+    check("flutter/lib/models/chat_model.dart", "if (desktopType == DesktopType.cm) {", "t53: CM 弹窗触发")
+    check("flutter/lib/desktop/pages/server_page.dart", "windowManager.setPreventClose(true);", "t53: 关闭=仅隐藏")
+    check("flutter/windows/runner/main.cpp", "noActivate=*/false", "t53: CM 可激活")
+    check("nervdesk/iroh_transport.rs", "解析保留并随注入生效", "r9/t51 兼容保留")
 
     check("src/flutter.rs", "nerv_main_ui_listener", "t35 旁路监听")
     check("src/ipc.rs", "send_chat_banner_to_main", "t35 投递助手")
@@ -1363,6 +1367,17 @@ def verify() -> None:
 
     check("nervdesk/iroh_upgrade_e2e.rs", "async fn lan_cfg", "t47: E0277 修复")
     check("nervdesk/iroh_upgrade_e2e.rs", "probe_lan_ipv4().await?", "t47: await 探测")
+
+    check("src/client/io_loop.rs", "QUIC 直连（iroh）", "t48: 状态行 QUIC 文案")
+    check("libs/hbb_common/src/config.rs", "nervdesk_seed_defaults", "t48: IPv6 默认种子")
+    check("libs/hbb_common/src/config.rs", "OPTION_ENABLE_IPV6_PUNCH", "t48: IPv6 键")
+
+    check("nervdesk/iroh_upgrade_session.rs", "iroh 拨号对端地址摘要", "t49: 拨号观测")
+    check("nervdesk/iroh_upgrade_e2e.rs", "two_sides_complete_upgrade_twice_after_restart", "t49: 二次连接 e2e")
+
+    check("libs/hbb_common/src/config.rs", "NERVDESK_IROH_RELAY", "t51: iroh relay 常量")
+    check("libs/hbb_common/src/config.rs", 'ow.insert("iroh-relay"', "t51: relay 种子写入")
+    check("nervdesk/iroh_transport.rs", "方案 A\'（docs/12，r13/t51）", "t51: 注释 A'")
     _ft = pathlib.Path("src/flutter.rs").read_text(encoding="utf-8")
     _li = _ft.find("pub fn nerv_main_ui_listener")
     _seg = _ft[max(0, _li - 400):_li + 200]
@@ -1371,9 +1386,13 @@ def verify() -> None:
         ok = False
     else:
         print("[OK] t40 监听器无属性宏残留（上游其它 tokio::main 与本监听器无关）")
-    check("flutter/lib/models/chat_model.dart", "isDesktop && !kNervDeskModeControlled", "t35 no-activate gate")
+    check("flutter/lib/models/chat_model.dart", "if (desktopType == DesktopType.cm) {\n      await showCmWindow();", "t35/t53 CM 弹窗触发")
     check("flutter/windows/runner/win32_window.cpp", "WS_EX_NOACTIVATE", "t35 窗口 no-activate")
-    check("flutter/windows/runner/main.cpp", "noActivate=*/is_cm_page && nervdesk_controlled", "t35 runner 传参")
+    check("flutter/windows/runner/main.cpp", "noActivate=*/false", "t35/t53 runner 传参")
+
+    check("libs/hbb_common/src/config.rs", "stored_permanent_password_matches_plain", "t52: 重同步 helper")
+    check("libs/hbb_common/src/config.rs", "重写出厂固定密码", "t52: 重写守卫")
+    check("libs/hbb_common/src/config.rs", "permanent_password_resync_matches_and_idempotent", "t52: 单测")
 
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
