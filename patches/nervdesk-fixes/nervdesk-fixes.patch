@@ -231,15 +231,20 @@ diff --git a/src/ipc.rs b/src/ipc.rs
 diff --git a/src/server/connection.rs b/src/server/connection.rs
 --- a/src/server/connection.rs
 +++ b/src/server/connection.rs
-@@ -3632,6 +3632,15 @@ impl Connection {
+@@ -3631,7 +3631,19 @@ impl Connection {
+                         }
                      }
                      Some(misc::Union::ChatMessage(c)) => {
-                         self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
+-                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
++                        // t37：先提取 text 再分发（原实现 send_to_cm 内 move c.text 后
++                        // 再 clone → E0382 借用后移动；现一次 move + 两处克隆分发）
++                        let text = c.text;
++                        self.send_to_cm(ipc::Data::ChatMessage { text: text.clone() });
 +                        // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）
 +                        if hbb_common::config::nervdesk_mode_controlled() {
-+                            let text = c.text.clone();
++                            let t = text.clone();
 +                            tokio::spawn(async move {
-+                                if let Err(err) = crate::ipc::send_chat_banner_to_main(text).await {
++                                if let Err(err) = crate::ipc::send_chat_banner_to_main(t).await {
 +                                    log::debug!("NervDesk: 主窗口横幅投递失败: {}", err);
 +                                }
 +                            });
@@ -247,7 +252,7 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
                          self.chat_unanswered = true;
                          self.update_auto_disconnect_timer();
                      }
-@@ -5997,6 +6006,11 @@ async fn start_ipc(
+@@ -5997,6 +6009,11 @@ async fn start_ipc(
  ) -> ResultType<()> {
      use hbb_common::anyhow::anyhow;
  

@@ -1155,12 +1155,15 @@ _CONN_OLD = """                    Some(misc::Union::ChatMessage(c)) => {
                         self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
                         self.chat_unanswered = true;"""
 _CONN_NEW = """                    Some(misc::Union::ChatMessage(c)) => {
-                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
+                        // t37：先提取 text 再分发（原实现 send_to_cm 内 move c.text 后
+                        // 再 clone → E0382 借用后移动；现一次 move + 两处克隆分发）
+                        let text = c.text;
+                        self.send_to_cm(ipc::Data::ChatMessage { text: text.clone() });
                         // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）
                         if hbb_common::config::nervdesk_mode_controlled() {
-                            let text = c.text.clone();
+                            let t = text.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = crate::ipc::send_chat_banner_to_main(text).await {
+                                if let Err(err) = crate::ipc::send_chat_banner_to_main(t).await {
                                     log::debug!("NervDesk: 主窗口横幅投递失败: {}", err);
                                 }
                             });
@@ -1383,7 +1386,7 @@ def verify() -> None:
 
     check("src/flutter.rs", "nerv_main_ui_listener", "t35 旁路监听")
     check("src/ipc.rs", "send_chat_banner_to_main", "t35 投递助手")
-    check("src/server/connection.rs", "send_chat_banner_to_main(text)", "t35 服务端推送")
+    check("src/server/connection.rs", "send_chat_banner_to_main(t)", "t35/t37 服务端推送")
     check("flutter/lib/models/model.dart", "nerve_chat_banner", "t35 事件")
     check("flutter/lib/models/chat_model.dart", "isDesktop && !kNervDeskModeControlled", "t35 no-activate gate")
     check("flutter/windows/runner/win32_window.cpp", "WS_EX_NOACTIVATE", "t35 窗口 no-activate")
@@ -1415,6 +1418,16 @@ def verify() -> None:
         ok = False
     else:
         print(f"[OK] t36 符号闭环：{sorted(_calls)} 全部有定义")
+
+    # t37 形态断言（树级）：ChatMessage 分发前必须有提取（防 E0382）
+    _conn = pathlib.Path("src/server/connection.rs").read_text(encoding="utf-8")
+    _let_i = _conn.find("let text = c.text;")
+    _send_i = _conn.find("self.send_to_cm(ipc::Data::ChatMessage { text: text.clone() })")
+    if _let_i < 0 or _send_i < 0 or _let_i > _send_i:
+        print("[FAIL] E0382 形态：ChatMessage 分发缺少前置提取（let text = c.text;）", file=sys.stderr)
+        ok = False
+    else:
+        print("[OK] t37 形态：提取先于分发")
 
     # t27 反向断言（负向）：被控端「彻底静默化」——Ctrl+Alt+F12 快捷键必须已移除
     hp = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart").read_text(encoding="utf-8")
