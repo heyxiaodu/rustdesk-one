@@ -1352,6 +1352,14 @@ def verify() -> None:
     check("flutter/lib/models/model.dart", "nerve_chat_banner", "r11 A: Dart 消费者")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "lastServerMsg.listen", "r11 A: 横幅订阅")
     check("nervdesk/iroh_upgrade_session.rs", "tick_drives_offer_phase", "r11 B: tick 专项测试")
+
+    check("src/server/connection.rs", "升级会话已创建（响应方）", "t44: 响应方创建路径")
+    check("src/server/connection.rs", "双端需同版本 r11+", "t44: 版本前提日志")
+    check("nervdesk/iroh_upgrade_e2e.rs", "two_sides_complete_upgrade_over_lan_ip", "t44: LAN-IP e2e 变体")
+
+    check("nervdesk/iroh_transport.rs", "fn enriched_addr", "t45: 直连地址填充")
+    check("nervdesk/iroh_upgrade_session.rs", "iroh_transport::enriched_addr(e)", "t45: 会话用填充地址")
+    check("nervdesk/iroh_upgrade_session.rs", "iroh 本地直连地址摘要", "t45: 可观测")
     _ft = pathlib.Path("src/flutter.rs").read_text(encoding="utf-8")
     _li = _ft.find("pub fn nerv_main_ui_listener")
     _seg = _ft[max(0, _li - 400):_li + 200]

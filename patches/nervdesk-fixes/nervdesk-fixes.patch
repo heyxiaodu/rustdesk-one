@@ -284,7 +284,18 @@ diff --git a/src/ipc.rs b/src/ipc.rs
 diff --git a/src/server/connection.rs b/src/server/connection.rs
 --- a/src/server/connection.rs
 +++ b/src/server/connection.rs
-@@ -2646,6 +2646,9 @@ impl Connection {
+@@ -2555,7 +2555,9 @@ impl Connection {
+             return false;
+         }
+         if !hbb_common::iroh_upgrade::is_enabled() {
+-            log::debug!("收到 iroh 升级消息，但 enable-iroh-upgrade 未开启，忽略");
++            // r11/t44：双端同版本（≥r11 且 Windows）是升级前提；被控端为旧版本
++            // （enable-iroh-upgrade 未强制 Y）时会走到这里——INFO 便于真机取证。
++            log::info!("收到 iroh 升级消息，但 enable-iroh-upgrade 未开启，忽略（双端需同版本 r11+）");
+             return true;
+         }
+         if self.iroh_upgrade.is_none() {
+@@ -2646,6 +2648,9 @@ impl Connection {
                          t.on_commit_ack_received();
                          if let Err(e) = t.flush_to_new().await {
                              log::warn!("暂存数据冲刷到新通道失败: {e}");
@@ -294,7 +305,7 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
                          }
                      }
                  }
-@@ -3631,7 +3634,19 @@ impl Connection {
+@@ -3631,7 +3636,19 @@ impl Connection {
                          }
                      }
                      Some(misc::Union::ChatMessage(c)) => {
@@ -315,7 +326,7 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
                          self.chat_unanswered = true;
                          self.update_auto_disconnect_timer();
                      }
-@@ -5997,6 +6012,11 @@ async fn start_ipc(
+@@ -5997,6 +6014,11 @@ async fn start_ipc(
  ) -> ResultType<()> {
      use hbb_common::anyhow::anyhow;
  
@@ -343,7 +354,27 @@ diff --git a/src/client/io_loop.rs b/src/client/io_loop.rs
 diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
 --- a/nervdesk/iroh_upgrade_session.rs
 +++ b/nervdesk/iroh_upgrade_session.rs
-@@ -619,6 +619,21 @@ mod tests {
+@@ -344,8 +344,17 @@ impl UpgradeSession {
+         let local = self
+             .endpoint
+             .as_ref()
+-            .map(|e| e.addr())
+-            .map(|a| serde_json::to_string(&a).unwrap_or_default())
++            .map(|e| {
++                // r11/t45：直连地址必须随 Offer/Answer 交换（无 relay 场景对端
++                // 仅有 EndpointId 不可达）。绑定 socket 就绪后即含局域网 IP。
++                let a = iroh_transport::enriched_addr(e);
++                log::info!(
++                    "iroh 本地直连地址摘要: addrs={} 前两项={:?}",
++                    a.addrs.len(),
++                    a.addrs.iter().take(2).collect::<Vec<_>>()
++                );
++                serde_json::to_string(&a).unwrap_or_default()
++            })
+             .unwrap_or_default();
+         for action in actions {
+             match action {
+@@ -619,6 +628,21 @@ mod tests {
          );
      }
  
@@ -365,6 +396,136 @@ diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
      /// 终态之后必须**主动关掉**定时分支，否则每个长连接恒定 10Hz 空转。
      #[test]
      fn needs_tick_stops_at_terminal() {
+diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
+--- a/nervdesk/iroh_upgrade_e2e.rs
++++ b/nervdesk/iroh_upgrade_e2e.rs
+@@ -57,10 +57,10 @@ struct Side {
+ }
+ 
+ impl Side {
+-    fn new(name: &'static str, role: Role) -> Self {
++    fn new(name: &'static str, role: Role, cfg: IrohConfig) -> Self {
+         Self {
+             name,
+-            session: UpgradeSession::new(role, local_cfg()),
++            session: UpgradeSession::new(role, cfg),
+             installed: None,
+             outbox: Vec::new(),
+             trace: Vec::new(),
+@@ -112,10 +112,42 @@ impl Side {
+     }
+ }
+ 
+-/// 走完整个握手，返回两端（都应当已切到 iroh）。
++/// 走完整个握手，返回两端（都应当已切到 iroh）。默认 loopback 配置。
+ async fn handshake(timeout: Duration) -> (Side, Side) {
+-    let mut init = Side::new("发起方", Role::Initiator);
+-    let mut resp = Side::new("响应方", Role::Responder);
++    handshake_inner(timeout, local_cfg()).await
++}
++
++/// 同 loopback 版，但两端绑定**本机局域网 IP**（不是 127.0.0.1）——
++/// 复现真机「不同网卡/地址路径」的差异（t44）。探测不到局域网 IP 时返回
++/// None（测试跳过）。
++async fn probe_lan_ipv4() -> Option<String> {
++    if let Ok(out) = std::process::Command::new("hostname").arg("-I").output() {
++        if out.status.success() {
++            for tok in std::str::from_utf8(&out.stdout).ok()?.split_whitespace() {
++                if let Ok(ip) = tok.parse::<std::net::Ipv4Addr>() {
++                    if !ip.is_loopback() && !ip.is_unspecified() {
++                        return Some(ip.to_string());
++                    }
++                }
++            }
++        }
++    }
++    None
++}
++
++fn lan_cfg() -> Option<IrohConfig> {
++    let ip = probe_lan_ipv4()?;
++    Some(IrohConfig {
++        bind_addr: Some(format!("{ip}:0")),
++        relay_urls: Vec::new(),
++        secret_key: None,
++        ..Default::default()
++    })
++}
++
++async fn handshake_inner(timeout: Duration, cfg: IrohConfig) -> (Side, Side) {
++    let mut init = Side::new("发起方", Role::Initiator, cfg.clone());
++    let mut resp = Side::new("响应方", Role::Responder, cfg);
+ 
+     // ---- 1) 发起方 start -> Offer ----
+     eprintln!("[e2e] 1) 发起方 start（建 endpoint）...");
+@@ -376,3 +408,18 @@ async fn try_accept_is_actually_nonblocking() {
+         "try_accept 没有在 50ms 后返回，实际用了 {dt:?}"
+     );
+ }
++
++/// t44：LAN-IP 变体——两 endpoint 用本机局域网 IP 互连完成升级；
++/// 复现真机『等待提交窗口』停死的地址/连接路径差异（无局域网 IP 时跳过）。
++#[tokio::test]
++async fn two_sides_complete_upgrade_over_lan_ip() {
++    let _ = env_logger::builder().is_test(true).try_init();
++    let Some(_cfg) = lan_cfg() else {
++        eprintln!("[e2e] 无局域网 IP（CI/容器环境），跳过 LAN-IP 变体");
++        return;
++    };
++    let (init, resp) = handshake_inner(Duration::from_secs(30), _cfg).await;
++    assert_eq!(init.session.state(), &State::Switched, "发起方（LAN-IP）没有切到 iroh");
++    assert_eq!(resp.session.state(), &State::Switched, "响应方（LAN-IP）没有切到 iroh");
++    assert!(init.installed.is_some() && resp.installed.is_some(), "LAN-IP 双方都应装上过渡层");
++}
+diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
+--- a/nervdesk/iroh_transport.rs
++++ b/nervdesk/iroh_transport.rs
+@@ -203,12 +203,16 @@ pub fn parse_relay_token(raw: &str) -> Option<String> {
+ 
+ /// 从 RustDesk 配置构造 [`IrohConfig`]。
+ ///
+-/// 做两件**必不可少**的事：
++/// 方案 A（docs/12）：**iroh = 直连/打洞专用（direct-only 策略）**——
++/// relay 默认不注入：未配置 option `iroh-relay` 时 relay_urls 为空、
++/// `RelayMode::Disabled`；跨 NAT 兜底由 RustDesk relay（`relay-server`
++/// 选项 → `api.nervcode.eu.org` 2.x WS `/ws/relay` / 21117）承担。
++/// 如需 iroh-relay 辅助，请**显式配置 option `iroh-relay`**（逗号分隔地址），
++/// 恢复路径见 docs/12 §2.1。`iroh-relay-token` 解析保留（兼容性，未用项）。
+ ///
+-/// 1. **读 relay 地址**（选项 `iroh-relay`，逗号分隔）。
+-///    不配的话就是 `RelayMode::Disabled`，跨 NAT 时永远连不上 ——
+-///    即使用户部署了 relay 也用不到。
+-/// 2. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
++/// 其余行为：
++///
++/// 1. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
+ ///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
+ ///    （见 [`secret_key_from_rustdesk`]）。
+ pub fn config_from_options() -> ResultType<IrohConfig> {
+@@ -320,6 +324,23 @@ pub fn bound_socket() -> ResultType<SocketAddr> {
+         .ok_or_else(|| anyhow!("iroh endpoint 没有绑定任何 socket"))
+ }
+ 
++/// r11/t45：构造带「本机直连监听地址」的 `EndpointAddr`（无 relay 场景必须）。
++///
++/// 合并两类地址：`addr()` 已发现的直连地址 + `bound_sockets()` 当前真实监听
++/// socket（含局域网 IP:端口）。真机实证：升级 Offer/Answer 此前只序列化
++/// `addr()`（地址发现未就绪时 DirectAddrs 为空）→ 对端无地址可连 →
++/// 30s 超时。本函数保证消息携带可拨号地址。
++pub fn enriched_addr(endpoint: &Endpoint) -> EndpointAddr {
++    let mut addrs = endpoint.addr().addrs.clone();
++    for s in endpoint.bound_sockets() {
++        addrs.insert(TransportAddr::Ip(s));
++    }
++    EndpointAddr {
++        id: endpoint.id(),
++        addrs,
++    }
++}
++
+ /// 构造一个只含直连 IP 地址的 `EndpointAddr`。
+ ///
+ /// 真实接入时这个地址通过信令通道交换（见设计文档第 3 节），
 diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 --- a/flutter/lib/common.dart
 +++ b/flutter/lib/common.dart
@@ -886,28 +1047,3 @@ diff --git a/src/core_main.rs b/src/core_main.rs
      crate::load_custom_client();
      #[cfg(windows)]
      if !crate::platform::windows::bootstrap() {
-diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
---- a/nervdesk/iroh_transport.rs
-+++ b/nervdesk/iroh_transport.rs
-@@ -203,12 +203,16 @@ pub fn parse_relay_token(raw: &str) -> Option<String> {
- 
- /// 从 RustDesk 配置构造 [`IrohConfig`]。
- ///
--/// 做两件**必不可少**的事：
-+/// 方案 A（docs/12）：**iroh = 直连/打洞专用（direct-only 策略）**——
-+/// relay 默认不注入：未配置 option `iroh-relay` 时 relay_urls 为空、
-+/// `RelayMode::Disabled`；跨 NAT 兜底由 RustDesk relay（`relay-server`
-+/// 选项 → `api.nervcode.eu.org` 2.x WS `/ws/relay` / 21117）承担。
-+/// 如需 iroh-relay 辅助，请**显式配置 option `iroh-relay`**（逗号分隔地址），
-+/// 恢复路径见 docs/12 §2.1。`iroh-relay-token` 解析保留（兼容性，未用项）。
- ///
--/// 1. **读 relay 地址**（选项 `iroh-relay`，逗号分隔）。
--///    不配的话就是 `RelayMode::Disabled`，跨 NAT 时永远连不上 ——
--///    即使用户部署了 relay 也用不到。
--/// 2. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
-+/// 其余行为：
-+///
-+/// 1. **用 RustDesk 的密钥对派生 iroh 身份**，这样 iroh 的 `EndpointId`
- ///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
- ///    （见 [`secret_key_from_rustdesk`]）。
- pub fn config_from_options() -> ResultType<IrohConfig> {
