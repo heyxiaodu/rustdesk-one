@@ -20,7 +20,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
  // ============================================================================
  // NervDesk 编译期形态开关（t11）：NERVDESK_MODE（构建时环境变量，CI 用
  // env/RUSTFLAGS 传值；Flutter 侧对应 --dart-define=NERVDESK_MODE）
-@@ -3285,6 +3297,16 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
+@@ -3285,6 +3297,21 @@ pub const NERVDESK_FORCED_OPTIONS: &[(&str, &str)] = &[
      (keys::OPTION_ENABLE_RECORD_SESSION, "Y"),
      (keys::OPTION_APPROVE_MODE, "password"),
      (keys::OPTION_ALLOW_NUMERNIC_ONE_TIME_PASSWORD, "Y"),
@@ -34,10 +34,15 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
 +    // 固定密码；controller 形态不受影响——强制项仅 windows）
 +    ("allow-hide-cm", "Y"),
 +    (keys::OPTION_VERIFICATION_METHOD, "use-permanent-password"),
++    // r11（t42）iroh/QUIC 真正启用：docs/08 F1——两端升级状态机已就绪并定时驱动
++    // （io_loop/connection 的 IROH_TICK_INTERVAL 分支），但选项 enable-iroh-upgrade
++    // 上游默认 N → start_iroh_upgrade 直接返回，升级从未启动。强制 Y（windows）：
++    // 会话建立后即升级、超时推进、成功后数据切 QUIC（可观测日志见 io_loop/connection）。
++    ("enable-iroh-upgrade", "Y"),
  ];
  
  /// 查询某选项的 NervDesk 强制值；非强制选项返回 None。
-@@ -3326,6 +3348,19 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3326,6 +3353,19 @@ pub fn nerve_apply_forced_defaults() {
          bs.insert(keys::OPTION_HIDE_HELP_CARDS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS.to_owned(), "Y".to_owned());
          bs.insert(keys::OPTION_HIDE_WEBSOCKET_SETTINGS.to_owned(), "Y".to_owned());
@@ -57,7 +62,7 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      }
      if NERVDESK_BUILTIN_PASSWORD != nervdesk_password_marker()
          && !Config::has_permanent_password()
-@@ -3333,6 +3368,21 @@ pub fn nerve_apply_forced_defaults() {
+@@ -3333,6 +3373,21 @@ pub fn nerve_apply_forced_defaults() {
          log::info!("NervDesk: 写入出厂固定密码（构建期 Secret 替换）");
          let _ = Config::set_permanent_password(NERVDESK_BUILTIN_PASSWORD);
      }
@@ -79,7 +84,23 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      // NervDesk 定制（M4 网络）：内置地址锁定 + 网络设置隐藏 + iroh relay 令牌
      nerve_apply_network_defaults();
  }
-@@ -3527,6 +3577,46 @@ mod tests {
+@@ -3462,6 +3517,15 @@ impl Status {
+ mod tests {
+     use super::{permanent_password::PERMANENT_PASSWORD_ENC_VERSION, *};
+ 
++    #[test]
++    fn nervdesk_forced_options_contains_enable_iroh_upgrade() {
++        // r11（t42）：iroh/QUIC 升级开关强制 Y 必须在表内（防回退为上游默认 N）
++        assert!(
++            NERVDESK_FORCED_OPTIONS.contains(&("enable-iroh-upgrade", "Y")),
++            "enable-iroh-upgrade 应强制 Y（iroh/QUIC 升级才实际启用）"
++        );
++    }
++
+     static CONFIG_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+ 
+     struct ConfigStateTestGuard {
+@@ -3527,6 +3591,46 @@ mod tests {
          test()
      }
  
@@ -263,7 +284,17 @@ diff --git a/src/ipc.rs b/src/ipc.rs
 diff --git a/src/server/connection.rs b/src/server/connection.rs
 --- a/src/server/connection.rs
 +++ b/src/server/connection.rs
-@@ -3631,7 +3631,19 @@ impl Connection {
+@@ -2646,6 +2646,9 @@ impl Connection {
+                         t.on_commit_ack_received();
+                         if let Err(e) = t.flush_to_new().await {
+                             log::warn!("暂存数据冲刷到新通道失败: {e}");
++                        } else {
++                            // r11（t42）可观测性：数据真正切到 QUIC 通道（响应方）
++                            log::info!("iroh/QUIC 数据通道已启用");
+                         }
+                     }
+                 }
+@@ -3631,7 +3634,19 @@ impl Connection {
                          }
                      }
                      Some(misc::Union::ChatMessage(c)) => {
@@ -284,7 +315,7 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
                          self.chat_unanswered = true;
                          self.update_auto_disconnect_timer();
                      }
-@@ -5997,6 +6009,11 @@ async fn start_ipc(
+@@ -5997,6 +6012,11 @@ async fn start_ipc(
  ) -> ResultType<()> {
      use hbb_common::anyhow::anyhow;
  
@@ -296,6 +327,44 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
      loop {
          if !crate::platform::is_prelogin() {
              break;
+diff --git a/src/client/io_loop.rs b/src/client/io_loop.rs
+--- a/src/client/io_loop.rs
++++ b/src/client/io_loop.rs
+@@ -1489,6 +1489,9 @@ impl<T: InvokeUiSession> Remote<T> {
+                         tr.on_commit_ack_received();
+                         if let Err(e) = tr.flush_to_new().await {
+                             log::warn!("暂存数据冲刷到新通道失败: {e}");
++                        } else {
++                            // r11（t42）可观测性：数据真正切到 QUIC 通道
++                            log::info!("iroh/QUIC 数据通道已启用");
+                         }
+                     }
+                 }
+diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
+--- a/nervdesk/iroh_upgrade_session.rs
++++ b/nervdesk/iroh_upgrade_session.rs
+@@ -619,6 +619,21 @@ mod tests {
+         );
+     }
+ 
++    /// r11（t42）：tick() 驱动专项——发起方 Offer 发出后（OfferSent）处于等待
++    /// Answer 阶段，定时驱动的 tick() 必须可安全推进（仅走超时分支，无节点时
++    /// 不 panic、不产生错误），且仍未到终态（保持 needs_tick）。
++    #[tokio::test]
++    async fn tick_drives_offer_phase() {
++        let mut s = UpgradeSession::new(Role::Initiator, IrohConfig::default());
++        s.upgrade = Upgrade::new(Role::Initiator, "addr-A".to_owned());
++        s.upgrade.step(Event::Start);
++        assert_eq!(s.state(), &State::OfferSent);
++        assert!(s.needs_tick(), "OfferSent 等 Answer 阶段需定时驱动");
++        let orders = s.tick().await.expect("无节点阶段 tick 只走超时分支，不应失败");
++        assert!(s.needs_tick(), "未到终态仍应保持驱动");
++        let _ = orders;
++    }
++
+     /// 终态之后必须**主动关掉**定时分支，否则每个长连接恒定 10Hz 空转。
+     #[test]
+     fn needs_tick_stops_at_terminal() {
 diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 --- a/flutter/lib/common.dart
 +++ b/flutter/lib/common.dart

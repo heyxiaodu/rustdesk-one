@@ -1345,6 +1345,13 @@ def verify() -> None:
     check("src/flutter.rs", "use hbb_common::{log, tokio};", "t38 模块引入")
     check("src/flutter.rs", "super::GLOBAL_EVENT_STREAM", "t38 主窗口流直写")
     check("src/flutter.rs", "runtime::Builder::new_current_thread", "t40 显式运行时")
+
+    check("libs/hbb_common/src/config.rs", '("enable-iroh-upgrade", "Y")', "r11 B: 升级开关强制")
+    check("src/client/io_loop.rs", "IROH_TICK_INTERVAL", "r11 B: tick 驱动点")
+    check("src/client/io_loop.rs", "iroh/QUIC 数据通道已启用", "r11 B: 可观测日志")
+    check("flutter/lib/models/model.dart", "nerve_chat_banner", "r11 A: Dart 消费者")
+    check("flutter/lib/desktop/pages/desktop_home_page.dart", "lastServerMsg.listen", "r11 A: 横幅订阅")
+    check("nervdesk/iroh_upgrade_session.rs", "tick_drives_offer_phase", "r11 B: tick 专项测试")
     _ft = pathlib.Path("src/flutter.rs").read_text(encoding="utf-8")
     _li = _ft.find("pub fn nerv_main_ui_listener")
     _seg = _ft[max(0, _li - 400):_li + 200]
