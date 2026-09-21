@@ -442,8 +442,8 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
 +    None
 +}
 +
-+fn lan_cfg() -> Option<IrohConfig> {
-+    let ip = probe_lan_ipv4()?;
++async fn lan_cfg() -> Option<IrohConfig> {
++    let ip = probe_lan_ipv4().await?;
 +    Some(IrohConfig {
 +        bind_addr: Some(format!("{ip}:0")),
 +        relay_urls: Vec::new(),
@@ -468,7 +468,7 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
 +#[tokio::test]
 +async fn two_sides_complete_upgrade_over_lan_ip() {
 +    let _ = env_logger::builder().is_test(true).try_init();
-+    let Some(_cfg) = lan_cfg() else {
++    let Some(_cfg) = lan_cfg().await else {
 +        eprintln!("[e2e] 无局域网 IP（CI/容器环境），跳过 LAN-IP 变体");
 +        return;
 +    };

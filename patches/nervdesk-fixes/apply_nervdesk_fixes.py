@@ -1360,6 +1360,9 @@ def verify() -> None:
     check("nervdesk/iroh_transport.rs", "fn enriched_addr", "t45: 直连地址填充")
     check("nervdesk/iroh_upgrade_session.rs", "iroh_transport::enriched_addr(e)", "t45: 会话用填充地址")
     check("nervdesk/iroh_upgrade_session.rs", "iroh 本地直连地址摘要", "t45: 可观测")
+
+    check("nervdesk/iroh_upgrade_e2e.rs", "async fn lan_cfg", "t47: E0277 修复")
+    check("nervdesk/iroh_upgrade_e2e.rs", "probe_lan_ipv4().await?", "t47: await 探测")
     _ft = pathlib.Path("src/flutter.rs").read_text(encoding="utf-8")
     _li = _ft.find("pub fn nerv_main_ui_listener")
     _seg = _ft[max(0, _li - 400):_li + 200]
