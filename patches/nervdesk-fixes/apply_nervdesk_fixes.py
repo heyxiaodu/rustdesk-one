@@ -1407,6 +1407,12 @@ def verify() -> None:
     check("flutter/lib/models/chat_model.dart", "_nerveLastPopped", "t55: 同文去重")
     check("flutter/lib/desktop/pages/server_page.dart", "cmManuallyClosed = true;", "t55: 关闭置位")
 
+    check("flutter/lib/models/chat_model.dart", "String? _nerveLastPopped;", "t57: Dart 符号闭环（类内声明）")
+    # t57 负例（机械拦截）：common.dart 顶层游标必须移除（underscore=库私有）
+    _cm_top = pathlib.Path("flutter/lib/common.dart").read_text(encoding="utf-8")
+    if "String _nerveLastPopped = '';" in _cm_top:
+        die("t57：common.dart 不得再含顶层 _nerveLastPopped（跨文件不可见）")
+
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
     check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")

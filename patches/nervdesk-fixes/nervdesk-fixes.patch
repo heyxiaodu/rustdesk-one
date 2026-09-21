@@ -711,7 +711,7 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 --- a/flutter/lib/common.dart
 +++ b/flutter/lib/common.dart
-@@ -48,6 +48,93 @@ import 'package:flutter_hbb/native/common.dart'
+@@ -48,6 +48,91 @@ import 'package:flutter_hbb/native/common.dart'
  import 'package:flutter_hbb/utils/http_service.dart' as http;
  
  final globalKey = GlobalKey<NavigatorState>();
@@ -720,8 +720,6 @@ diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 +/// 消息到达路径清除并强制弹起）。『仅隐藏』只对一次手动关闭生效，
 +/// 被下条消息复位。
 +bool cmManuallyClosed = false;
-+/// r13/t55：最近一次已弹起的消息文本（连续同文不再重复弹；仅去重于 CM 弹窗路径）。
-+String _nerveLastPopped = '';
 +
 +
 +/// r13（t53）：全局顶部消息横幅（Overlay 兜底渲染）。
@@ -805,7 +803,7 @@ diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
  final navigationBarKey = GlobalKey();
  
  final isAndroid = isAndroid_;
-@@ -3846,6 +3933,20 @@ Size getIncomingOnlyHomeSize() {
+@@ -3846,6 +3931,20 @@ Size getIncomingOnlyHomeSize() {
        Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);
  }
  
@@ -869,7 +867,18 @@ diff --git a/flutter/lib/models/model.dart b/flutter/lib/models/model.dart
 diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.dart
 --- a/flutter/lib/models/chat_model.dart
 +++ b/flutter/lib/models/chat_model.dart
-@@ -70,6 +70,9 @@ class ChatModel with ChangeNotifier {
+@@ -61,6 +61,10 @@ class ChatModel with ChangeNotifier {
+ 
+   bool isConnManager = false;
+ 
++  /// r13/t55+t57：最近一次已弹起的消息文本（连续同文不再重复弹；
++  /// 须为本类字段——underscore 前缀符号跨文件不可见）。
++  String? _nerveLastPopped;
++
+   RxBool isWindowFocus = true.obs;
+   BlockableOverlayState _blockableOverlayState = BlockableOverlayState();
+   final Rx<VoiceCallStatus> _voiceCallStatus = Rx(VoiceCallStatus.notStarted);
+@@ -70,6 +74,9 @@ class ChatModel with ChangeNotifier {
    TextEditingController textController = TextEditingController();
    RxInt mobileUnreadSum = 0.obs;
    MessageKey? latestReceivedKey;
@@ -879,7 +888,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
  
    Offset chatWindowPosition = Offset(20, 80);
  
-@@ -351,8 +354,19 @@ class ChatModel with ChangeNotifier {
+@@ -351,8 +358,19 @@ class ChatModel with ChangeNotifier {
        return;
      }
      if (text.isEmpty) return;
@@ -900,7 +909,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
      }
      String? peerId;
      if (id == clientModeID) {
-@@ -412,6 +426,7 @@ class ChatModel with ChangeNotifier {
+@@ -412,6 +430,7 @@ class ChatModel with ChangeNotifier {
          return;
        }
        if (isDesktop) {
