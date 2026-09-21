@@ -1102,7 +1102,20 @@ _FLUTTER_NEW = """    #[inline]
     /// ipc `_nerve_ui` 通道），push_event `nerve_chat_banner` → 主窗口横幅。
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[tokio::main(flavor = "current_thread")]
+    // t38：模块作用域补 tokio/log 引入（flutter.rs 的 mod connection_manager
+    // 不继承文件级 use；#[tokio::main] 属性宏须在项外层可见 tokio）。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    use hbb_common::{log, tokio};
+
+    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
+    /// ipc `_nerve_ui` 通道），直写主窗口事件流（GLOBAL_EVENT_STREAM[APP_TYPE_MAIN]）
+    /// 事件 `nerve_chat_banner` → 主窗口横幅。t38：不再用 push_event
+    /// （cm 窗口专用流的 2 参方法，主窗口进程会空发失败；3 参方法走会话 handler，
+    /// 主窗口无会话 handler）——直接对主窗口流 add JSON 事件。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[tokio::main(flavor = "current_thread")]
     pub async fn nerv_main_ui_listener() {
+        use serde_json::json;
         match crate::ipc::new_listener("_nerve_ui").await {
             Ok(mut incoming) => {
                 while let Some(result) = incoming.next().await {
@@ -1114,8 +1127,21 @@ _FLUTTER_NEW = """    #[inline]
                         loop {
                             match conn.next().await {
                                 Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
-                                    FlutterHandler {}
-                                        .push_event("nerve_chat_banner", &[("text", &text)], &[]);
+                                    let h: std::collections::HashMap<&str, serde_json::Value> = [
+                                        ("name", json!("nerve_chat_banner")),
+                                        ("text", json!(text)),
+                                    ]
+                                    .into_iter()
+                                    .collect();
+                                    let out = serde_json::ser::to_string(&h).unwrap_or_default();
+                                    let locked = super::GLOBAL_EVENT_STREAM.read().unwrap();
+                                    if let Some(stream) = locked.get(super::APP_TYPE_MAIN) {
+                                        stream.add(out);
+                                    } else {
+                                        log::error!(
+                                            "NervDesk: 主窗口事件流缺失（nerve_chat_banner）"
+                                        );
+                                    }
                                 }
                                 Ok(Some(_)) => {}
                                 _ => {
