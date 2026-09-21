@@ -145,7 +145,7 @@ diff --git a/src/flutter_ffi.rs b/src/flutter_ffi.rs
 diff --git a/src/flutter.rs b/src/flutter.rs
 --- a/src/flutter.rs
 +++ b/src/flutter.rs
-@@ -1622,7 +1622,73 @@ pub mod connection_manager {
+@@ -1622,7 +1622,79 @@ pub mod connection_manager {
      #[inline]
      pub fn cm_init() {
          #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -160,63 +160,69 @@ diff --git a/src/flutter.rs b/src/flutter.rs
 +        }
 +    }
 +
-+    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
-+    /// ipc `_nerve_ui` 通道），push_event `nerve_chat_banner` → 主窗口横幅。
-+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-+    #[tokio::main(flavor = "current_thread")]
-+    // t38：模块作用域补 tokio/log 引入（flutter.rs 的 mod connection_manager
-+    // 不继承文件级 use；#[tokio::main] 属性宏须在项外层可见 tokio）。
++    /// controlled 主窗口的旁路消息监听（t38/t40）：接收服务端的 Data::ChatMessage
++    /// （经 ipc `_nerve_ui` 通道），直写主窗口事件流（GLOBAL_EVENT_STREAM[APP_TYPE_MAIN]）
++    /// 事件 `nerve_chat_banner` → 主窗口横幅。t38：不用 push_event（cm 专流 2 参
++    /// 主进程空发、会话 handler 3 参主窗口无）；t40：不用 #[tokio::main] 属性宏
++    /// （嵌套 mod + 别名 use 下属性宏解析失败）——改显式 runtime block_on。
 +    #[cfg(not(any(target_os = "android", target_os = "ios")))]
 +    use hbb_common::{log, tokio};
 +
-+    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
-+    /// ipc `_nerve_ui` 通道），直写主窗口事件流（GLOBAL_EVENT_STREAM[APP_TYPE_MAIN]）
-+    /// 事件 `nerve_chat_banner` → 主窗口横幅。t38：不再用 push_event
-+    /// （cm 窗口专用流的 2 参方法，主窗口进程会空发失败；3 参方法走会话 handler，
-+    /// 主窗口无会话 handler）——直接对主窗口流 add JSON 事件。
 +    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-+    #[tokio::main(flavor = "current_thread")]
-+    pub async fn nerv_main_ui_listener() {
-+        use serde_json::json;
-+        match crate::ipc::new_listener("_nerve_ui").await {
-+            Ok(mut incoming) => {
-+                while let Some(result) = incoming.next().await {
-+                    let Ok(stream) = result else {
-+                        continue;
-+                    };
-+                    tokio::spawn(async move {
-+                        let mut conn = crate::ipc::Connection::new(stream);
-+                        loop {
-+                            match conn.next().await {
-+                                Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
-+                                    let h: std::collections::HashMap<&str, serde_json::Value> = [
-+                                        ("name", json!("nerve_chat_banner")),
-+                                        ("text", json!(text)),
-+                                    ]
-+                                    .into_iter()
-+                                    .collect();
-+                                    let out = serde_json::ser::to_string(&h).unwrap_or_default();
-+                                    let locked = super::GLOBAL_EVENT_STREAM.read().unwrap();
-+                                    if let Some(stream) = locked.get(super::APP_TYPE_MAIN) {
-+                                        stream.add(out);
-+                                    } else {
-+                                        log::error!(
-+                                            "NervDesk: 主窗口事件流缺失（nerve_chat_banner）"
-+                                        );
++    pub fn nerv_main_ui_listener() {
++        // t40：显式运行时（全限定路径），不依赖属性宏解析
++        let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++        {
++            Ok(rt) => rt,
++            Err(err) => {
++                log::error!("NervDesk: _nerve_ui 运行时创建失败: {}", err);
++                return;
++            }
++        };
++        rt.block_on(async {
++            use serde_json::json;
++            match crate::ipc::new_listener("_nerve_ui").await {
++                Ok(mut incoming) => {
++                    while let Some(result) = incoming.next().await {
++                        let Ok(stream) = result else {
++                            continue;
++                        };
++                        tokio::spawn(async move {
++                            let mut conn = crate::ipc::Connection::new(stream);
++                            loop {
++                                match conn.next().await {
++                                    Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
++                                        let h: std::collections::HashMap<&str, serde_json::Value> = [
++                                            ("name", json!("nerve_chat_banner")),
++                                            ("text", json!(text)),
++                                        ]
++                                        .into_iter()
++                                        .collect();
++                                        let out = serde_json::ser::to_string(&h).unwrap_or_default();
++                                        let locked = super::GLOBAL_EVENT_STREAM.read().unwrap();
++                                        if let Some(stream) = locked.get(super::APP_TYPE_MAIN) {
++                                            stream.add(out);
++                                        } else {
++                                            log::error!(
++                                                "NervDesk: 主窗口事件流缺失（nerve_chat_banner）"
++                                            );
++                                        }
++                                    }
++                                    Ok(Some(_)) => {}
++                                    _ => {
++                                        log::debug!("NervDesk: _nerve_ui 通道断开");
++                                        break;
 +                                    }
 +                                }
-+                                Ok(Some(_)) => {}
-+                                _ => {
-+                                    log::debug!("NervDesk: _nerve_ui 通道断开");
-+                                    break;
-+                                }
 +                            }
-+                        }
-+                    });
++                        });
++                    }
 +                }
++                Err(err) => log::error!("NervDesk: _nerve_ui 监听失败: {}", err),
 +            }
-+            Err(err) => log::error!("NervDesk: _nerve_ui 监听失败: {}", err),
-+        }
++        });
      }
  
      #[cfg(target_os = "android")]
