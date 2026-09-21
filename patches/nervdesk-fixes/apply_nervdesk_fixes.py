@@ -1134,10 +1134,12 @@ _FLUTTER_NEW = """    #[inline]
 _IPC_OLD = """#[cfg(feature = "flutter")]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
-_IPC_NEW = """/// r8/t35：受控端旁路投递——把文字消息直接送到常驻主窗口（_nerve_ui），
+_IPC_NEW = """/// r8/t35+t36：受控端旁路投递——把文字消息直接送到常驻主窗口（_nerve_ui），
 /// 绕开隐藏中的 CM 窗口（其激活/置前会造成任务栏跳动）。
+/// cfg 说明（t36 修复 E0425）：调用点在 server/connection.rs（`mod server` 在
+/// Android 也编译），故定义必须对 Android 可见——仅排除 iOS（iOS 无 ipc 模块）。
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(any(target_os = "ios")))]
 pub async fn send_chat_banner_to_main(text: String) -> ResultType<()> {
     if let Ok(mut c) = connect(1_000, "_nerve_ui").await {
         c.send(&Data::ChatMessage { text }).await?;
@@ -1397,6 +1399,22 @@ def verify() -> None:
 
     check("src/core_main.rs", "// r5（t23）：Windows 单实例互斥", "r5 注释标记")
 
+
+    # t36 符号闭环断言（树级）：connection.rs/flutter.rs 中的 crate::ipc::Xxx 调用
+    # 必须在 ipc.rs 有 pub fn/pub async fn Xxx 定义（防 E0425 复发——E0425 曾两次）
+    import re as _re
+    _calls = set()
+    for _f in ["src/server/connection.rs", "src/flutter.rs", "src/ipc.rs"]:
+        _txt = pathlib.Path(_f).read_text(encoding="utf-8")
+        _calls |= set(_re.findall(r"crate::ipc::([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", _txt))
+    _ipc_txt = pathlib.Path("src/ipc.rs").read_text(encoding="utf-8")
+    _defined = set(_re.findall(r"pub (?:async )?fn ([a-zA-Z_][a-zA-Z0-9_]*)", _ipc_txt))
+    _missing = sorted(_calls - _defined)
+    if _missing:
+        print(f"[FAIL] ipc 符号调用无定义: {_missing}", file=sys.stderr)
+        ok = False
+    else:
+        print(f"[OK] t36 符号闭环：{sorted(_calls)} 全部有定义")
 
     # t27 反向断言（负向）：被控端「彻底静默化」——Ctrl+Alt+F12 快捷键必须已移除
     hp = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart").read_text(encoding="utf-8")
