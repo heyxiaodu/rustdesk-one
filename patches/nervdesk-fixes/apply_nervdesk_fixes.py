@@ -36,6 +36,7 @@ t18 在 t4 之上修复三处真机缺口）。
 应用后校验；占位符纪律保持（完整占位符仍只在 config.rs const 初始化行）。
 """
 
+import os
 import pathlib
 import sys
 
@@ -1085,178 +1086,70 @@ _FLUTTER_OLD = """    #[inline]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         start_listen_ipc_thread();
     }"""
-_FLUTTER_NEW = """    #[inline]
-    pub fn cm_init() {
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            start_listen_ipc_thread();
-            // r8/t35：controlled 常驻主窗口旁路消息通道（_nerve_ui）——绕开隐藏 CM，
-            // 横幅事件直达主窗口；CM（--cm）进程不抢占（其独享 _cm 监听）。
-            if hbb_common::config::nervdesk_mode_controlled() && !crate::common::is_cm() {
-                std::thread::spawn(nerv_main_ui_listener);
-            }
-        }
-    }
-
-    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
-    /// ipc `_nerve_ui` 通道），push_event `nerve_chat_banner` → 主窗口横幅。
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    #[tokio::main(flavor = "current_thread")]
-    // t38：模块作用域补 tokio/log 引入（flutter.rs 的 mod connection_manager
-    // 不继承文件级 use；#[tokio::main] 属性宏须在项外层可见 tokio）。
+_FLUTTER_NEW = r"""    /// controlled 主窗口的旁路消息监听（t38/t40）：接收服务端的 Data::ChatMessage
+    /// （经 ipc `_nerve_ui` 通道），直写主窗口事件流（GLOBAL_EVENT_STREAM[APP_TYPE_MAIN]）
+    /// 事件 `nerve_chat_banner` → 主窗口横幅。t38：不用 push_event（cm 专流 2 参
+    /// 主进程空发、会话 handler 3 参主窗口无）；t40：不用 #[tokio::main] 属性宏
+    /// （嵌套 mod + 别名 use 下属性宏解析失败）——改显式 runtime block_on。
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     use hbb_common::{log, tokio};
 
-    /// controlled 主窗口的旁路消息监听：接收服务端的 Data::ChatMessage（经
-    /// ipc `_nerve_ui` 通道），直写主窗口事件流（GLOBAL_EVENT_STREAM[APP_TYPE_MAIN]）
-    /// 事件 `nerve_chat_banner` → 主窗口横幅。t38：不再用 push_event
-    /// （cm 窗口专用流的 2 参方法，主窗口进程会空发失败；3 参方法走会话 handler，
-    /// 主窗口无会话 handler）——直接对主窗口流 add JSON 事件。
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    #[tokio::main(flavor = "current_thread")]
-    pub async fn nerv_main_ui_listener() {
-        use serde_json::json;
-        match crate::ipc::new_listener("_nerve_ui").await {
-            Ok(mut incoming) => {
-                while let Some(result) = incoming.next().await {
-                    let Ok(stream) = result else {
-                        continue;
-                    };
-                    tokio::spawn(async move {
-                        let mut conn = crate::ipc::Connection::new(stream);
-                        loop {
-                            match conn.next().await {
-                                Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
-                                    let h: std::collections::HashMap<&str, serde_json::Value> = [
-                                        ("name", json!("nerve_chat_banner")),
-                                        ("text", json!(text)),
-                                    ]
-                                    .into_iter()
-                                    .collect();
-                                    let out = serde_json::ser::to_string(&h).unwrap_or_default();
-                                    let locked = super::GLOBAL_EVENT_STREAM.read().unwrap();
-                                    if let Some(stream) = locked.get(super::APP_TYPE_MAIN) {
-                                        stream.add(out);
-                                    } else {
-                                        log::error!(
-                                            "NervDesk: 主窗口事件流缺失（nerve_chat_banner）"
-                                        );
+    pub fn nerv_main_ui_listener() {
+        // t40：显式运行时（全限定路径），不依赖属性宏解析
+        let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(err) => {
+                log::error!("NervDesk: _nerve_ui 运行时创建失败: {}", err);
+                return;
+            }
+        };
+        rt.block_on(async {
+            use serde_json::json;
+            match crate::ipc::new_listener("_nerve_ui").await {
+                Ok(mut incoming) => {
+                    while let Some(result) = incoming.next().await {
+                        let Ok(stream) = result else {
+                            continue;
+                        };
+                        tokio::spawn(async move {
+                            let mut conn = crate::ipc::Connection::new(stream);
+                            loop {
+                                match conn.next().await {
+                                    Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
+                                        let h: std::collections::HashMap<&str, serde_json::Value> = [
+                                            ("name", json!("nerve_chat_banner")),
+                                            ("text", json!(text)),
+                                        ]
+                                        .into_iter()
+                                        .collect();
+                                        let out = serde_json::ser::to_string(&h).unwrap_or_default();
+                                        let locked = super::GLOBAL_EVENT_STREAM.read().unwrap();
+                                        if let Some(stream) = locked.get(super::APP_TYPE_MAIN) {
+                                            stream.add(out);
+                                        } else {
+                                            log::error!(
+                                                "NervDesk: 主窗口事件流缺失（nerve_chat_banner）"
+                                            );
+                                        }
+                                    }
+                                    Ok(Some(_)) => {}
+                                    _ => {
+                                        log::debug!("NervDesk: _nerve_ui 通道断开");
+                                        break;
                                     }
                                 }
-                                Ok(Some(_)) => {}
-                                _ => {
-                                    log::debug!("NervDesk: _nerve_ui 通道断开");
-                                    break;
-                                }
                             }
-                        }
-                    });
+                        });
+                    }
                 }
+                Err(err) => log::error!("NervDesk: _nerve_ui 监听失败: {}", err),
             }
-            Err(err) => log::error!("NervDesk: _nerve_ui 监听失败: {}", err),
-        }
-    }"""
-
-_IPC_OLD = """#[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
-_IPC_NEW = """/// r8/t35+t36：受控端旁路投递——把文字消息直接送到常驻主窗口（_nerve_ui），
-/// 绕开隐藏中的 CM 窗口（其激活/置前会造成任务栏跳动）。
-/// cfg 说明（t36 修复 E0425）：调用点在 server/connection.rs（`mod server` 在
-/// Android 也编译），故定义必须对 Android 可见——仅排除 iOS（iOS 无 ipc 模块）。
-#[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "ios")))]
-pub async fn send_chat_banner_to_main(text: String) -> ResultType<()> {
-    if let Ok(mut c) = connect(1_000, "_nerve_ui").await {
-        c.send(&Data::ChatMessage { text }).await?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
-
-_CONN_OLD = """                    Some(misc::Union::ChatMessage(c)) => {
-                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
-                        self.chat_unanswered = true;"""
-_CONN_NEW = """                    Some(misc::Union::ChatMessage(c)) => {
-                        // t37：先提取 text 再分发（原实现 send_to_cm 内 move c.text 后
-                        // 再 clone → E0382 借用后移动；现一次 move + 两处克隆分发）
-                        let text = c.text;
-                        self.send_to_cm(ipc::Data::ChatMessage { text: text.clone() });
-                        // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）
-                        if hbb_common::config::nervdesk_mode_controlled() {
-                            let t = text.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = crate::ipc::send_chat_banner_to_main(t).await {
-                                    log::debug!("NervDesk: 主窗口横幅投递失败: {}", err);
-                                }
-                            });
-                        }
-                        self.chat_unanswered = true;"""
-
-_MODEL_OLD = """      } else if (name == 'chat_server_mode') {
-        parent.target?.chatModel
-            .receive(int.parse(evt['id'] as String), evt['text'] ?? '');"""
-_MODEL_NEW = """      } else if (name == 'chat_server_mode') {
-        parent.target?.chatModel
-            .receive(int.parse(evt['id'] as String), evt['text'] ?? '');
-      } else if (name == 'nerve_chat_banner') {
-        // r8/t35：controlled 旁路消息通道（绕开隐藏 CM）→ 主窗口横幅
-        parent.target?.chatModel.lastServerMsg.value = evt['text'] ?? '';"""
-
-_CHAT_OLD = """      if (isDesktop) {
-        windowOnTop(null);"""
-_CHAT_NEW = """      if (isDesktop && !kNervDeskModeControlled) {
-        // r8/t35：controlled（CM 隐藏）禁止激活置前——Windows 会拦截导致任务栏跳动
-        windowOnTop(null);"""
-
-_HOME_F_OLD = """  // r7（t30）：受控端消息轻量弹窗（仅 controlled）
-  Timer? _nerveMsgTimer;
-  final RxnString _nervePopupMsg = RxnString();"""
-_HOME_F_NEW = """  // r7（t30）+ r8（t35）：受控端消息轻量弹窗（仅 controlled；Rx 直听订阅）
-  Timer? _nerveMsgTimer;
-  StreamSubscription? _nerveMsgSub;
-  final RxnString _nervePopupMsg = RxnString();"""
-
-_HOME_I_OLD = """    // r7（t30）：controlled 监听受控消息 → 轻量弹窗（不依赖 CM 窗口可见）
-    if (kNervDeskModeControlled) {
-      gFFI.chatModel.addListener(_nerveOnChatMsg);
-    }"""
-_HOME_I_NEW = """    // r7（t30）+ r8（t35）：controlled 直听 lastServerMsg（Rx）→ 轻量弹窗；
-    // 消息经 _nerve_ui 旁路通道直达主窗口（绕开隐藏 CM 的激活逻辑）。
-    if (kNervDeskModeControlled) {
-      _nerveMsgSub = gFFI.chatModel.lastServerMsg.listen((m) {
-        if (m == null || m.isEmpty || !mounted) return;
-        _nerveMsgTimer?.cancel();
-        setState(() => _nervePopupMsg.value = m);
-        _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
-          if (mounted) setState(() => _nervePopupMsg.value = null);
         });
-      });
-    }"""
-
-_HOME_D_OLD = """    if (kNervDeskModeControlled) {
-      gFFI.chatModel.removeListener(_nerveOnChatMsg);
-      _nerveMsgTimer?.cancel();
-    }"""
-_HOME_D_NEW = """    if (kNervDeskModeControlled) {
-      _nerveMsgSub?.cancel();
-      _nerveMsgTimer?.cancel();
-    }"""
-
-_T35_FN_OLD = """  // r7（t30）：受控消息监听（仅 controlled 挂载）
-  void _nerveOnChatMsg() {
-    final m = gFFI.chatModel.lastServerMsg.value;
-    if (m == null || m.isEmpty || !mounted) return;
-    _nerveMsgTimer?.cancel();
-    setState(() => _nervePopupMsg.value = m);
-    _nerveMsgTimer = Timer(const Duration(seconds: 8), () {
-      if (mounted) setState(() => _nervePopupMsg.value = null);
-    });
-  }
-
+    }
 """
 _T35_FN_NEW = ""
 
@@ -1303,6 +1196,40 @@ _WIN_CPP_W_NEW = """  const DWORD window_style =
 _MAIN_OLD = """                            /*resizable=*/!nervdesk_controlled && !is_cm_page)) {"""
 _MAIN_NEW = """                            /*resizable=*/!nervdesk_controlled && !is_cm_page,
                             /*noActivate=*/is_cm_page && nervdesk_controlled)) {"""
+
+
+_IPC_OLD = """#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
+_IPC_NEW = """/// r8/t35+t36：受控端旁路投递——把文字消息直接送到常驻主窗口（_nerve_ui），
+/// 绕开隐藏中的 CM 窗口（其激活/置前会造成任务栏跳动）。
+/// cfg 说明（t36 修复 E0425）：调用点在 server/connection.rs（`mod server` 在
+/// Android 也编译），故定义必须对 Android 可见——仅排除 iOS（iOS 无 ipc 模块）。
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "ios")))]
+pub async fn send_chat_banner_to_main(text: String) -> ResultType<()> {
+    if let Ok(mut c) = connect(1_000, "_nerve_ui").await {
+        c.send(&Data::ChatMessage { text }).await?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {"""
+
+
+_CONN_OLD = """                    Some(misc::Union::ChatMessage(c)) => {
+                        self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
+                        self.chat_unanswered = true;"""
+_MODEL_OLD = """      } else if (name == 'chat_server_mode') {
+        parent.target?.chatModel
+            .receive(int.parse(evt['id'] as String), evt['text'] ?? '');"""
+_CHAT_OLD = """      if (isDesktop) {
+        windowOnTop(null);"""
+_HOME_F_OLD = _HOME_NEW1
+_HOME_I_OLD = _HOME_NEW2
+_HOME_D_OLD = _HOME_NEW3
 
 
 def patch_t35_nerve() -> None:
@@ -1414,6 +1341,18 @@ def verify() -> None:
     check("src/ipc.rs", "send_chat_banner_to_main", "t35 投递助手")
     check("src/server/connection.rs", "send_chat_banner_to_main(t)", "t35/t37 服务端推送")
     check("flutter/lib/models/model.dart", "nerve_chat_banner", "t35 事件")
+
+    check("src/flutter.rs", "use hbb_common::{log, tokio};", "t38 模块引入")
+    check("src/flutter.rs", "super::GLOBAL_EVENT_STREAM", "t38 主窗口流直写")
+    check("src/flutter.rs", "runtime::Builder::new_current_thread", "t40 显式运行时")
+    _ft = pathlib.Path("src/flutter.rs").read_text(encoding="utf-8")
+    _li = _ft.find("pub fn nerv_main_ui_listener")
+    _seg = _ft[max(0, _li - 400):_li + 200]
+    if "#[tokio::main(" in _seg:
+        print("[FAIL] nerv_main_ui_listener 前仍含 #[tokio::main( 属性宏（t40 应移除）", file=sys.stderr)
+        ok = False
+    else:
+        print("[OK] t40 监听器无属性宏残留（上游其它 tokio::main 与本监听器无关）")
     check("flutter/lib/models/chat_model.dart", "isDesktop && !kNervDeskModeControlled", "t35 no-activate gate")
     check("flutter/windows/runner/win32_window.cpp", "WS_EX_NOACTIVATE", "t35 窗口 no-activate")
     check("flutter/windows/runner/main.cpp", "noActivate=*/is_cm_page && nervdesk_controlled", "t35 runner 传参")
@@ -1488,31 +1427,18 @@ def verify() -> None:
 def main() -> None:
     print("=== NervDesk 真机三项修复补丁（t18）===")
     check_prereq()
-    patch_config_rs()
-    patch_flutter_ffi()
-    patch_common_dart()
-    patch_connection_page()
-    patch_home_page()
-    patch_cmake()
-    patch_main_cpp()
-    patch_win32_window()
-    patch_cn_lang()
-    patch_windows_single_instance()
-    patch_core_main()
-    patch_r6_config()
-    patch_r6_home()
-    patch_r6_tab()
-    patch_r7_cm()
-    patch_r7_config()
-    patch_r7_ipc()
-    patch_r7_chat_model()
-    patch_r7_home()
-    patch_r8_pin()
-    patch_r8_home()
-    patch_r9_iroh()
-    patch_t35_nerve()
-    patch_t35_dart()
-    patch_t35_runner()
+    # fixes 装配统一走「权威 git apply」（与 CI 装配路径一致；脚本==git 内建同源）。
+    # 历史逐步骤 sub1 锚点方案多次遭受变量损坏/锚点漂移（t35~t40 已连续踩坑：
+    # _IPC_OLD/_CONN_OLD 丢失、push_event 签名差异、#[tokio::main] 解析），
+    # 故以单一 git apply 替代全部 patch_* 步骤；verify() 校验保留。
+    import subprocess as _sp
+    _fixes_patch = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "nervdesk-fixes.patch")
+    _r = _sp.run(["git", "apply", _fixes_patch], capture_output=True, text=True)
+    if _r.returncode != 0:
+        die("git apply fixes.patch 失败（返回 %s）：%s" % (_r.returncode, _r.stderr[-500:]))
+    print("[OK] fixes.patch 已应用（git apply 权威路径）")
+
     verify()
     print("=== 完成 ===")
     print("提示：logo/icon 图形资产在 nervdesk/branding/（t19 装配 cp 覆盖 flutter/assets/）；")
