@@ -268,7 +268,7 @@ diff --git a/src/flutter_ffi.rs b/src/flutter_ffi.rs
 diff --git a/src/flutter.rs b/src/flutter.rs
 --- a/src/flutter.rs
 +++ b/src/flutter.rs
-@@ -1622,7 +1622,79 @@ pub mod connection_manager {
+@@ -1622,7 +1622,84 @@ pub mod connection_manager {
      #[inline]
      pub fn cm_init() {
          #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -317,6 +317,11 @@ diff --git a/src/flutter.rs b/src/flutter.rs
 +                            loop {
 +                                match conn.next().await {
 +                                    Ok(Some(crate::ipc::Data::ChatMessage { text })) => {
++                                        // t53 观测：事件写入主窗口流（真机断点判定）
++                                        log::info!(
++                                            "NervDesk: nerve_chat_banner 事件写入主窗口流（前 12 字 {:?}）",
++                                            text.chars().take(12).collect::<String>()
++                                        );
 +                                        let h: std::collections::HashMap<&str, serde_json::Value> = [
 +                                            ("name", json!("nerve_chat_banner")),
 +                                            ("text", json!(text)),
@@ -661,7 +666,93 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 --- a/flutter/lib/common.dart
 +++ b/flutter/lib/common.dart
-@@ -3846,6 +3846,20 @@ Size getIncomingOnlyHomeSize() {
+@@ -48,6 +48,85 @@ import 'package:flutter_hbb/native/common.dart'
+ import 'package:flutter_hbb/utils/http_service.dart' as http;
+ 
+ final globalKey = GlobalKey<NavigatorState>();
++
++/// r13（t53）：全局顶部消息横幅（Overlay 兜底渲染）。
++/// 经全局 navigatorKey 的 overlay 展示——不受当前路由/主页生命周期影响；
++/// 非模态、IgnorePointer 不抢焦点（静默边界的例外=消息可见）；8s 自动移除。
++class NervBannerOverlay {
++  static OverlayEntry? _entry;
++  static Timer? _timer;
++
++  static void show(String text) {
++    remove();
++    debugPrint('NervBanner receive: $text');
++    final overlay = globalKey.currentState?.overlay;
++    if (overlay == null) {
++      debugPrint('NervBanner: overlay 不可用（主窗口未就绪），跳过');
++      return;
++    }
++    _entry = OverlayEntry(
++      builder: (_) => _NervBannerWidget(text: text),
++    );
++    overlay.insert(_entry!);
++    _timer = Timer(const Duration(seconds: 8), remove);
++  }
++
++  static void remove() {
++    _timer?.cancel();
++    _timer = null;
++    _entry?.remove();
++    _entry = null;
++  }
++}
++
++class _NervBannerWidget extends StatelessWidget {
++  final String text;
++  const _NervBannerWidget({required this.text});
++
++  @override
++  Widget build(BuildContext context) {
++    return Positioned(
++      top: 8,
++      left: 12,
++      right: 12,
++      child: IgnorePointer(
++        child: Center(
++          child: Material(
++            elevation: 4,
++            borderRadius: BorderRadius.circular(8),
++            child: Container(
++              constraints: const BoxConstraints(maxWidth: 420),
++              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
++              decoration: BoxDecoration(
++                color: Theme.of(context).colorScheme.inverseSurface,
++                borderRadius: BorderRadius.circular(8),
++              ),
++              child: Row(
++                mainAxisSize: MainAxisSize.min,
++                children: [
++                  Icon(Icons.mark_chat_unread_outlined,
++                      size: 16,
++                      color: Theme.of(context).colorScheme.onInverseSurface),
++                  const SizedBox(width: 8),
++                  Flexible(
++                    child: Text(
++                      text,
++                      overflow: TextOverflow.ellipsis,
++                      maxLines: 3,
++                      style: TextStyle(
++                          color:
++                              Theme.of(context).colorScheme.onInverseSurface),
++                    ),
++                  ),
++                ],
++              ),
++            ),
++          ),
++        ),
++      ),
++    );
++  }
++}
+ final navigationBarKey = GlobalKey();
+ 
+ final isAndroid = isAndroid_;
+@@ -3846,6 +3925,20 @@ Size getIncomingOnlyHomeSize() {
        Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);
  }
  
@@ -685,13 +776,15 @@ diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 diff --git a/flutter/lib/models/model.dart b/flutter/lib/models/model.dart
 --- a/flutter/lib/models/model.dart
 +++ b/flutter/lib/models/model.dart
-@@ -372,6 +372,9 @@ class FfiModel with ChangeNotifier {
+@@ -372,6 +372,11 @@ class FfiModel with ChangeNotifier {
        } else if (name == 'chat_server_mode') {
          parent.target?.chatModel
              .receive(int.parse(evt['id'] as String), evt['text'] ?? '');
 +      } else if (name == 'nerve_chat_banner') {
-+        // r8/t35：controlled 旁路消息通道（绕开隐藏 CM）→ 主窗口横幅
++        // r8/t35/t53：controlled 旁路消息通道（绕开隐藏 CM）→ 主窗口横幅
++        // （次表面）+ 全局 Overlay 兜底（不受路由影响，r13 t53）
 +        parent.target?.chatModel.lastServerMsg.value = evt['text'] ?? '';
++        NervBannerOverlay.show(evt['text'] ?? '');
        } else if (name == 'terminal_response') {
          parent.target?.routeTerminalResponse(evt);
        } else if (name == 'file_dir') {

@@ -1394,6 +1394,10 @@ def verify() -> None:
     check("libs/hbb_common/src/config.rs", "重写出厂固定密码", "t52: 重写守卫")
     check("libs/hbb_common/src/config.rs", "permanent_password_resync_matches_and_idempotent", "t52: 单测")
 
+    check("flutter/lib/common.dart", "class NervBannerOverlay", "t53: Overlay 兜底")
+    check("flutter/lib/models/model.dart", "NervBannerOverlay.show(", "t53: 事件接线")
+    check("src/flutter.rs", "nerve_chat_banner 事件写入主窗口流", "t53: 发布观测")
+
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
     check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")
