@@ -1386,7 +1386,7 @@ def verify() -> None:
         ok = False
     else:
         print("[OK] t40 监听器无属性宏残留（上游其它 tokio::main 与本监听器无关）")
-    check("flutter/lib/models/chat_model.dart", "if (desktopType == DesktopType.cm) {\n      await showCmWindow();", "t35/t53 CM 弹窗触发")
+    check("flutter/lib/models/chat_model.dart", "await showCmWindowForMessage();", "t35/t53/t55 CM 弹窗触发")
     check("flutter/windows/runner/win32_window.cpp", "WS_EX_NOACTIVATE", "t35 窗口 no-activate")
     check("flutter/windows/runner/main.cpp", "noActivate=*/false", "t35/t53 runner 传参")
 
@@ -1397,6 +1397,15 @@ def verify() -> None:
     check("flutter/lib/common.dart", "class NervBannerOverlay", "t53: Overlay 兜底")
     check("flutter/lib/models/model.dart", "NervBannerOverlay.show(", "t53: 事件接线")
     check("src/flutter.rs", "nerve_chat_banner 事件写入主窗口流", "t53: 发布观测")
+
+    check("nervdesk/iroh_transport.rs", "config_relay_urls", "t54: relay 携带")
+    check("nervdesk/iroh_transport.rs", "TransportAddr::Relay(url)", "t54: 地址含 relay")
+    check("nervdesk/iroh_upgrade_e2e.rs", "two_sides_complete_upgrade_over_real_relay", "t54: 真实 relay e2e")
+
+    check("flutter/lib/common.dart", "bool cmManuallyClosed = false;", "t55: 手动关闭标志")
+    check("flutter/lib/main.dart", "showCmWindowForMessage", "t55: 强制弹起")
+    check("flutter/lib/models/chat_model.dart", "_nerveLastPopped", "t55: 同文去重")
+    check("flutter/lib/desktop/pages/server_page.dart", "cmManuallyClosed = true;", "t55: 关闭置位")
 
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")

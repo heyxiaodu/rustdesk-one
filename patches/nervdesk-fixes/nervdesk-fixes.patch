@@ -582,7 +582,7 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
  
      // ---- 1) 发起方 start -> Offer ----
      eprintln!("[e2e] 1) 发起方 start（建 endpoint）...");
-@@ -376,3 +408,31 @@ async fn try_accept_is_actually_nonblocking() {
+@@ -376,3 +408,55 @@ async fn try_accept_is_actually_nonblocking() {
          "try_accept 没有在 50ms 后返回，实际用了 {dt:?}"
      );
  }
@@ -614,6 +614,30 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
 +    assert_eq!(resp.session.state(), &State::Switched, "第二轮响应方未切到 iroh");
 +    assert!(init.installed.is_some() && resp.installed.is_some(), "第二轮双方都应装上过渡层");
 +}
++
++/// t54：真实 iroh relay 集成 e2e——两端带 RelayMap（NERV_IROH_RELAY）与令牌
++/// （NERV_IROH_RELAY_TOKEN，可选）走完整升级握手，直接验证 relay 中继升级通道
++/// 在工作环境可用。环境变量未配置时跳过（CI 默认跳过；本地闸门显式配置运行）。
++#[tokio::test]
++async fn two_sides_complete_upgrade_over_real_relay() {
++    let _ = env_logger::builder().is_test(true).try_init();
++    let Ok(relay) = std::env::var("NERV_IROH_RELAY") else {
++        eprintln!("[e2e] 未配置 NERV_IROH_RELAY，跳过真实 relay 用例");
++        return;
++    };
++    let token = std::env::var("NERV_IROH_RELAY_TOKEN").ok();
++    let cfg = IrohConfig {
++        bind_addr: Some("127.0.0.1:0".to_owned()),
++        relay_urls: vec![relay],
++        relay_auth_token: token,
++        secret_key: None,
++        ..Default::default()
++    };
++    let (init, resp) = handshake_inner(Duration::from_secs(60), cfg).await;
++    assert_eq!(init.session.state(), &State::Switched, "发起方（带真实 relay）未切到 iroh");
++    assert_eq!(resp.session.state(), &State::Switched, "响应方（带真实 relay）未切到 iroh");
++    assert!(init.installed.is_some() && resp.installed.is_some(), "双方都应装上过渡层");
++}
 diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 --- a/nervdesk/iroh_transport.rs
 +++ b/nervdesk/iroh_transport.rs
@@ -639,7 +663,7 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
  ///    就等于 RustDesk 的 `pk`，对端身份校验直接复用既有逻辑
  ///    （见 [`secret_key_from_rustdesk`]）。
  pub fn config_from_options() -> ResultType<IrohConfig> {
-@@ -320,6 +324,23 @@ pub fn bound_socket() -> ResultType<SocketAddr> {
+@@ -320,6 +324,44 @@ pub fn bound_socket() -> ResultType<SocketAddr> {
          .ok_or_else(|| anyhow!("iroh endpoint 没有绑定任何 socket"))
  }
  
@@ -654,10 +678,31 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 +    for s in endpoint.bound_sockets() {
 +        addrs.insert(TransportAddr::Ip(s));
 +    }
++    // t54 修复（对照 iroh-base 1.2 源码 endpoint_addr.rs）：EndpointAddr.addrs 是
++    // `BTreeSet<TransportAddr>`，Token 含 `Relay(RelayUrl)` 变体——iroh 自己的
++    // 地址构造（endpoint.rs:1315 from_parts）会把 relays 以 TransportAddr::Relay
++    // 放入。此前仅带 Ip 直连地址：跨 ISP 直连失败时对端地址无 relay 候选 → 无处
++    // 可走 → TCP 回退。修复：把本端 home relay 一并放入交换地址。
++    for url in config_relay_urls() {
++        addrs.insert(TransportAddr::Relay(url));
++    }
 +    EndpointAddr {
 +        id: endpoint.id(),
 +        addrs,
 +    }
++}
++
++/// 本端配置的 iroh relay 列表（供 [`enriched_addr`] 携带 relay 参与拨号）。
++/// 纯读取（config_from_options 无副作用）；与 RelayMap 注入（relay_mode_from_config
++/// + with_auth_token，已实证）同源同值。
++pub fn config_relay_urls() -> Vec<iroh::relay::RelayUrl> {
++    let Ok(cfg) = config_from_options() else {
++        return Vec::new();
++    };
++    cfg.relay_urls
++        .into_iter()
++        .filter_map(|s| s.parse().ok())
++        .collect()
 +}
 +
  /// 构造一个只含直连 IP 地址的 `EndpointAddr`。
@@ -666,10 +711,18 @@ diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
 --- a/flutter/lib/common.dart
 +++ b/flutter/lib/common.dart
-@@ -48,6 +48,85 @@ import 'package:flutter_hbb/native/common.dart'
+@@ -48,6 +48,93 @@ import 'package:flutter_hbb/native/common.dart'
  import 'package:flutter_hbb/utils/http_service.dart' as http;
  
  final globalKey = GlobalKey<NavigatorState>();
++
++/// r13/t55：CM 被**用户手动关闭**标志（server_page 关闭分支置位；
++/// 消息到达路径清除并强制弹起）。『仅隐藏』只对一次手动关闭生效，
++/// 被下条消息复位。
++bool cmManuallyClosed = false;
++/// r13/t55：最近一次已弹起的消息文本（连续同文不再重复弹；仅去重于 CM 弹窗路径）。
++String _nerveLastPopped = '';
++
 +
 +/// r13（t53）：全局顶部消息横幅（Overlay 兜底渲染）。
 +/// 经全局 navigatorKey 的 overlay 展示——不受当前路由/主页生命周期影响；
@@ -752,7 +805,7 @@ diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
  final navigationBarKey = GlobalKey();
  
  final isAndroid = isAndroid_;
-@@ -3846,6 +3925,20 @@ Size getIncomingOnlyHomeSize() {
+@@ -3846,6 +3933,20 @@ Size getIncomingOnlyHomeSize() {
        Offset(magicWidth, kDesktopRemoteTabBarHeight + magicHeight);
  }
  
@@ -773,6 +826,31 @@ diff --git a/flutter/lib/common.dart b/flutter/lib/common.dart
  Size getIncomingOnlySettingsSize() {
    return Size(768, 600);
  }
+diff --git a/flutter/lib/main.dart b/flutter/lib/main.dart
+--- a/flutter/lib/main.dart
++++ b/flutter/lib/main.dart
+@@ -308,6 +308,21 @@ void runConnectionManagerScreen() async {
+ 
+ bool _isCmReadyToShow = false;
+ 
++/// r13/t55：消息到达 → **无条件**弹起 CM（清除『手动关闭』残留态，
++/// 强制可见+置前）。不再依赖 opacity/就绪等任何残留状态。
++Future<void> showCmWindowForMessage() async {
++  cmManuallyClosed = false; // 复位手动关闭标志
++  _isCmReadyToShow = true;
++  await windowManager.show();
++  await windowManager.focus();
++  if (await windowManager.getOpacity() != 1) {
++    await windowManager.setOpacity(1);
++  }
++  await windowManager.setSizeAlignment(
++      kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
++  windowOnTop(null);
++}
++
+ showCmWindow({bool isStartup = false}) async {
+   if (isStartup) {
+     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
 diff --git a/flutter/lib/models/model.dart b/flutter/lib/models/model.dart
 --- a/flutter/lib/models/model.dart
 +++ b/flutter/lib/models/model.dart
@@ -801,7 +879,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
  
    Offset chatWindowPosition = Offset(20, 80);
  
-@@ -351,9 +354,15 @@ class ChatModel with ChangeNotifier {
+@@ -351,8 +354,19 @@ class ChatModel with ChangeNotifier {
        return;
      }
      if (text.isEmpty) return;
@@ -809,15 +887,20 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
 +    // 弹出（隐藏中的）CM 管理窗口并展示消息文本（双形态一致，t53 拍板）；
 +    // 主窗口横幅保留为次表面。
      if (desktopType == DesktopType.cm) {
-       await showCmWindow();
-     }
+-      await showCmWindow();
++      // r13/t55：手动关闭后下条消息必须再次弹出——无条件清标志+强制可见置前；
++      // 连续同文不重复弹（_nerveLastPopped 去重）。
++      if (cmManuallyClosed || text != _nerveLastPopped) {
++        _nerveLastPopped = text;
++        await showCmWindowForMessage();
++      }
++    }
 +    if (id != clientModeID) {
 +      lastServerMsg.value = text;
-+    }
+     }
      String? peerId;
      if (id == clientModeID) {
-       peerId = session.id;
-@@ -412,6 +421,7 @@ class ChatModel with ChangeNotifier {
+@@ -412,6 +426,7 @@ class ChatModel with ChangeNotifier {
          return;
        }
        if (isDesktop) {
@@ -1086,13 +1169,15 @@ diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/deskt
 diff --git a/flutter/lib/desktop/pages/server_page.dart b/flutter/lib/desktop/pages/server_page.dart
 --- a/flutter/lib/desktop/pages/server_page.dart
 +++ b/flutter/lib/desktop/pages/server_page.dart
-@@ -55,6 +55,13 @@ class _DesktopServerPageState extends State<DesktopServerPage>
+@@ -55,6 +55,15 @@ class _DesktopServerPageState extends State<DesktopServerPage>
  
    @override
    void onWindowClose() {
 +    if (kNervDeskModeControlled) {
-+      // r53（t51 并入）：受控端手动关闭 CM **不得断开控制会话**——仅隐藏窗口
-+      // （会话保持，连接由控制端正常断开）；下条消息再弹出。
++      // r53（t51 并入）+r55：受控端手动关闭 CM **不得断开控制会话**——仅隐藏
++      // 窗口（会话保持，连接由控制端正常断开）；置『手动关闭』标志，
++      // 下条消息到达时无条件清除并重新弹起（showCmWindowForMessage）。
++      cmManuallyClosed = true;
 +      windowManager.setPreventClose(true);
 +      windowManager.hide();
 +      return;
