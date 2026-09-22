@@ -1426,6 +1426,12 @@ def verify() -> None:
     check("flutter/lib/models/chat_model.dart", "void nervePopReset()", "t61: 去重复位")
     check("flutter/lib/desktop/pages/server_page.dart", "nervePopReset();", "t61: 关窗复位调用")
 
+    check("src/server/connection.rs", "真实接收点 send_to_cm", "t63: 真实接收路径发布")
+    check("src/server/connection.rs", "headless 无主窗口属预期", "t63: 服务模式观测")
+
+    check("nervdesk/iroh_upgrade_e2e.rs", "responder_accept_loop_is_required_for_success", "t64: 停滞证明 e2e")
+    check("nervdesk/iroh_upgrade_session.rs", "响应方 accept 到 iroh 连接", "t64: accept 观测")
+
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
     check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")

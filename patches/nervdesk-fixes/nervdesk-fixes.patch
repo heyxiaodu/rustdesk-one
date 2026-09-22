@@ -442,7 +442,7 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
                          }
                      }
                  }
-@@ -3631,7 +3636,19 @@ impl Connection {
+@@ -3631,7 +3636,33 @@ impl Connection {
                          }
                      }
                      Some(misc::Union::ChatMessage(c)) => {
@@ -450,20 +450,34 @@ diff --git a/src/server/connection.rs b/src/server/connection.rs
 +                        // t37：先提取 text 再分发（原实现 send_to_cm 内 move c.text 后
 +                        // 再 clone → E0382 借用后移动；现一次 move + 两处克隆分发）
 +                        let text = c.text;
++                        // t63：真实接收点（网络层 ChatMessage → send_to_cm → CM 面板）。
++                        // 在进程内同步发主窗口事件流（legacy GUI 进程内含主窗 Overlay）；
++                        // 服务模式无主窗口时此处仅供日志观测——呈现走 CM（_cm 面板+弹窗）。
++                        let ev = serde_json::json!({"name": "nerve_chat_banner", "text": &text})
++                            .to_string();
++                        crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, ev);
++                        log::info!(
++                            "NervDesk: ChatMessage 到达被控端（真实接收点 send_to_cm 路径）"
++                        );
 +                        self.send_to_cm(ipc::Data::ChatMessage { text: text.clone() });
-+                        // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）
++                        // r8/t35：controlled——旁路投递到常驻主窗口横幅（绕开隐藏 CM）。
++                        // 无主窗口进程（headless 受控）时该 IPC 必然失败——INFO 明示，
++                        // 便于真机日志判定（呈现由 CM 面板+弹窗承担）。
 +                        if hbb_common::config::nervdesk_mode_controlled() {
 +                            let t = text.clone();
 +                            tokio::spawn(async move {
-+                                if let Err(err) = crate::ipc::send_chat_banner_to_main(t).await {
-+                                    log::debug!("NervDesk: 主窗口横幅投递失败: {}", err);
++                                match crate::ipc::send_chat_banner_to_main(t).await {
++                                    Ok(_) => log::info!("NervDesk: 主窗口横幅投递成功"),
++                                    Err(err) => {
++                                        log::info!("NervDesk: 主窗口横幅投递失败（headless 无主窗口属预期）: {}", err)
++                                    }
 +                                }
 +                            });
 +                        }
                          self.chat_unanswered = true;
                          self.update_auto_disconnect_timer();
                      }
-@@ -5997,6 +6014,11 @@ async fn start_ipc(
+@@ -5997,6 +6028,11 @@ async fn start_ipc(
  ) -> ResultType<()> {
      use hbb_common::anyhow::anyhow;
  
@@ -494,7 +508,16 @@ diff --git a/src/client/io_loop.rs b/src/client/io_loop.rs
 diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
 --- a/nervdesk/iroh_upgrade_session.rs
 +++ b/nervdesk/iroh_upgrade_session.rs
-@@ -344,8 +344,17 @@ impl UpgradeSession {
+@@ -290,6 +290,8 @@ impl UpgradeSession {
+         // 5ms：足够短，不会拖慢 select! 循环；又给 accept 一点机会完成
+         match iroh_transport::try_accept(&ep, 5).await? {
+             Some((stream, peer)) => {
++                // t64 观测：响应方 accept 成功（=拨号已到达且被接受）——真机可判定
++                log::info!("响应方 accept 到 iroh 连接（peer={}）", peer);
+                 self.ready = Some(stream);
+                 self.peer_id = Some(peer);
+                 // 同 poll_dial：先装过渡层，再推进状态机
+@@ -344,8 +346,17 @@ impl UpgradeSession {
          let local = self
              .endpoint
              .as_ref()
@@ -514,7 +537,7 @@ diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
              .unwrap_or_default();
          for action in actions {
              match action {
-@@ -422,6 +431,13 @@ impl UpgradeSession {
+@@ -422,6 +433,13 @@ impl UpgradeSession {
              .to_owned();
          let peer: EndpointAddr = serde_json::from_str(&peer_json)
              .map_err(|e| anyhow!("对端 iroh 地址解析失败: {e}"))?;
@@ -528,7 +551,7 @@ diff --git a/nervdesk/iroh_upgrade_session.rs b/nervdesk/iroh_upgrade_session.rs
          let (tx, rx) = mpsc::unbounded_channel();
          tokio::spawn(async move {
              let _ = tx.send(iroh_transport::connect_from(&ep, peer).await);
-@@ -619,6 +635,21 @@ mod tests {
+@@ -619,6 +637,21 @@ mod tests {
          );
      }
  
@@ -612,7 +635,7 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
  
      // ---- 1) 发起方 start -> Offer ----
      eprintln!("[e2e] 1) 发起方 start（建 endpoint）...");
-@@ -376,3 +408,55 @@ async fn try_accept_is_actually_nonblocking() {
+@@ -376,3 +408,135 @@ async fn try_accept_is_actually_nonblocking() {
          "try_accept 没有在 50ms 后返回，实际用了 {dt:?}"
      );
  }
@@ -667,6 +690,86 @@ diff --git a/nervdesk/iroh_upgrade_e2e.rs b/nervdesk/iroh_upgrade_e2e.rs
 +    assert_eq!(init.session.state(), &State::Switched, "发起方（带真实 relay）未切到 iroh");
 +    assert_eq!(resp.session.state(), &State::Switched, "响应方（带真实 relay）未切到 iroh");
 +    assert!(init.installed.is_some() && resp.installed.is_some(), "双方都应装上过渡层");
++}
++
++/// t64：证明 accept 循环决定成败——响应方不跑 accept 时拨号停滞（无过渡层），
++/// 恢复 accept 后同一对会话推进到 Switched。
++#[tokio::test]
++async fn responder_accept_loop_is_required_for_success() {
++    let _ = env_logger::builder().is_test(true).try_init();
++    let cfg = local_cfg();
++    let mut init = Side::new("发起方", Role::Initiator, cfg.clone());
++    let mut resp = Side::new("响应方", Role::Responder, cfg);
++
++    // Offer/Answer 阶段照常（协议层不依赖 accept）
++    let orders = init.session.start().await.expect("start 失败");
++    init.run_orders(orders).await;
++    let offer = init.take_outbox();
++    assert_eq!(offer.len(), 1, "start 应产出一条 Offer");
++    resp.deliver_to(&offer).await;
++    let answer = resp.take_outbox();
++    assert_eq!(answer.len(), 1, "应回一条 Answer");
++    init.deliver_to(&answer).await;
++
++    // 驱动期 A：**响应方不 poll_accept**（模拟 accept 循环缺失）——
++    // 持续驱动发起方拨号与消息投递；3s 内必须停滞（未切换、无过渡层）——
++    // 停滞即是本阶段的预期结果（证明 accept 循环决定成败）。
++    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
++    loop {
++        if init.session.state().is_switched() {
++            panic!("无 accept 时不应切换（accept 循环是必要条件）");
++        }
++        if tokio::time::Instant::now() >= deadline {
++            break; // 停滞达成
++        }
++        init.session.poll_dial().await.expect("poll_dial 失败");
++        let o = init.session.drain_orders();
++        init.run_orders(o).await;
++        let to_resp = init.take_outbox();
++        resp.deliver_to(&to_resp).await;
++        let to_init = resp.take_outbox();
++        init.deliver_to(&to_init).await;
++        tokio::time::sleep(Duration::from_millis(50)).await;
++    }
++    assert_eq!(
++        init.session.state(),
++        &State::Connecting,
++        "无 accept 时发起方应停在 Connecting（停滞证明）"
++    );
++    assert!(
++        init.installed.is_none(),
++        "无 accept 时不应安装过渡层（停滞证明）"
++    );
++
++    // 驱动期 B：**恢复 accept**——响应方开始 poll_accept，同一对会话应推进到
++    // Switched（拨号重试存在，判断窗口放宽到 3s）。
++    let deadline2 = tokio::time::Instant::now() + Duration::from_secs(3);
++    loop {
++        if init.session.state().is_switched() && resp.session.state().is_switched() {
++            break;
++        }
++        assert!(
++            tokio::time::Instant::now() < deadline2,
++            "恢复 accept 后应切换成功：发起方={:?} 响应方={:?}",
++            init.session.state(),
++            resp.session.state()
++        );
++        init.session.poll_dial().await.expect("poll_dial 失败");
++        resp.session.poll_accept().await.expect("poll_accept 失败");
++        let o = init.session.drain_orders();
++        init.run_orders(o).await;
++        let o = resp.session.drain_orders();
++        resp.run_orders(o).await;
++        let to_resp = init.take_outbox();
++        let to_init = resp.take_outbox();
++        resp.deliver_to(&to_resp).await;
++        init.deliver_to(&to_init).await;
++        tokio::time::sleep(Duration::from_millis(50)).await;
++    }
++    assert!(
++        init.installed.is_some() && resp.installed.is_some(),
++        "恢复 accept 后双方都应装上过渡层"
++    );
 +}
 diff --git a/nervdesk/iroh_transport.rs b/nervdesk/iroh_transport.rs
 --- a/nervdesk/iroh_transport.rs
