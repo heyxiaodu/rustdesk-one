@@ -888,7 +888,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
  
    Offset chatWindowPosition = Offset(20, 80);
  
-@@ -351,8 +358,19 @@ class ChatModel with ChangeNotifier {
+@@ -351,8 +358,21 @@ class ChatModel with ChangeNotifier {
        return;
      }
      if (text.isEmpty) return;
@@ -897,8 +897,10 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
 +    // 主窗口横幅保留为次表面。
      if (desktopType == DesktopType.cm) {
 -      await showCmWindow();
-+      // r13/t55：手动关闭后下条消息必须再次弹出——无条件清标志+强制可见置前；
-+      // 连续同文不重复弹（_nerveLastPopped 去重）。
++      // r13/t55+t58：**每次消息到达都投递当前文本**——解耦 show 与文本注入
++      // （窗口无论新建/已存在，本次均携带最新文本，不再只送首条）。
++      lastServerMsg.value = text;
++      // 弹窗：手动关闭后下条消息必弹（清标志+强制可见置前）；连续同文不重复弹。
 +      if (cmManuallyClosed || text != _nerveLastPopped) {
 +        _nerveLastPopped = text;
 +        await showCmWindowForMessage();
@@ -909,7 +911,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
      }
      String? peerId;
      if (id == clientModeID) {
-@@ -412,6 +430,7 @@ class ChatModel with ChangeNotifier {
+@@ -412,6 +432,7 @@ class ChatModel with ChangeNotifier {
          return;
        }
        if (isDesktop) {
@@ -1178,7 +1180,37 @@ diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/deskt
 diff --git a/flutter/lib/desktop/pages/server_page.dart b/flutter/lib/desktop/pages/server_page.dart
 --- a/flutter/lib/desktop/pages/server_page.dart
 +++ b/flutter/lib/desktop/pages/server_page.dart
-@@ -55,6 +55,15 @@ class _DesktopServerPageState extends State<DesktopServerPage>
+@@ -41,20 +41,45 @@ class _DesktopServerPageState extends State<DesktopServerPage>
+     };
+   }
+ 
++  late final StreamSubscription<String?>? _nerveMsgSub;
++
+   @override
+   void initState() {
+     windowManager.addListener(this);
++    if (kNervDeskModeControlled) {
++      // t58：CM 弹窗内消息文本横幅——每次消息到达（chat_model 已投递
++      // lastServerMsg）在窗口内 Overlay 展示；与聊天页/路由状态解耦，
++      // 保证弹窗必带文本。
++      _nerveMsgSub = gFFI.chatModel.lastServerMsg.listen((text) {
++        final t = text ?? '';
++        if (t.isNotEmpty) {
++          NervBannerOverlay.show(t);
++        }
++      });
++    } else {
++      _nerveMsgSub = null;
++    }
+     super.initState();
+   }
+ 
+   @override
+   void dispose() {
++    _nerveMsgSub?.cancel();
+     windowManager.removeListener(this);
+     super.dispose();
+   }
  
    @override
    void onWindowClose() {

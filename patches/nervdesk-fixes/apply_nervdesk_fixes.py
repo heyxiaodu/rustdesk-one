@@ -1413,6 +1413,9 @@ def verify() -> None:
     if "String _nerveLastPopped = '';" in _cm_top:
         die("t57：common.dart 不得再含顶层 _nerveLastPopped（跨文件不可见）")
 
+    check("flutter/lib/models/chat_model.dart", "lastServerMsg.value = text;", "t58: 每次投递文本")
+    check("flutter/lib/desktop/pages/server_page.dart", "NervBannerOverlay.show(t)", "t58: CM 窗内文本横幅")
+
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
     check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")
