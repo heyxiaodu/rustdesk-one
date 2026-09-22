@@ -249,6 +249,36 @@ diff --git a/libs/hbb_common/src/config.rs b/libs/hbb_common/src/config.rs
      #[test]
      fn test_serialize() {
          let cfg: Config = Default::default();
+diff --git a/src/common.rs b/src/common.rs
+--- a/src/common.rs
++++ b/src/common.rs
+@@ -2393,13 +2393,24 @@ async fn stun_ipv4_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
+     })
+ }
+ 
+-static STUNS_V4: [&str; 3] = [
++// r13/t60：NAT 探测 STUN **三级优先**：
++//  ① 自建字面量（VPS coturn 双栈 3478，已实证回显；无 DNS 依赖——消除外部
++//     STUN 域解析噪音；IPv6 出站可达性仍依赖用户侧网络，自建仅保证服务端可达）；
++//  ② DDNS 域名 stun.nervcode.eu.org:3478（LUCKY 已配置；A/AAAA 生效后自然可用，
++//     未生效时超时自动跳过，无副作用）；
++//  ③ 官方条目（最终回退，行为不回归）。
++//  - 云安全组需放行 UDP/TCP 3478（IPv4+IPv6）。
++static STUNS_V4: [&str; 5] = [
++    "38.55.195.171:3478",
++    "stun.nervcode.eu.org:3478",
+     "stun.l.google.com:19302",
+     "stun.cloudflare.com:3478",
+     "stun.nextcloud.com:3478",
+ ];
+ 
+-static STUNS_V6: [&str; 3] = [
++static STUNS_V6: [&str; 5] = [
++    "[2001:df1:7880:4::555]:3478",
++    "stun.nervcode.eu.org:3478",
+     "stun.l.google.com:19302",
+     "stun.cloudflare.com:3478",
+     "stun.nextcloud.com:3478",
 diff --git a/src/flutter_ffi.rs b/src/flutter_ffi.rs
 --- a/src/flutter_ffi.rs
 +++ b/src/flutter_ffi.rs
@@ -867,7 +897,7 @@ diff --git a/flutter/lib/models/model.dart b/flutter/lib/models/model.dart
 diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.dart
 --- a/flutter/lib/models/chat_model.dart
 +++ b/flutter/lib/models/chat_model.dart
-@@ -61,6 +61,10 @@ class ChatModel with ChangeNotifier {
+@@ -61,6 +61,16 @@ class ChatModel with ChangeNotifier {
  
    bool isConnManager = false;
  
@@ -875,10 +905,16 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
 +  /// 须为本类字段——underscore 前缀符号跨文件不可见）。
 +  String? _nerveLastPopped;
 +
++  /// r15/t61：复位去重游标——用户手动关闭 CM 后，下一条消息（含同文）
++  /// 也必须再次弹出（关窗=仅隐藏一次，被下条消息复位）。
++  void nervePopReset() {
++    _nerveLastPopped = null;
++  }
++
    RxBool isWindowFocus = true.obs;
    BlockableOverlayState _blockableOverlayState = BlockableOverlayState();
    final Rx<VoiceCallStatus> _voiceCallStatus = Rx(VoiceCallStatus.notStarted);
-@@ -70,6 +74,9 @@ class ChatModel with ChangeNotifier {
+@@ -70,6 +80,9 @@ class ChatModel with ChangeNotifier {
    TextEditingController textController = TextEditingController();
    RxInt mobileUnreadSum = 0.obs;
    MessageKey? latestReceivedKey;
@@ -888,7 +924,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
  
    Offset chatWindowPosition = Offset(20, 80);
  
-@@ -351,8 +358,21 @@ class ChatModel with ChangeNotifier {
+@@ -351,8 +364,23 @@ class ChatModel with ChangeNotifier {
        return;
      }
      if (text.isEmpty) return;
@@ -900,8 +936,10 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
 +      // r13/t55+t58：**每次消息到达都投递当前文本**——解耦 show 与文本注入
 +      // （窗口无论新建/已存在，本次均携带最新文本，不再只送首条）。
 +      lastServerMsg.value = text;
-+      // 弹窗：手动关闭后下条消息必弹（清标志+强制可见置前）；连续同文不重复弹。
-+      if (cmManuallyClosed || text != _nerveLastPopped) {
++      // 弹窗（r15/t61 触发器加固）：手动关闭后必弹（清标志）、**窗口不可见也必弹**
++      // （不依赖 CM 页面订阅/可见性残留态）；仅对同文且窗口可见时去重。
++      final cmVisible = await windowManager.isVisible();
++      if (cmManuallyClosed || !cmVisible || text != _nerveLastPopped) {
 +        _nerveLastPopped = text;
 +        await showCmWindowForMessage();
 +      }
@@ -911,7 +949,7 @@ diff --git a/flutter/lib/models/chat_model.dart b/flutter/lib/models/chat_model.
      }
      String? peerId;
      if (id == clientModeID) {
-@@ -412,6 +432,7 @@ class ChatModel with ChangeNotifier {
+@@ -412,6 +440,7 @@ class ChatModel with ChangeNotifier {
          return;
        }
        if (isDesktop) {
@@ -1180,7 +1218,7 @@ diff --git a/flutter/lib/desktop/pages/desktop_tab_page.dart b/flutter/lib/deskt
 diff --git a/flutter/lib/desktop/pages/server_page.dart b/flutter/lib/desktop/pages/server_page.dart
 --- a/flutter/lib/desktop/pages/server_page.dart
 +++ b/flutter/lib/desktop/pages/server_page.dart
-@@ -41,20 +41,45 @@ class _DesktopServerPageState extends State<DesktopServerPage>
+@@ -41,20 +41,47 @@ class _DesktopServerPageState extends State<DesktopServerPage>
      };
    }
  
@@ -1219,6 +1257,8 @@ diff --git a/flutter/lib/desktop/pages/server_page.dart b/flutter/lib/desktop/pa
 +      // 窗口（会话保持，连接由控制端正常断开）；置『手动关闭』标志，
 +      // 下条消息到达时无条件清除并重新弹起（showCmWindowForMessage）。
 +      cmManuallyClosed = true;
++      // r15/t61：复位去重游标——关窗后下一条消息（即使同文）必须再次弹出
++      gFFI.chatModel.nervePopReset();
 +      windowManager.setPreventClose(true);
 +      windowManager.hide();
 +      return;

@@ -1416,6 +1416,16 @@ def verify() -> None:
     check("flutter/lib/models/chat_model.dart", "lastServerMsg.value = text;", "t58: 每次投递文本")
     check("flutter/lib/desktop/pages/server_page.dart", "NervBannerOverlay.show(t)", "t58: CM 窗内文本横幅")
 
+    check("src/common.rs", '"38.55.195.171:3478",', "t60: STUN v4 自建为首")
+    check("src/common.rs", '"[2001:df1:7880:4::555]:3478",', "t60: STUN v6 自建为首")
+    check("src/common.rs", "stun.nextcloud.com:3478", "t60: 官方回退保持")
+
+    check("src/common.rs", '"stun.nervcode.eu.org:3478",', "t60: DDNS 二级 STUN")
+
+    check("flutter/lib/models/chat_model.dart", "final cmVisible = await windowManager.isVisible();", "t61: CM 不可见必弹")
+    check("flutter/lib/models/chat_model.dart", "void nervePopReset()", "t61: 去重复位")
+    check("flutter/lib/desktop/pages/server_page.dart", "nervePopReset();", "t61: 关窗复位调用")
+
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "if (!kNervDeskModeControlled) buildPopupMenu(context)", "t27 C4a ID板菜单")
     check("flutter/lib/desktop/pages/desktop_home_page.dart", "kNervDeskModeControlled\n", "t27 C4 改密门控")
     check("flutter/lib/desktop/pages/desktop_tab_page.dart", "kNervDeskModeControlled,", "t27 C4b tabbar 设置钮")
