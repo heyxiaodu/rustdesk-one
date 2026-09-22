@@ -46,6 +46,9 @@ unix-file-copy-paste = [
     "clipboard/unix-file-copy-paste",
 ]
 screencapturekit = ["cpal/screencapturekit"]
+# QUIC transport (src/quic_stream.rs). Off by default: with the feature off no QUIC
+# dependency is compiled and every existing transport path is byte-for-byte unchanged.
+quic = ["dep:quinn", "dep:rcgen"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -87,6 +90,13 @@ shutdown_hooks = "0.1"
 totp-rs = { version = "5.4", default-features = false, features = ["gen_secret", "otpauth"] }
 stunclient = "0.4"
 kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys", branch = "rustdesk-patches" }
+# QUIC transport (`src/quic_stream.rs`). `default-features = false` on purpose: quinn's
+# defaults pull `fastbloom` (via `bloom`) and `rustls-platform-verifier` (via
+# `platform-verifier`), neither of which is in the committed lock, and this transport checks
+# no certificate chain in the first place. `rustls-ring` is the backend the rest of the tree
+# already uses (`ring`), where the default `rustls-aws-lc-rs` would add a C toolchain.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"], optional = true }
+rcgen = { version = "0.13", optional = true }
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]

@@ -1485,6 +1485,32 @@ async fn udp_nat_listen(
     let func = async {
         socket.connect(peer_addr).await?;
         let init_packet = crate::punch_udp(socket.clone(), true).await?;
+        #[cfg(feature = "quic")]
+        if crate::quic_stream::enabled() {
+            // The punch above has already answered the controller, so the QUIC Initial it sends
+            // next is still queued on the socket and is what this accepts. The KCP accept below
+            // stays as the fallback for a controller that does not speak QUIC -- same shape as
+            // `udp_nat_connect`, and the punch's first packet is kept for exactly that.
+            match crate::quic_stream::accept(socket.clone(), CONNECT_TIMEOUT).await {
+                Ok(stream) => {
+                    drop(slot);
+                    return crate::server::create_tcp_connection(
+                        server,
+                        stream,
+                        peer_addr_v4,
+                        true,
+                        meta,
+                    )
+                    .await;
+                }
+                Err(err) => {
+                    if crate::quic_stream::mode() == crate::quic_stream::Mode::Quic {
+                        return Err(err);
+                    }
+                    log::info!("[QUIC] {err}; falling back to KCP");
+                }
+            }
+        }
         let stream = crate::kcp_stream::KcpStream::accept(
             socket,
             Duration::from_millis(CONNECT_TIMEOUT as _),

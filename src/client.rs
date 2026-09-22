@@ -1185,6 +1185,8 @@ impl Client {
                         // The ? / secure_connection failures below return early; webrtc_guard stays
                         // in scope and closes the offerer on any such exit (loss, error, cancellation).
                         let (mut conn, kcp, mut typ, mut direct) = race_result?;
+                        #[cfg(feature = "quic")]
+                        crate::quic_stream::require(typ)?;
                         feedback = rr.feedback;
                         log::info!("{:?} used to establish {typ} connection", start.elapsed());
                         let pk = match Self::secure_connection(
@@ -1564,6 +1566,10 @@ impl Client {
                 bail!("Failed to make direct connection to remote desktop");
             }
         }
+        // Before the error is unwrapped: an empty label means the attempt already failed on
+        // its own, and that error is the one worth reporting.
+        #[cfg(feature = "quic")]
+        crate::quic_stream::require(typ)?;
         let mut conn = conn?;
         log::info!(
             "{:?} used to establish {typ} connection with {} punch",
@@ -5523,6 +5529,21 @@ async fn udp_nat_connect(
             log::debug!("{err}");
             anyhow!(err)
         })?;
+    #[cfg(feature = "quic")]
+    if crate::quic_stream::enabled() {
+        // QUIC first when asked for, with the KCP attempt below kept as the fallback: a peer
+        // that does not speak QUIC never answers it, and without that fallback the direct UDP
+        // path would be lost to whichever relay is racing rather than merely downgraded.
+        match crate::quic_stream::connect(socket.clone(), ms_timeout).await {
+            Ok(stream) => return Ok((stream, None, crate::quic_stream::TYP)),
+            Err(err) => {
+                if crate::quic_stream::mode() == crate::quic_stream::Mode::Quic {
+                    return Err(err);
+                }
+                log::info!("[QUIC] {err}; falling back to KCP");
+            }
+        }
+    }
     let res = KcpStream::connect(socket, Duration::from_millis(ms_timeout))
         .await
         .map_err(|err| {

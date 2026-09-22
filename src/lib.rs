@@ -73,3 +73,5 @@ pub mod privacy_mode;
 pub mod virtual_display_manager;
 
 mod kcp_stream;
+#[cfg(feature = "quic")]
+mod quic_stream;
