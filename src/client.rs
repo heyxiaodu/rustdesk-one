@@ -5537,10 +5537,22 @@ async fn udp_nat_connect(
         match crate::quic_stream::connect(socket.clone(), ms_timeout).await {
             Ok(stream) => return Ok((stream, None, crate::quic_stream::TYP)),
             Err(err) => {
+                // The one place that knows both why QUIC did not connect and what is done
+                // instead, so the outcome and its reason are recorded in a single line. No
+                // key, token or peer identity is in it: `err` carries addresses and the
+                // handshake's own failure only.
                 if crate::quic_stream::mode() == crate::quic_stream::Mode::Quic {
+                    log::warn!(
+                        "[QUIC] outcome=failed: direct connection failed ({err}); \
+                         transport-mode is \"quic\", so this attempt fails rather than \
+                         falling back"
+                    );
                     return Err(err);
                 }
-                log::info!("[QUIC] {err}; falling back to KCP");
+                log::info!(
+                    "[QUIC] outcome=legacy: direct connection failed ({err}); \
+                     falling back to KCP on the same socket ({typ} leg)"
+                );
             }
         }
     }

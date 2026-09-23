@@ -12,6 +12,28 @@
 //! secretbox exchange that `Stream::Tcp`'s `set_key` path performs above this layer. A QUIC
 //! session is therefore exactly as authenticated as a plain TCP one, and encrypted at least
 //! as well.
+//!
+//! # Connection outcomes
+//!
+//! Every attempt ends in exactly one greppable outcome line, so a session's transport can be
+//! counted from a log without guesswork:
+//!
+//! - `[QUIC] outcome=direct` -- a QUIC session is up over the punched UDP socket. Logged
+//!   here, where the session is actually established (`adopt` / `accept`).
+//! - `[QUIC] outcome=legacy` -- the attempt did not connect and the classic transport takes
+//!   over. Logged by the caller (`udp_nat_connect` / `udp_nat_listen`), which is the only
+//!   place that knows what is being fallen back to; the reason travels in the same line.
+//! - `[QUIC] outcome=failed` -- `transport-mode = "quic"` and the attempt did not connect,
+//!   so it fails rather than silently downgrading. Also logged by the caller.
+//!
+//! Two outcomes from the target design do not exist yet and are **deliberately not logged**,
+//! because a log line for something that cannot happen is worse than no line:
+//!
+//! - `outcome=nat-punch` -- QUIC doing its own NAT traversal. D1 always runs after
+//!   `punch_udp` has already opened the mapping, so there is nothing here to traverse.
+//!   TODO: belongs with the path-2 work.
+//! - `outcome=relay` -- a QUIC relay. Needs the path-1 sidecar, which is not deployed.
+//!   TODO: add the line together with the relay, not before it.
 
 use hbb_common::{
     // Imported anonymously: `Context` is also `std::task::Context`, which every poll method
@@ -510,7 +532,7 @@ async fn adopt(conn: quinn::Connection, endpoint: Endpoint, budget: u64) -> Resu
                 ));
             }
         };
-    log::info!("[QUIC] connection established with {remote}");
+    log::info!("[QUIC] outcome=direct: connection established with {remote}");
     Ok(create_framed(
         QuicBiStream {
             endpoint,
@@ -591,7 +613,7 @@ pub async fn accept(socket: Arc<UdpSocket>, timeout_ms: u64) -> ResultType<Strea
             ));
         }
     };
-    log::info!("[QUIC] connection accepted from {remote}");
+    log::info!("[QUIC] outcome=direct: connection accepted from {remote}");
     Ok(create_framed(
         QuicBiStream {
             endpoint,

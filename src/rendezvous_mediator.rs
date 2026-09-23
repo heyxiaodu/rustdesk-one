@@ -1504,10 +1504,21 @@ async fn udp_nat_listen(
                     .await;
                 }
                 Err(err) => {
+                    // Same single-line outcome record as `udp_nat_connect` on the controller,
+                    // and the mirrored reason: this side knows both why the accept failed and
+                    // that the KCP accept below is what takes over.
                     if crate::quic_stream::mode() == crate::quic_stream::Mode::Quic {
+                        log::warn!(
+                            "[QUIC] outcome=failed: no QUIC connection accepted ({err}); \
+                             transport-mode is \"quic\", so this attempt fails rather than \
+                             falling back"
+                        );
                         return Err(err);
                     }
-                    log::info!("[QUIC] {err}; falling back to KCP");
+                    log::info!(
+                        "[QUIC] outcome=legacy: no QUIC connection accepted ({err}); \
+                         falling back to KCP on the same socket"
+                    );
                 }
             }
         }
