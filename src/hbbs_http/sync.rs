@@ -289,7 +289,32 @@ fn heartbeat_url() -> String {
     format!("{}/api/heartbeat", url)
 }
 
+/// Whether `key` belongs to the local settings layer, i.e. is answered by `LocalConfig`
+/// rather than by `Config`.
+///
+/// The same rule as `is_local_setting` in `src/ipc.rs`, where `Data::Options` routes on it.
+/// It is repeated rather than shared because the original is private to that module, and a
+/// three-line duplication is cheaper than widening its API for one more caller.
+fn is_local_setting(key: &str) -> bool {
+    let key = key.replace('_', "-");
+    keys::KEYS_LOCAL_SETTINGS.iter().any(|k| *k == key)
+}
+
 fn handle_config_options(config_options: HashMap<String, String>) {
+    // A key in `KEYS_LOCAL_SETTINGS` is answered by `LocalConfig`, not by `Config`. Only the
+    // options below bypassed that: the strategy timestamp already goes to `LocalConfig`
+    // (above), while a strategy-delivered local key -- `transport-mode` is the one that
+    // matters -- was written into the server layer, where the code that reads it through
+    // `LocalConfig::get_option` never saw it. Divert those keys to the store that answers
+    // them; every other key takes exactly the path it took before.
+    for (k, v) in config_options.iter().filter(|(k, _)| is_local_setting(k)) {
+        // `LocalConfig::set_option` keeps Override above Strategy -- it refuses to write a key
+        // `OVERWRITE_LOCAL_SETTINGS` holds -- and removes the key for an empty value, so an
+        // emptied strategy value falls back to the local default. That is the same outcome the
+        // half below produces whenever `DEFAULT_LOCAL_SETTINGS` is empty, which is the normal
+        // case: it is only populated from a custom client's own settings.
+        LocalConfig::set_option((*k).to_owned(), (*v).to_owned());
+    }
     let mut options = Config::get_options();
     let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
     config_options
@@ -443,5 +468,53 @@ mod tests {
         ]
         .concat();
         assert_eq!(switch_grant_signed_msg("id1", "c1", "1700000000"), expected);
+    }
+}
+
+/// Its own module, outside the `feature = "flutter"` gate above, so these run in every build
+/// that can run tests at all.
+#[cfg(test)]
+mod strategy_layer_tests {
+    use super::*;
+
+    /// `transport-mode` is read through `LocalConfig::get_option` by `quic_stream::mode`, so a
+    /// strategy that delivers it has to land in the local store. Before this it was written to
+    /// `Config` alone and had no effect on the managed client while still being reported as
+    /// applied.
+    #[test]
+    fn a_strategy_delivered_local_key_reaches_local_config() {
+        let key = keys::OPTION_TRANSPORT_MODE;
+        let before = LocalConfig::get_option(key);
+        handle_config_options(HashMap::from([(key.to_owned(), "tcp".to_owned())]));
+        assert_eq!(LocalConfig::get_option(key), "tcp");
+        // Restored because `LocalConfig::set_option` stores to the real config file, and a test
+        // must not leave a transport setting behind.
+        LocalConfig::set_option(key.to_owned(), before);
+    }
+
+    /// A server-layer key keeps taking exactly the path it took before: `Config`, never
+    /// `LocalConfig`.
+    #[test]
+    fn a_strategy_delivered_server_key_still_reaches_only_config() {
+        let key = keys::OPTION_RELAY_SERVER;
+        let before = Config::get_option(key);
+        handle_config_options(HashMap::from([(key.to_owned(), "1.2.3.4".to_owned())]));
+        assert_eq!(Config::get_option(key), "1.2.3.4");
+        assert_eq!(
+            LocalConfig::get_option(key),
+            "",
+            "a server-layer key must not be diverted to the local store"
+        );
+        Config::set_option(key.to_owned(), before);
+    }
+
+    #[test]
+    fn the_predicate_matches_the_declared_split() {
+        assert!(is_local_setting(keys::OPTION_TRANSPORT_MODE));
+        assert!(is_local_setting(&keys::OPTION_TRANSPORT_MODE.replace('-', "_")));
+        assert!(is_local_setting(keys::OPTION_ENABLE_WEBRTC));
+        // `OPTION_RELAY_SERVER` is in `KEYS_SETTINGS`, and the two lists never overlap.
+        assert!(!is_local_setting(keys::OPTION_RELAY_SERVER));
+        assert!(!is_local_setting(""));
     }
 }
