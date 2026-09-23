@@ -1029,6 +1029,18 @@ def main():
         system2('git checkout src/ui/common.tis')
     version = get_version()
     features = ','.join(get_features(args))
+    # A QUIC release also ships the standalone relay sidecar. It is a separate binary
+    # with its own toolchain requirement (rustc >= 1.91 for iroh), so it is built
+    # here as an extra step after the main features resolve; official packages stay
+    # unchanged when --quic is off.
+    if args.quic:
+        here = os.path.dirname(os.path.abspath(__file__))
+        sidecar = os.path.normpath(os.path.join(here, '..', '..', 'servers', 'nervdesk-quic-sidecar', 'build.sh'))
+        if os.path.isfile(sidecar):
+            system2(f'bash {sidecar} --release')
+        else:
+            sys.stderr.write(f"[build.py] WARNING: sidecar build script not found at {sidecar}; "
+                             "shipping QUIC client without the relay sidecar\n")
     flutter = args.flutter
     if not flutter:
         system2('python3 res/inline-sciter.py')
