@@ -780,6 +780,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("RustDesk could not load a GStreamer component needed for screen capture ({})", "RustDesk 无法加载屏幕捕获所需的 GStreamer 组件 ({})"),
         ("Relay fallback delay in seconds", "回落到中继前的等待时间（秒）"),
         ("relay-fallback-delay-tip", "已经建立的中继连接会等待直连的 WebRTC 多久，超过这个时间就改用中继。调大可以让较慢的直连有更多机会胜出；调小则在无法直连的网络上更快回落到中继。留空表示使用默认值 2.5 秒。"),
-        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "开始语音通话前请在\"仅共享屏幕\"页面启用\"音频录制\"。")
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "开始语音通话前请在\"仅共享屏幕\"页面启用\"音频录制\"。"),
+        ("Transport", "传输方式"),
+        ("QUIC debug info", "QUIC 调试信息"),
+        ("Transport status", "传输状态"),
+        ("Direct", "直连"),
+        ("Relay", "中继"),
+        ("Legacy TCP", "传统 TCP"),
+        ("transport-mode-tip", "直连时允许使用的传输方式。自动：优先尝试 QUIC，失败则回退到传统的 KCP 路径；仅 QUIC：只使用 QUIC，失败时直接报错而不回退，便于确认会话实际使用的传输；仅 TCP：完全不用 QUIC。中继连接不受影响。"),
     ].iter().cloned().collect();
 }

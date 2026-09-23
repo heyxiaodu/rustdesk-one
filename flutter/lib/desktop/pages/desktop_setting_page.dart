@@ -1747,6 +1747,10 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
 
+  // Collapsed by default: requirement §25 keeps QUIC internals out of the
+  // ordinary UI, so the debug rows are opt-in rather than always on screen.
+  bool _showQuicDebug = false;
+
   final scrollController = ScrollController();
 
   @override
@@ -1926,6 +1930,115 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                     }
                   },
                 ),
+              // Transport selection and the QUIC debug rows sit last, so the
+              // dividers the options above already own are left untouched.
+              if (!isWeb) divider,
+              if (!isWeb) transportModeRow(context),
+              if (!isWeb) divider,
+              if (!isWeb) quicDebugInfo(context),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Auto / QUIC / TCP, for the direct UDP punch path only (a relayed session is
+  // unaffected). `transport-mode` is a local option, so this follows the
+  // language selector's get/set shape rather than the server options above —
+  // and an unset or unrecognised value is shown as Auto, exactly as
+  // `quic_stream::parse_mode` reads it, instead of as an empty selection.
+  Widget transportModeRow(BuildContext context) {
+    const modes = [kTransportModeAuto, kTransportModeQuic, kTransportModeTcp];
+    final raw =
+        bind.mainGetLocalOption(key: kOptionTransportMode).trim().toLowerCase();
+    final current = modes.contains(raw) ? raw : kTransportModeAuto;
+    final isOptFixed = isOptionFixed(kOptionTransportMode);
+    return listTile(
+      icon: Icons.compare_arrows,
+      title: 'Transport',
+      showTooltip: true,
+      tooltipMessage: 'transport-mode-tip',
+      trailing: SizedBox(
+        width: 150,
+        height: 42,
+        child: ComboBox(
+          keys: modes,
+          // QUIC and TCP are protocol names, so they stay untranslated; only
+          // "Auto" is a word.
+          values: [translate('Auto'), 'QUIC', 'TCP'],
+          initialKey: current,
+          enabled: !locked && !isOptFixed,
+          onChanged: (key) async {
+            await bind.mainSetLocalOption(key: kOptionTransportMode, value: key);
+            setState(() {});
+          },
+        ),
+      ),
+    );
+  }
+
+  // Requirement §25: read-only view of what the last (or current) session
+  // actually negotiated. The values come from the very field the connection
+  // tooltip uses (`getConnectionText`), so this cannot disagree with it; when
+  // no session has reported one yet it says so rather than guessing.
+  Widget quicDebugInfo(BuildContext context) {
+    final data = gFFI.ffiModel.cachedPeerData;
+    final typ = data.streamType.trim();
+    final hasSession = typ.isNotEmpty;
+    // `typ` is one of QUIC / TCP / UDP / WebRTC / Relay / WebSocket — the same
+    // set `getConnectionText` renders. Everything that is not QUIC and not
+    // WebRTC is the legacy path.
+    final legacy = hasSession && typ != 'QUIC' && typ != 'WebRTC';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        listTile(
+          icon: Icons.info_outline,
+          title: 'QUIC debug info',
+          onTap: () => setState(() => _showQuicDebug = !_showQuicDebug),
+          trailing: Icon(
+            _showQuicDebug ? Icons.expand_less : Icons.expand_more,
+            color: _accentColor,
+          ),
+        ),
+        Offstage(
+          offstage: !_showQuicDebug,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SubLabeledWidget(
+                context,
+                'Transport status',
+                Text(
+                  hasSession ? typ : '--',
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ).marginOnly(top: 6),
+              _SubLabeledWidget(
+                context,
+                'Direct',
+                Text(
+                  hasSession ? (data.direct ? 'Y' : 'N') : '--',
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ).marginOnly(top: 6),
+              _SubLabeledWidget(
+                context,
+                'Relay',
+                Text(
+                  hasSession ? (data.direct ? 'N' : 'Y') : '--',
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ).marginOnly(top: 6),
+              _SubLabeledWidget(
+                context,
+                'Legacy TCP',
+                Text(
+                  hasSession ? (legacy ? 'Y' : 'N') : '--',
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ).marginOnly(top: 6, bottom: 8),
             ],
           ),
         ),

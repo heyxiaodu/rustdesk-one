@@ -197,6 +197,15 @@ const String kOptionAllowInsecureTLSFallback = "allow-insecure-tls-fallback";
 const String kOptionDisableUdp = "disable-udp";
 const String kOptionEnableFlutterHttpOnRust = "enable-flutter-http-on-rust";
 
+// Which transport the direct UDP punch path may use. A *local* option
+// (`KEYS_LOCAL_SETTINGS`), read by the Rust side as `crate::quic_stream::mode()`.
+// The stored values are what `parse_mode` accepts; an unset or unrecognised
+// value means auto, so the UI must show that rather than an empty selection.
+const String kOptionTransportMode = "transport-mode";
+const String kTransportModeAuto = "auto";
+const String kTransportModeQuic = "quic";
+const String kTransportModeTcp = "tcp";
+
 // builtin options
 const String kOptionHideServerSetting = "hide-server-settings";
 const String kOptionHideProxySetting = "hide-proxy-settings";
