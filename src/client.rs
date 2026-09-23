@@ -1116,6 +1116,22 @@ impl Client {
                         // coordinates a FRESH uuid via the rendezvous server, so it works even if
                         // the raced create_relay already consumed the original uuid pairing.
                         let relay_server_rr = rr.relay_server.clone();
+                        // QUIC-sidecar relay first in the race (task-20 §4.1 second site). A
+                        // sidecar that is absent or fails loses this future to the other relays,
+                        // which is exactly the silent legacy fallback the design requires.
+                        #[cfg(feature = "quic")]
+                        if crate::quic_stream::enabled() {
+                            let peer2 = peer.clone();
+                            connect_futures.push(
+                                async move {
+                                    let stream = crate::quic_sidecar::try_relay(&peer2)
+                                        .await
+                                        .ok_or_else(|| anyhow!("sidecar relay unavailable"))?;
+                                    Ok((stream, None, crate::quic_stream::TYP, false))
+                                }
+                                .boxed(),
+                            );
+                        }
                         let fut = Self::create_relay(
                             &peer,
                             rr.uuid,
@@ -1542,6 +1558,17 @@ impl Client {
         // the relay requirement, and under ws-forced relay a direct full-ICE connection is the
         // preferred outcome, not a violation.
         if (interface.is_force_relay() && typ != "WebRTC") || conn.is_err() {
+            // QUIC-sidecar relay first, then legacy hbbr as the final fallback. A sidecar
+            // failure is silent (outcome=legacy) unless transport-mode=quic made it a hard
+            // requirement; see quic_sidecar::dial and P3-CLIENT-DESIGN §4.
+            #[cfg(feature = "quic")]
+            if crate::quic_stream::enabled() {
+                if let Some(stream) = crate::quic_sidecar::try_relay(peer_id).await {
+                    conn = Ok(stream);
+                    typ = crate::quic_stream::TYP;
+                    direct = false;
+                }
+            }
             if !relay_server.is_empty() {
                 let switch_code = interface.get_switch_code();
                 conn = Self::request_relay(
