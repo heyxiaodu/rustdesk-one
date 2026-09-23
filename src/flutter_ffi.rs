@@ -1131,6 +1131,16 @@ pub fn main_get_connect_status() -> String {
     }
 }
 
+/// Real transport outcome of the most recent established session: JSON of
+/// `ui_interface::TransportStatus` (contract in docs/QUIC-TRANSPORT-STATUS-FFI.md).
+/// The UI debug panel reads this instead of deriving Direct/Relay/Legacy itself.
+pub fn main_get_transport_status() -> SyncReturn<String> {
+    SyncReturn(
+        serde_json::to_string(&crate::ui_interface::transport_status())
+            .unwrap_or_else(|_| "".to_owned()),
+    )
+}
+
 pub fn main_check_connect_status() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     start_option_status_sync(); // avoid multi calls

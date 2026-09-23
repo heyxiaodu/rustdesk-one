@@ -55,6 +55,88 @@ pub struct LoginDeviceInfo {
     pub name: String,
 }
 
+/// The real transport outcome of the most recent established session. Recorded at the
+/// single point every connection path funnels through -- the `set_connection_type(...)`
+/// call in `io_loop.rs` -- so the UI debug panel can read the truth instead of deriving
+/// Direct/Relay/Legacy from `stream_type + direct` itself, and cannot drift from the
+/// `[QUIC] outcome=` log vocabulary (docs/P2-OBSERVABILITY.md §1).
+#[derive(Debug, Clone, Serialize)]
+pub struct TransportStatus {
+    /// Whether a session has been established at least once since process start.
+    pub has_session: bool,
+    /// Transport label the connection layer reported: "QUIC", "TCP", "UDP", "Relay",
+    /// "WebRTC", "WebRTC/IPv6", "WebSocket", ... Empty when there is no session.
+    pub typ: String,
+    /// Whether the session was direct (p2p) or relayed. Module-truthful, not UI-derived.
+    pub direct: bool,
+    /// Whether the identity handshake (SignedId/secretbox) succeeded.
+    pub secure: bool,
+    /// Outcome vocabulary of the `[QUIC] outcome=` logs: "direct" | "relay" | "legacy" |
+    /// "". P2-OBSERVABILITY §1: nat-punch/failed are not established-session states.
+    pub outcome: String,
+    /// QUIC-family path detail ("direct"/"relay"); empty for non-QUIC transports.
+    pub path: String,
+    /// Epoch milliseconds of the last record; 0 if never recorded.
+    pub updated_at: i64,
+}
+
+lazy_static::lazy_static! {
+    static ref TRANSPORT_STATUS: Mutex<TransportStatus> = Mutex::new(TransportStatus {
+        has_session: false,
+        typ: String::new(),
+        direct: false,
+        secure: false,
+        outcome: String::new(),
+        path: String::new(),
+        updated_at: 0,
+    });
+}
+
+/// Map the connection-layer facts to the `[QUIC] outcome=` vocabulary. `direct` is the
+/// module-truthful p2p/relayed flag; `typ` is the transport label. QUIC stays end-to-end
+/// QUIC whether direct or relayed, so both are expressible without any extra state; every
+/// non-QUIC transport is the legacy family. Rules are documented for the Dart consumer in
+/// docs/QUIC-TRANSPORT-STATUS-FFI.md.
+fn compute_outcome(direct: bool, typ: &str) -> (String, String) {
+    if typ.to_uppercase().starts_with("QUIC") {
+        if direct {
+            ("direct".to_owned(), "direct".to_owned())
+        } else {
+            ("relay".to_owned(), "relay".to_owned())
+        }
+    } else {
+        ("legacy".to_owned(), String::new())
+    }
+}
+
+/// Called once per established session from `io_loop.rs` right after
+/// `set_connection_type(...)`. Purely additive; transports are unaffected.
+#[inline]
+pub fn record_transport_status(direct: bool, secure: bool, typ: &str) {
+    let (outcome, path) = compute_outcome(direct, typ);
+    *TRANSPORT_STATUS.lock().unwrap() = TransportStatus {
+        has_session: true,
+        typ: typ.to_owned(),
+        direct,
+        secure,
+        outcome,
+        path,
+        updated_at: current_time_millis(),
+    };
+}
+
+/// Read the most recent established-session transport status.
+pub fn transport_status() -> TransportStatus {
+    TRANSPORT_STATUS.lock().unwrap().clone()
+}
+
+fn current_time_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 lazy_static::lazy_static! {
     static ref UI_STATUS : Arc<Mutex<UiStatus>> = Arc::new(Mutex::new(UiStatus{
         status_num: 0,
@@ -1741,7 +1823,48 @@ pub fn is_remote_modify_enabled_by_control_permissions() -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{trim_video_save_directory, validate_windows_service_video_save_directory};
+    use super::{
+        compute_outcome, record_transport_status, transport_status,
+        trim_video_save_directory, validate_windows_service_video_save_directory,
+    };
+
+    #[test]
+    fn transport_status_outcome_mapping() {
+        assert_eq!(compute_outcome(true, "QUIC"), ("direct".into(), "direct".into()));
+        assert_eq!(
+            compute_outcome(false, "QUIC"),
+            ("relay".into(), "relay".into())
+        );
+        assert_eq!(compute_outcome(true, "TCP"), ("legacy".into(), String::new()));
+        assert_eq!(compute_outcome(false, "Relay"), ("legacy".into(), String::new()));
+        assert_eq!(compute_outcome(true, "UDP"), ("legacy".into(), String::new()));
+        assert_eq!(
+            compute_outcome(false, "WebRTC"),
+            ("legacy".into(), String::new())
+        );
+        assert_eq!(
+            compute_outcome(false, "WebRTC/IPv6"),
+            ("legacy".into(), String::new())
+        );
+    }
+
+    #[test]
+    fn transport_status_initial_and_recorded() {
+        let empty = transport_status();
+        assert!(!empty.has_session);
+        assert!(empty.typ.is_empty());
+        assert_eq!(empty.outcome, "");
+        assert_eq!(empty.updated_at, 0);
+
+        record_transport_status(true, true, "QUIC");
+        let s = transport_status();
+        assert!(s.has_session);
+        assert_eq!(s.typ, "QUIC");
+        assert!(s.direct && s.secure);
+        assert_eq!(s.outcome, "direct");
+        assert_eq!(s.path, "direct");
+        assert!(s.updated_at > 0);
+    }
 
     #[test]
     fn trim_configured_video_save_directory() {

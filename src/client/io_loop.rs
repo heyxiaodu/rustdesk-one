@@ -208,6 +208,10 @@ impl<T: InvokeUiSession> Remote<T> {
                 };
                 self.handler
                     .set_connection_type(is_secured, direct, stream_type); // flutter -> connection_ready
+                // Record the real transport facts at this single funnel point so the UI
+                // debug panel can query them (main_get_transport_status) instead of deriving
+                // Direct/Relay/Legacy from stream_type+direct itself.
+                crate::ui_interface::record_transport_status(direct, is_secured, stream_type);
                 if !is_secured
                     && !crate::common::is_direct_ip_access(&self.handler.get_id())
                     && !client::confirm_insecure_connection(&self.handler, &mut self.receiver).await
