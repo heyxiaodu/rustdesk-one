@@ -144,6 +144,12 @@ pub const OPTION_HIDE_USERNAME_ON_CARD: &str = "hide-username-on-card";
 pub const OPTION_HIDE_HELP_CARDS: &str = "hide-help-cards";
 pub const OPTION_DEFAULT_CONNECT_PASSWORD: &str = "default-connect-password";
 pub const OPTION_HIDE_TRAY: &str = "hide-tray";
+/// Admin-forced tray hiding. Same effective read path as the legacy buildin
+/// `hide-tray`, kept separate so the user-facing local option can stay
+/// user-controlled. Deployments that forced it via custom.txt
+/// `buildin-settings: {"hide-tray": "Y"}` must rename the field to
+/// `force-hide-tray` (see docs/HIDE-TRAY-PORT.md §8).
+pub const OPTION_HIDE_TRAY_FORCE: &str = "force-hide-tray";
 pub const OPTION_ONE_WAY_CLIPBOARD_REDIRECTION: &str = "one-way-clipboard-redirection";
 pub const OPTION_ALLOW_LOGON_SCREEN_PASSWORD: &str = "allow-logon-screen-password";
 pub const OPTION_ALLOW_DEEP_LINK_PASSWORD: &str = "allow-deep-link-password";
@@ -277,6 +283,9 @@ pub const KEYS_LOCAL_SETTINGS: &[&str] = &[
     OPTION_SHOW_VIRTUAL_JOYSTICK,
     OPTION_ENABLE_FLUTTER_HTTP_ON_RUST,
     OPTION_ALLOW_ASK_FOR_NOTE,
+    // hide-tray is a local UI preference (same layer as theme/language); the
+    // admin-forced sibling lives in KEYS_BUILDIN_SETTINGS as force-hide-tray.
+    OPTION_HIDE_TRAY,
 ];
 // DEFAULT_SETTINGS, OVERWRITE_SETTINGS
 pub const KEYS_SETTINGS: &[&str] = &[
@@ -361,7 +370,7 @@ pub const KEYS_BUILDIN_SETTINGS: &[&str] = &[
     OPTION_HIDE_USERNAME_ON_CARD,
     OPTION_HIDE_HELP_CARDS,
     OPTION_DEFAULT_CONNECT_PASSWORD,
-    OPTION_HIDE_TRAY,
+    OPTION_HIDE_TRAY_FORCE,
     OPTION_ONE_WAY_CLIPBOARD_REDIRECTION,
     OPTION_ALLOW_LOGON_SCREEN_PASSWORD,
     OPTION_ALLOW_DEEP_LINK_PASSWORD,

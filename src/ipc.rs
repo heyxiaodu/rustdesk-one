@@ -570,6 +570,11 @@ pub enum Data {
         #[serde(default = "legacy_hot_measured")]
         hot_measured: bool,
     },
+    /// GUI/CLI -> tray: hide (true) or show (false) the tray icon at runtime.
+    /// The tray's 1s heartbeat also self-syncs the option from disk, so this is
+    /// an instant path, not the source of truth.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    HideTray(bool),
 }
 
 /// The default for a `hot_measured` that is not on the wire at all; see the field's docs.
@@ -2305,6 +2310,11 @@ mod test {
         assert!(is_local_setting("transport-mode"));
         assert!(is_local_setting("transport_mode"));
         assert!(is_local_setting("enable-webrtc"));
+        // hide-tray moved to the local layer (docs/HIDE-TRAY-PORT.md step 1):
+        // `--option hide-tray Y` must write LocalConfig, and the tray re-reads it
+        // from disk each second. Its admin-forced sibling stays buildin.
+        assert!(is_local_setting("hide-tray"));
+        assert!(!is_local_setting("force-hide-tray"));
         // Not local keys: they are answered by `Config`, and `--option` must keep writing them
         // there. `2fa`, `bot` and `stop-service` are the keys the other callers pass.
         assert!(!is_local_setting("relay-server"));
@@ -2323,6 +2333,28 @@ mod test {
                 !keys::KEYS_SETTINGS.contains(k),
                 "{k} is in both KEYS_LOCAL_SETTINGS and KEYS_SETTINGS"
             );
+        }
+    }
+
+    /// The IPC wire is adjacently tagged (`serde(tag = "t", content = "c")`, see the enum
+    /// declaration), so appending a variant does not change any existing on-the-wire byte.
+    /// An old binary that does not know `HideTray` fails to deserialize the frame and the
+    /// receiver keeps ignoring it (`Ok(None)` path, above) -- that is the historical
+    /// compatibility semantic this variant relies on, no degradation code needed.
+    #[test]
+    fn hide_tray_round_trips_with_the_adjacent_tag_wire_shape() {
+        // Real socket shape, same as the DrmCursor test below.
+        let wire = br#"{"t":"HideTray","c":true}"#;
+        let msg: Data = serde_json::from_slice(wire).expect("HideTray must deserialize");
+        match msg {
+            Data::HideTray(hide) => assert!(hide),
+            other => panic!("expected HideTray, got {:?}", other),
+        }
+        let v = serde_json::to_vec(&Data::HideTray(false)).unwrap();
+        let back: Data = serde_json::from_slice(&v).expect("HideTray must round-trip");
+        match back {
+            Data::HideTray(hide) => assert!(!hide),
+            other => panic!("expected HideTray, got {:?}", other),
         }
     }
 

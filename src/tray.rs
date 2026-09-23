@@ -9,8 +9,25 @@ use std::sync::{Arc, Mutex};
 #[cfg(windows)]
 use std::time::Duration;
 
+/// Effective hide: admin-forced (buildin, immutable) OR user local option.
+/// LocalConfig caches at process start, so long-running readers (the tray) must
+/// use the from_file variant to see another process's writes -- see `sync()`
+/// below and docs/HIDE-TRAY-PORT.md §3.
+fn hide_tray_enabled() -> bool {
+    crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY_FORCE) == "Y"
+        || hbb_common::config::LocalConfig::get_option(keys::OPTION_HIDE_TRAY) == "Y"
+}
+
+/// Like `hide_tray_enabled()` but re-reads the local option from disk on every
+/// call, so the long-lived tray converges on writes by another process
+/// (GUI/CLI/strategy) within one heartbeat tick.
+fn hide_tray_enabled_from_file() -> bool {
+    crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY_FORCE) == "Y"
+        || hbb_common::config::LocalConfig::get_option_from_file(keys::OPTION_HIDE_TRAY) == "Y"
+}
+
 pub fn start_tray() {
-    if crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY) == "Y" {
+    if hide_tray_enabled() {
         #[cfg(not(target_os = "macos"))]
         {
             return;
@@ -148,7 +165,7 @@ fn make_tray() -> hbb_common::ResultType<()> {
         if let tao::event::Event::NewEvents(tao::event::StartCause::Init) = event {
             // for fixing https://github.com/rustdesk/rustdesk/discussions/10210#discussioncomment-14600745
             // so we start tray, but not to show it
-            if crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY) == "Y" {
+            if hide_tray_enabled() {
                 return;
             }
             // We create the icon once the event loop is actually running
@@ -256,6 +273,17 @@ fn make_tray() -> hbb_common::ResultType<()> {
                         .as_mut()
                         .map(|t| t.set_tooltip(Some(tooltip(count))));
                 }
+                Data::HideTray(hide) => {
+                    // Same visibility mechanism the stop-service path already uses
+                    // (the set_visible calls above): keep the TrayIcon alive, just
+                    // hide it. The 1s heartbeat also re-delivers this at most once
+                    // per second, so a lost push converges on the next tick.
+                    _tray_icon
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .map(|t| t.set_visible(!hide));
+                }
                 _ => {}
             }
         }
@@ -266,6 +294,7 @@ fn make_tray() -> hbb_common::ResultType<()> {
 #[tokio::main(flavor = "current_thread")]
 async fn start_query_session_count(sender: std::sync::mpsc::Sender<Data>) {
     let mut last_count = 0;
+    let mut last_hide = None;
     loop {
         if let Ok(mut c) = crate::ipc::connect(1000, "").await {
             let mut timer = crate::rustdesk_interval(tokio::time::interval(Duration::from_secs(1)));
@@ -290,6 +319,13 @@ async fn start_query_session_count(sender: std::sync::mpsc::Sender<Data>) {
 
                     _ = timer.tick() => {
                         c.send(&Data::ControlledSessionCount(0)).await.ok();
+                        // Another process may have changed `hide-tray` (GUI/CLI/
+                        // strategy); re-read from disk and converge within 1s.
+                        let hide = hide_tray_enabled_from_file();
+                        if last_hide != Some(hide) {
+                            last_hide = Some(hide);
+                            sender.send(Data::HideTray(hide)).ok();
+                        }
                     }
                 }
             }
