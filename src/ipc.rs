@@ -812,6 +812,18 @@ impl Drop for CheckIfRestart {
     }
 }
 
+/// Whether `key` belongs to the local settings layer, i.e. is answered by `LocalConfig`
+/// rather than by `Config`.
+///
+/// A key lives in exactly one of the two stores -- `KEYS_LOCAL_SETTINGS` and `KEYS_SETTINGS`
+/// are disjoint -- so which store a value has to land in is a property of the key, not of the
+/// caller. Accepts the `_` spelling too, the way the custom client JSON path normalises
+/// between the two.
+fn is_local_setting(key: &str) -> bool {
+    let key = key.replace('_', "-");
+    keys::KEYS_LOCAL_SETTINGS.iter().any(|k| *k == key)
+}
+
 async fn handle(data: Data, stream: &mut Connection) {
     match data {
         Data::SystemInfo(_) => {
@@ -1018,7 +1030,17 @@ async fn handle(data: Data, stream: &mut Connection) {
         },
         Data::Options(value) => match value {
             None => {
-                let v = Config::get_options();
+                let mut v = Config::get_options();
+                // Read side of the same rule as the write arm below: a local key is answered
+                // by `LocalConfig`, which the server-layer map cannot speak for. Overlaid
+                // rather than merged wholesale so every other key keeps coming from exactly
+                // where it did.
+                for k in keys::KEYS_LOCAL_SETTINGS {
+                    let value = config::LocalConfig::get_option(k);
+                    if !value.is_empty() {
+                        v.insert((*k).to_owned(), value);
+                    }
+                }
                 allow_err!(stream.send(&Data::Options(Some(v))).await);
             }
             Some(value) => {
@@ -1027,7 +1049,21 @@ async fn handle(data: Data, stream: &mut Connection) {
                 if let Some(v) = value.get("privacy-mode-impl-key") {
                     crate::privacy_mode::switch(v);
                 }
-                Config::set_options(value);
+                // `Config` and `LocalConfig` are two stores and a key lives in exactly one of
+                // them. Writing every key through `Config::set_options` acknowledged a local
+                // key here while the code that reads it never saw it: `transport-mode` is read
+                // by `quic_stream::mode` through `LocalConfig::get_option`, so
+                // `rustdesk --option transport-mode tcp` reported success and changed nothing.
+                // Route by ownership, the rule the custom client JSON path already follows
+                // when it picks a store per `KEYS_*` list.
+                // `Iterator::partition` wants one collection type on both sides, so the
+                // server half is collected into its map afterwards.
+                let (server, local): (Vec<(String, String)>, Vec<(String, String)>) =
+                    value.into_iter().partition(|(k, _)| !is_local_setting(k));
+                for (k, v) in local {
+                    config::LocalConfig::set_option(k, v);
+                }
+                Config::set_options(server.into_iter().collect());
                 allow_err!(stream.send(&Data::Options(None)).await);
             }
         },
@@ -2258,6 +2294,36 @@ mod test {
     fn verify_ffi_enum_data_size() {
         println!("{}", std::mem::size_of::<Data>());
         assert!(std::mem::size_of::<Data>() <= 120);
+    }
+
+    /// The layer a key belongs to decides where `--option` has to write it, so the predicate
+    /// is the whole fix. A key the local layer owns must not be answered by the server layer:
+    /// `transport-mode` is read through `LocalConfig::get_option`, and writing it to `Config`
+    /// reported success while changing nothing.
+    #[test]
+    fn local_settings_keys_are_recognised_in_both_spellings() {
+        assert!(is_local_setting("transport-mode"));
+        assert!(is_local_setting("transport_mode"));
+        assert!(is_local_setting("enable-webrtc"));
+        // Not local keys: they are answered by `Config`, and `--option` must keep writing them
+        // there. `2fa`, `bot` and `stop-service` are the keys the other callers pass.
+        assert!(!is_local_setting("relay-server"));
+        assert!(!is_local_setting("stop-service"));
+        assert!(!is_local_setting("2fa"));
+        assert!(!is_local_setting("bot"));
+        assert!(!is_local_setting(""));
+    }
+
+    /// The two lists must stay disjoint: a key in both would make ownership ambiguous and the
+    /// write would land in one store while a reader looked in the other.
+    #[test]
+    fn the_local_and_server_key_lists_do_not_overlap() {
+        for k in keys::KEYS_LOCAL_SETTINGS {
+            assert!(
+                !keys::KEYS_SETTINGS.contains(k),
+                "{k} is in both KEYS_LOCAL_SETTINGS and KEYS_SETTINGS"
+            );
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
