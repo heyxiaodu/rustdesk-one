@@ -1122,11 +1122,18 @@ impl Client {
                         #[cfg(feature = "quic")]
                         if crate::quic_stream::enabled() {
                             let peer2 = peer.clone();
+                            // Resolve before the move into the future: an async-move capture
+                            // of `&key`/`&signed_id_pk` would extend their borrows across the
+                            // concurrent futures below. F1 derivation is a pure function.
+                            let endpoint_id = Self::quic_peer_pk(&signed_id_pk, &key);
                             connect_futures.push(
                                 async move {
-                                    let stream = crate::quic_sidecar::try_relay(&peer2)
-                                        .await
-                                        .ok_or_else(|| anyhow!("sidecar relay unavailable"))?;
+                                    let stream = crate::quic_sidecar::try_relay(
+                                        &peer2,
+                                        endpoint_id.as_ref(),
+                                    )
+                                    .await
+                                    .ok_or_else(|| anyhow!("sidecar relay unavailable"))?;
                                     Ok((stream, None, crate::quic_stream::TYP, false))
                                 }
                                 .boxed(),
@@ -1210,6 +1217,7 @@ impl Client {
                             signed_id_pk.clone(),
                             &key,
                             &mut conn,
+                            Self::is_quic_typ(typ),
                         )
                         .await
                         {
@@ -1248,6 +1256,7 @@ impl Client {
                                     signed_id_pk,
                                     &key,
                                     &mut relay_conn,
+                                    false,
                                 )
                                 .await?;
                                 conn = relay_conn;
@@ -1563,7 +1572,10 @@ impl Client {
             // requirement; see quic_sidecar::dial and P3-CLIENT-DESIGN §4.
             #[cfg(feature = "quic")]
             if crate::quic_stream::enabled() {
-                if let Some(stream) = crate::quic_sidecar::try_relay(peer_id).await {
+                if let Some(stream) =
+                    crate::quic_sidecar::try_relay(peer_id, Self::quic_peer_pk(&signed_id_pk, &key).as_ref())
+                        .await
+                {
                     conn = Ok(stream);
                     typ = crate::quic_stream::TYP;
                     direct = false;
@@ -1603,7 +1615,8 @@ impl Client {
             start.elapsed(),
             punch_type
         );
-        let res = Self::secure_connection(peer_id, signed_id_pk.clone(), key, &mut conn).await;
+        let res = Self::secure_connection(peer_id, signed_id_pk.clone(), key, &mut conn, Self::is_quic_typ(typ))
+            .await;
         let pk: Option<Vec<u8>> = match res {
             Ok(pk) => pk,
             Err(e) if typ == "WebRTC" && !relay_server.is_empty() => {
@@ -1625,7 +1638,7 @@ impl Client {
                 .await
                 {
                     Ok(mut relay_conn) => {
-                        match Self::secure_connection(peer_id, signed_id_pk, key, &mut relay_conn)
+                        match Self::secure_connection(peer_id, signed_id_pk, key, &mut relay_conn, false)
                             .await
                         {
                             Ok(pk) => {
@@ -1675,11 +1688,19 @@ impl Client {
     }
 
     /// Establish secure connection with the server.
+    ///
+    /// `is_quic` marks a QUIC-carried path (in-process quinn or sidecar relay). Unlike
+    /// TCP/KCP/relay, a QUIC session is already fully TLS-encrypted, so degrading to a
+    /// non-secure fallback on identity failure would hand a MITM-measured session to a
+    /// peer that merely answers QUIC as the endpoint. Identity failure is therefore
+    /// fail-closed on QUIC (docs/BINDING-PROOF-DESIGN.md §3.2); WebRTC keeps its own
+    /// fail-closed binding, every other transport keeps its legacy downgrade.
     async fn secure_connection(
         peer_id: &str,
         signed_id_pk: Vec<u8>,
         key: &str,
         conn: &mut Stream,
+        is_quic: bool,
     ) -> ResultType<Option<Vec<u8>>> {
         let rs_pk = get_rs_pk(if key.is_empty() {
             config::RS_PUB_KEY
@@ -1754,6 +1775,8 @@ impl Client {
                             } else {
                                 if is_webrtc {
                                     bail!("WebRTC handshake id mismatch (possible MITM)");
+                                } else if is_quic {
+                                    bail!("QUIC handshake id mismatch (possible MITM)");
                                 }
                                 log::error!("Handshake failed: sign failure");
                                 conn.send(&Message::new()).await?;
@@ -1761,6 +1784,8 @@ impl Client {
                         } else {
                             if is_webrtc {
                                 bail!("WebRTC peer identity could not be verified (refusing unbound channel)");
+                            } else if is_quic {
+                                bail!("QUIC peer identity could not be verified (refusing unbound channel)");
                             }
                             // fall back to non-secure connection in case pk mismatch
                             log::info!("pk mismatch, fall back to non-secure");
@@ -1771,6 +1796,8 @@ impl Client {
                     } else {
                         if is_webrtc {
                             bail!("WebRTC handshake received an unexpected message type");
+                        } else if is_quic {
+                            bail!("QUIC handshake received an unexpected message type");
                         }
                         log::error!("Handshake failed: invalid message type");
                         conn.send(&Message::new()).await?;
@@ -1778,6 +1805,8 @@ impl Client {
                 } else {
                     if is_webrtc {
                         bail!("WebRTC handshake received a malformed message");
+                    } else if is_quic {
+                        bail!("QUIC handshake received a malformed message");
                     }
                     log::error!("Handshake failed: invalid message format");
                     conn.send(&Message::new()).await?;
@@ -1788,6 +1817,28 @@ impl Client {
             }
         }
         Ok(option_pk)
+    }
+
+    /// Whether a transport label names the QUIC family (in-process quinn or the sidecar
+    /// relay both report "QUIC"). With the quic feature off no path can produce this
+    /// label, so the check is feature-agnostic and always false there.
+    #[inline]
+    fn is_quic_typ(typ: &str) -> bool {
+        typ == "QUIC"
+    }
+
+    /// Peel the peer's bare device ed25519 public key out of the rendezvous-verified
+    /// `PunchHoleResponse.pk` (an hbbs-signed IdPk blob), the F1 derivation input
+    /// (docs/RENDEZVOUS-DISCOVERY.md §3 step 3).
+    #[cfg(feature = "quic")]
+    fn quic_peer_pk(signed_id_pk: &[u8], key: &str) -> Option<[u8; 32]> {
+        let rs_pk = crate::common::get_rs_pk(if key.is_empty() {
+            config::RS_PUB_KEY
+        } else {
+            key
+        })?;
+        let (_, pk) = crate::common::decode_id_pk(signed_id_pk, &rs_pk).ok()?;
+        Some(pk)
     }
 
     /// Request a relay connection to the server.

@@ -7159,6 +7159,7 @@ dependencies = [
  "remote_printer",
  "repng",
  "reqwest",
+ "ring",
  "ringbuf",
  "rubato",
  "rust-pulsectl",

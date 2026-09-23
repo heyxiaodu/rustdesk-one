@@ -380,35 +380,96 @@ where
     }
 }
 
-/// MVP entry point used by the connect race: try the sidecar QUIC relay to `peer_id`,
-/// returning the session as a `Stream` on success, or `None` to fall back to the legacy
-/// path (hbbr relay). Never fails the caller: any error is logged and mapped to `None`.
+/// F1 deterministic endpoint derivation (docs/RENDEZVOUS-DISCOVERY.md §1.1):
+/// `EndpointId = ed25519_public(HKDF-SHA256(ikm = pk, salt = "nervdesk-quic-sidecar",
+/// info = "nervdesk/quic-sidecar/endpoint/v1", okm = 32))`. A pure function over the
+/// peer's device ed25519 public key: the caller and the responder's sidecar derive the
+/// same EndpointId from the same bytes, with no server cooperation.
 ///
-/// The peer's EndpointId is taken from the local option `sidecar-peer-endpoint-id`
-/// (hex, 64 chars). This is the manual-pairing MVP form (P3-CLIENT-DESIGN §5.3); the
-/// second step replaces it with rendezvous-carried binding.
-pub async fn try_relay(peer_id: &str) -> Option<Stream> {
-    let raw = hbb_common::config::LocalConfig::get_option("sidecar-peer-endpoint-id");
+/// The ed25519 public derivation uses `from_seed_unchecked`: the seed is our own KDF
+/// output, so the endpoint public key is simply computed from it. (`from_seed_and_public_key`
+/// would require pub(seed) == pk, which never holds -- the endpoint is a *derived* identity,
+/// not the device key itself.) KDF parameter drift is caught by the golden-vector test below.
+pub fn derive_endpoint_id(pk: &[u8; 32]) -> ResultType<[u8; 32]> {
+    use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
+    use ring::signature::{Ed25519KeyPair, KeyPair as _}; // `public_key()` from the trait
+    const SALT: &[u8] = b"nervdesk-quic-sidecar";
+    const INFO: &[&[u8]] = &[b"nervdesk/quic-sidecar/endpoint/v1"];
+    // ring's KeyType is implemented for its own Algorithm only; a length struct is the
+    // pattern its own hkdf tests use for a fixed-length Okm.
+    struct OkmLen(usize);
+    impl KeyType for OkmLen {
+        fn len(&self) -> usize {
+            self.0
+        }
+    }
+
+    let prk = Salt::new(HKDF_SHA256, SALT).extract(pk);
+    let mut seed = [0u8; 32];
+    prk.expand(INFO, OkmLen(32))
+        .map_err(|e| anyhow!("HKDF expand failed: {e}"))?
+        .fill(&mut seed)
+        .map_err(|e| anyhow!("HKDF output fill failed: {e}"))?;
+    let pair = Ed25519KeyPair::from_seed_unchecked(&seed)
+        .map_err(|e| anyhow!("ed25519 pair from derived seed failed: {e}"))?;
+    let endpoint_id: [u8; 32] = pair
+        .public_key()
+        .as_ref()
+        .try_into()
+        .map_err(|_| anyhow!("ed25519 public key is not 32 bytes"))?;
+    Ok(endpoint_id)
+}
+
+/// Parse the manual-pairing form of an EndpointId: hex, 64 chars (fallback path D,
+/// docs/RENDEZVOUS-DISCOVERY.md §6).
+fn parse_manual_endpoint_id(raw: &str) -> Option<[u8; 32]> {
     let raw = raw.trim();
-    let endpoint_id = match hex::decode(raw) {
+    match hex::decode(raw) {
         Ok(b) if b.len() == 32 => {
             let mut id = [0u8; 32];
             id.copy_from_slice(&b);
-            id
+            Some(id)
         }
         Ok(b) => {
             log::warn!(
                 "[QUIC] sidecar-peer-endpoint-id is {} bytes, expected 32; skipping sidecar relay",
                 b.len()
             );
-            return None;
+            None
         }
         Err(e) => {
             log::warn!(
                 "[QUIC] sidecar-peer-endpoint-id not a valid hex peer id: {e}; skipping"
             );
-            return None;
+            None
         }
+    }
+}
+
+/// Resolve the peer EndpointId, F1 first: deterministically derived from the peer's
+/// device ed25519 public key (RENDEZVOUS-DISCOVERY §1), else the manual-pairing option
+/// (fallback D). `None` sends the caller down the legacy path.
+fn resolve_endpoint_id(peer_pk: Option<&[u8; 32]>, manual_raw: &str) -> Option<[u8; 32]> {
+    if let Some(pk) = peer_pk {
+        match derive_endpoint_id(pk) {
+            Ok(e) => return Some(e),
+            Err(e) => log::warn!("[QUIC] F1 endpoint derivation failed ({e}); trying manual pairing"),
+        }
+    }
+    parse_manual_endpoint_id(manual_raw)
+}
+
+/// MVP entry point used by the connect race: try the sidecar QUIC relay to `peer_id`,
+/// returning the session as a `Stream` on success, or `None` to fall back to the legacy
+/// path (hbbr relay). Never fails the caller: any error is logged and mapped to `None`.
+///
+/// The peer EndpointId is resolved F1-first from the peer's device key (`peer_pk`,
+/// extracted from the rendezvous-verified `PunchHoleResponse.pk`), falling back to the
+/// manual-pairing option `sidecar-peer-endpoint-id` (P3-CLIENT-DESIGN §5.3, degraded).
+pub async fn try_relay(peer_id: &str, peer_pk: Option<&[u8; 32]>) -> Option<Stream> {
+    let manual_raw = hbb_common::config::LocalConfig::get_option("sidecar-peer-endpoint-id");
+    let Some(endpoint_id) = resolve_endpoint_id(peer_pk, &manual_raw) else {
+        return None;
     };
     match run_relay(peer_id, endpoint_id).await {
         Ok(stream) => Some(stream),
@@ -484,5 +545,66 @@ mod tests {
             }
             other => panic!("expected Accept, got {other}"),
         }
+    }
+
+    /// Fixed pk -> fixed seed -> fixed EndpointId. Guards the KDF parameters (salt/info/
+    /// version, docs/RENDEZVOUS-DISCOVERY.md §1.1): any drift changes this vector and
+    /// every F1 pair would stop matching. Established once from the derivation itself.
+    #[test]
+    fn derive_endpoint_id_golden_vector() {
+        let pk: [u8; 32] = [
+            0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+            0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+            0x42, 0x42, 0x42, 0x42,
+        ];
+        // GOLDEN: first derived from this exact pk (HKDF-SHA256, salt "nervdesk-quic-sidecar",
+        // info "nervdesk/quic-sidecar/endpoint/v1"); freezes the KDF parameters.
+        let expected: [u8; 32] = [
+            167, 145, 24, 83, 54, 229, 103, 62, 50, 97, 101, 185, 135, 9, 27, 51, 193, 172, 59,
+            43, 222, 241, 70, 29, 157, 113, 115, 227, 237, 26, 206, 27,
+        ];
+        let got = derive_endpoint_id(&pk).expect("derives");
+        assert_eq!(got, expected, "KDF parameters drifted: golden vector mismatch");
+    }
+
+    /// Deterministic: the same pk derives the same endpoint every call, and distinct pks
+    /// derive distinct endpoints (the endpoint is a fresh derived identity, never equal to
+    /// the device key it is derived from).
+    #[test]
+    fn derive_endpoint_id_is_deterministic_and_distinct() {
+        let pk = [0x07u8; 32];
+        let a = derive_endpoint_id(&pk).expect("derives");
+        let b = derive_endpoint_id(&pk).expect("derives");
+        assert_eq!(a, b);
+        let other = derive_endpoint_id(&[0x08u8; 32]).expect("derives");
+        assert_ne!(a, other);
+        assert_ne!(a, pk, "endpoint must not equal the device key");
+    }
+
+    #[test]
+    fn parse_manual_endpoint_id_accepts_64_hex_rejects_rest() {
+        let id = [0x11u8; 32];
+        let hexed: String = id.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(parse_manual_endpoint_id(&hexed), Some(id));
+        assert_eq!(parse_manual_endpoint_id(""), None);
+        assert_eq!(parse_manual_endpoint_id("zz"), None);
+        assert_eq!(parse_manual_endpoint_id(&hexed[..62]), None);
+    }
+
+    /// F1 wins when the peer pk is available; manual pairing covers pk-less peers; both
+    /// missing sends the caller down the legacy path.
+    #[test]
+    fn resolve_endpoint_id_f1_first_then_manual() {
+        let pk = [0x2Au8; 32];
+        let from_f1 = derive_endpoint_id(&pk).unwrap();
+        assert_eq!(resolve_endpoint_id(Some(&pk), ""), Some(from_f1));
+        assert_eq!(resolve_endpoint_id(None, ""), None);
+
+        let manual = [0x5Au8; 32];
+        let hexed: String = manual.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(resolve_endpoint_id(None, &hexed), Some(manual));
+        // F1 still wins over manual when both are present.
+        assert_eq!(resolve_endpoint_id(Some(&pk), &hexed), Some(from_f1));
+        assert_eq!(resolve_endpoint_id(None, "garbage"), None);
     }
 }
