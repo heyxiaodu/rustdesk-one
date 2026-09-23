@@ -130,6 +130,32 @@ pub fn ensure_sidecar() -> ResultType<()> {
     Ok(())
 }
 
+/// Make sure a live sidecar of ours is listening, self-healing a crash:
+/// a socket file without a listener behind it is stale (killed -9 leaves one
+/// behind) and would otherwise wedge `ensure_sidecar`'s exists() early-return
+/// for good. Probe first; only reclaim when nothing answers.
+pub async fn ensure_sidecar_online() -> ResultType<()> {
+    if control_socket_path().exists() {
+        if let Ok(conn) = connect_control().await {
+            drop(conn);
+            return Ok(());
+        }
+        log::info!("[QUIC] stale sidecar socket (no listener); removing and respawning");
+        let _ = std::fs::remove_file(control_socket_path());
+    }
+    ensure_sidecar()?;
+    // The freshly spawned sidecar needs a moment to bind its listener. Retry
+    // the probe briefly instead of letting the caller race it.
+    for _ in 0..3 {
+        if let Ok(conn) = connect_control().await {
+            drop(conn);
+            return Ok(());
+        }
+        hbb_common::tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    Err(anyhow!("sidecar did not come up on {}", control_socket_path().display()))
+}
+
 /// Per-uid IPC socket path for the sidecar. Same shape as the app's own IPC
 /// (`Config::ipc_path`), with its own postfix so it never collides.
 fn control_socket_path() -> PathBuf {
@@ -295,7 +321,7 @@ pub async fn try_relay(peer_id: &str) -> Option<Stream> {
 }
 
 async fn run_relay(peer_id: &str, endpoint_id: [u8; 32]) -> ResultType<Stream> {
-    ensure_sidecar()?;
+    ensure_sidecar_online().await?;
     // The relay URL is already RustDesk's configured rendezvous/relay host; the sidecar
     // speaks to the iroh relay (path-1) which today fronts `iroh.nervcode.eu.org`. The
     // sidecar reads its own relay config; here we only make sure it is online.
