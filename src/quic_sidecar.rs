@@ -281,6 +281,105 @@ pub fn available() -> bool {
     sidecar_path().is_some()
 }
 
+/// An inbound-session notice the sidecar pushed to this responder (P3-2K).
+/// Mirrors the wire `Control::Incoming`; see docs/P3-CLIENT-DESIGN.md §3.2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncomingSession {
+    pub remote_endpoint_id: [u8; 32],
+    pub path: Option<String>,
+}
+
+/// Parse one control line into an `IncomingSession`. Non-`Incoming` controls
+/// yield `None`: they are not expected on the subscribe connection, but the
+/// server may send them and they must not derail the long-running loop.
+fn parse_incoming_line(line: &str) -> Option<IncomingSession> {
+    let msg: Control = serde_json::from_str(line).ok()?;
+    match msg {
+        Control::Incoming {
+            remote_endpoint_id,
+            path,
+        } => Some(IncomingSession {
+            remote_endpoint_id,
+            path,
+        }),
+        _ => None,
+    }
+}
+
+/// The `Accept` reply line the serve-side notify loop waits for after pushing an
+/// `Incoming` (advisory, bounded by its own timeout; docs/P3-MVP.md §6.3->task-38).
+fn accept_reply_line(decision: bool, reason: &str) -> ResultType<String> {
+    serde_json::to_string(&Control::Accept {
+        decision,
+        reason: Some(reason.to_owned()),
+    })
+    .context("serialize Accept reply")
+}
+
+/// Read one LF-terminated JSON line. The subscribe connection is long-lived and
+/// the server never closes it on its own, so the `read_to_end` that
+/// `control_roundtrip` relies on cannot be used here.
+async fn read_control_line(conn: &mut parity_tokio_ipc::Connection) -> ResultType<String> {
+    use hbb_common::tokio::io::AsyncReadExt;
+    let mut line = String::new();
+    let mut buf = [0u8; 1];
+    loop {
+        let n = conn.read(&mut buf).await?;
+        if n == 0 {
+            return Err(anyhow!("sidecar closed the subscribe connection"));
+        }
+        if buf[0] == b'\n' {
+            break;
+        }
+        line.push(buf[0] as char);
+    }
+    Ok(line)
+}
+
+/// Keep a long-lived subscription to the sidecar's inbound-session notices:
+/// handshake with the subscribe marker (`Accept{true,"subscribe"}`, the P3-2J
+/// wire), then read `Incoming` lines forever, hand each to `on_incoming` (its
+/// return value becomes the advisory `Accept` decision) and reply so the
+/// serve-side notify loop never waits out its reply timeout.
+///
+/// Long-running by design; a connection error returns and the caller decides
+/// whether to resubscribe. The responder wiring point that should spawn this
+/// task and then open the parked data connection is a TODO in `client.rs` (see
+/// docs/P3-MVP.md §6.3); with the manual-pairing MVP the responder is reached
+/// through the Dial path instead, so this subscription is not yet driven.
+pub async fn subscribe_incoming<F>(mut on_incoming: F) -> ResultType<()>
+where
+    F: FnMut(IncomingSession) -> bool,
+{
+    use hbb_common::tokio::io::AsyncWriteExt;
+    let mut conn = connect_control().await?;
+    let handshake = Control::Accept {
+        decision: true,
+        reason: Some("subscribe".to_owned()),
+    };
+    let line = serde_json::to_string(&handshake).context("serialize subscribe handshake")?;
+    conn.write_all(line.as_bytes()).await?;
+    conn.write_all(b"\n").await?;
+    conn.flush().await?;
+    loop {
+        let line = read_control_line(&mut conn).await?;
+        let Some(session) = parse_incoming_line(&line) else {
+            log::debug!("[QUIC] non-Incoming control on subscribe connection");
+            continue;
+        };
+        log::info!(
+            "[QUIC] inbound sidecar session from {}.. (path={})",
+            hex::encode(&session.remote_endpoint_id[..4]),
+            session.path.as_deref().unwrap_or("-")
+        );
+        let decision = on_incoming(session);
+        let reply = accept_reply_line(decision, if decision { "accept" } else { "reject" })?;
+        conn.write_all(reply.as_bytes()).await?;
+        conn.write_all(b"\n").await?;
+        conn.flush().await?;
+    }
+}
+
 /// MVP entry point used by the connect race: try the sidecar QUIC relay to `peer_id`,
 /// returning the session as a `Stream` on success, or `None` to fall back to the legacy
 /// path (hbbr relay). Never fails the caller: any error is logged and mapped to `None`.
@@ -330,4 +429,60 @@ async fn run_relay(peer_id: &str, endpoint_id: [u8; 32]) -> ResultType<Stream> {
     let addr = hbb_common::config::Config::get_any_listen_addr(false);
     log::info!("[QUIC] sidecar relay session wrapping IPC stream for peer {peer_id}");
     Ok(Stream::Tcp(hbb_common::tcp::FramedStream::from(conn, addr)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctl(msg: &Control) -> String {
+        serde_json::to_string(msg).expect("control serializes")
+    }
+
+    #[test]
+    fn parse_incoming_line_extracts_endpoint() {
+        let mut id = [0u8; 32];
+        id[0] = 1;
+        id[31] = 2;
+        // Exact wire shape the serve notify loop writes (serde_json on [u8; 32]):
+        // {"Incoming":{"remote_endpoint_id":[...],"path":"relay"}}
+        let line = ctl(&Control::Incoming {
+            remote_endpoint_id: id,
+            path: Some("relay".to_owned()),
+        });
+        let parsed = parse_incoming_line(&line).expect("Incoming line must parse");
+        assert_eq!(parsed.remote_endpoint_id, id);
+        assert_eq!(parsed.path.as_deref(), Some("relay"));
+    }
+
+    #[test]
+    fn parse_incoming_line_ignores_other_controls() {
+        let line = ctl(&Control::DialResult {
+            ok: true,
+            reason: None,
+            path: Some("relay".to_owned()),
+        });
+        assert!(parse_incoming_line(&line).is_none());
+        assert!(parse_incoming_line("not json at all").is_none());
+    }
+
+    #[test]
+    fn accept_reply_line_round_trips() {
+        let line = accept_reply_line(true, "accept").expect("Accept serializes");
+        match serde_json::from_str::<Control>(&line).expect("Accept deserializes") {
+            Control::Accept { decision, reason } => {
+                assert!(decision);
+                assert_eq!(reason.as_deref(), Some("accept"));
+            }
+            other => panic!("expected Accept, got {other}"),
+        }
+        let line = accept_reply_line(false, "reject").expect("Accept serializes");
+        match serde_json::from_str::<Control>(&line).expect("Accept deserializes") {
+            Control::Accept { decision, reason } => {
+                assert!(!decision);
+                assert_eq!(reason.as_deref(), Some("reject"));
+            }
+            other => panic!("expected Accept, got {other}"),
+        }
+    }
 }
