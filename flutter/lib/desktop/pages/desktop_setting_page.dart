@@ -1930,10 +1930,13 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                     }
                   },
                 ),
-              // Transport selection and the QUIC debug rows sit last, so the
-              // dividers the options above already own are left untouched.
+              // Transport selection, the hide-tray switch and the QUIC debug
+              // rows sit last, so the dividers the options above already own
+              // are left untouched.
               if (!isWeb) divider,
               if (!isWeb) transportModeRow(context),
+              if (!isWeb) divider,
+              if (!isWeb) hideTraySwitch(context),
               if (!isWeb) divider,
               if (!isWeb) quicDebugInfo(context),
             ],
@@ -1976,6 +1979,50 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         ),
       ),
     );
+  }
+
+  // Hide-tray, the mirror of the allow-hide-cm switch in the security tab:
+  // the same security precondition (password approve mode + permanent
+  // password) guards it, but it is a *local* option, so it follows
+  // transportModeRow's get/set shape rather than the server options above.
+  Widget hideTraySwitch(BuildContext context) {
+    return ChangeNotifierProvider.value(
+        value: gFFI.serverModel,
+        child: Consumer<ServerModel>(builder: (context, model, child) {
+          final securityOk = model.approveMode == 'password' &&
+              model.verificationMethod == kUsePermanentPassword;
+          final raw =
+              bind.mainGetLocalOption(key: kOptionHideTray).trim().toLowerCase();
+          final hideTray = raw == 'Y';
+          final isOptFixed = isOptionFixed(kOptionHideTray);
+          final onable = securityOk && !locked && !isOptFixed;
+          void onChanged(bool? b) {
+            if (b != null) {
+              bind.mainSetLocalOption(
+                  key: kOptionHideTray, value: bool2option(kOptionHideTray, b));
+              setState(() {});
+            }
+          }
+
+          return Tooltip(
+              message: securityOk ? "" : translate('hide-tray-tip'),
+              child: GestureDetector(
+                onTap: onable ? () => onChanged(!hideTray) : null,
+                child: Row(
+                  children: [
+                    Checkbox(value: hideTray, onChanged: onable ? onChanged : null)
+                        .marginOnly(right: 5),
+                    Expanded(
+                      child: Text(
+                        translate('Hide tray icon'),
+                        style: TextStyle(
+                            color: disabledTextColor(context, onable)),
+                      ),
+                    ),
+                  ],
+                ),
+              ));
+        }));
   }
 
   // Requirement §25: read-only view of what the last (or current) session

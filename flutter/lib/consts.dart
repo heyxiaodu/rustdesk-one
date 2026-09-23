@@ -206,6 +206,11 @@ const String kTransportModeAuto = "auto";
 const String kTransportModeQuic = "quic";
 const String kTransportModeTcp = "tcp";
 
+// Hide-tray: a *local* option (`KEYS_LOCAL_SETTINGS`), read on the Rust side
+// by `crate::tray::hide_tray_enabled()`. Stored values are "Y" (hide) or "N";
+// an unset value means shown, so the UI must not treat it as hidden.
+const String kOptionHideTray = "hide-tray";
+
 // builtin options
 const String kOptionHideServerSetting = "hide-server-settings";
 const String kOptionHideProxySetting = "hide-proxy-settings";

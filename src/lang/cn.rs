@@ -788,5 +788,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Relay", "中继"),
         ("Legacy TCP", "传统 TCP"),
         ("transport-mode-tip", "直连时允许使用的传输方式。自动：优先尝试 QUIC，失败则回退到传统的 KCP 路径；仅 QUIC：只使用 QUIC，失败时直接报错而不回退，便于确认会话实际使用的传输；仅 TCP：完全不用 QUIC。中继连接不受影响。"),
+        ("Hide tray icon", "隐藏托盘图标"),
+        ("hide-tray-tip", "只有在使用固定密码认证时才允许隐藏托盘图标"),
     ].iter().cloned().collect();
 }
