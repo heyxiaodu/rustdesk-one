@@ -860,6 +860,10 @@ class RustdeskImpl {
     throw UnimplementedError("mainCheckConnectStatus");
   }
 
+  String mainGetTransportStatus({dynamic hint}) {
+    throw UnimplementedError("mainGetTransportStatus");
+  }
+
   Future<bool> mainIsUsingPublicServer({dynamic hint}) {
     return Future(() =>
         js.context.callMethod('getByName', ["is_using_public_server"]) ==

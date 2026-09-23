@@ -2026,17 +2026,30 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   // Requirement §25: read-only view of what the last (or current) session
-  // actually negotiated. The values come from the very field the connection
-  // tooltip uses (`getConnectionText`), so this cannot disagree with it; when
-  // no session has reported one yet it says so rather than guessing.
+  // actually negotiated. The values come from the Rust-side transport-status
+  // query (contract docs/QUIC-TRANSPORT-STATUS-FFI.md), recorded once per
+  // established session at the single connection funnel — not derived from
+  // `streamType` here, so a relayed QUIC session cannot be mistaken for a
+  // direct one. When no session was ever recorded it says so rather than
+  // guessing.
   Widget quicDebugInfo(BuildContext context) {
-    final data = gFFI.ffiModel.cachedPeerData;
-    final typ = data.streamType.trim();
-    final hasSession = typ.isNotEmpty;
-    // `typ` is one of QUIC / TCP / UDP / WebRTC / Relay / WebSocket — the same
-    // set `getConnectionText` renders. Everything that is not QUIC and not
-    // WebRTC is the legacy path.
-    final legacy = hasSession && typ != 'QUIC' && typ != 'WebRTC';
+    final map = _readTransportStatus();
+    final hasSession = map?['has_session'] == true;
+    final typ = (map?['typ'] as String? ?? '').trim();
+    final direct = map?['direct'] == true;
+    final outcome = (map?['outcome'] as String? ?? '');
+    final quic = typ.toUpperCase().startsWith('QUIC');
+    // Outcome vocabulary (contract §3): a QUIC session is direct or relayed
+    // (only QUIC fills `path`); every other family is `legacy`.
+    String statusText = '--';
+    if (hasSession) {
+      if (quic) {
+        statusText = outcome == 'relay' ? 'QUIC Relay' : 'QUIC Direct';
+      } else if (typ.isNotEmpty) {
+        statusText = typ;
+      }
+    }
+    final legacy = hasSession && outcome == 'legacy';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2058,7 +2071,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 context,
                 'Transport status',
                 Text(
-                  hasSession ? typ : '--',
+                  statusText,
                   style: TextStyle(fontSize: _kContentFontSize),
                 ),
               ).marginOnly(top: 6),
@@ -2066,7 +2079,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 context,
                 'Direct',
                 Text(
-                  hasSession ? (data.direct ? 'Y' : 'N') : '--',
+                  hasSession ? (direct ? 'Y' : 'N') : '--',
                   style: TextStyle(fontSize: _kContentFontSize),
                 ),
               ).marginOnly(top: 6),
@@ -2074,7 +2087,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 context,
                 'Relay',
                 Text(
-                  hasSession ? (data.direct ? 'N' : 'Y') : '--',
+                  hasSession ? (direct ? 'N' : 'Y') : '--',
                   style: TextStyle(fontSize: _kContentFontSize),
                 ),
               ).marginOnly(top: 6),
@@ -2082,7 +2095,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 context,
                 'Legacy TCP',
                 Text(
-                  hasSession ? (legacy ? 'Y' : 'N') : '--',
+                  legacy ? 'Y' : hasSession ? 'N' : '--',
                   style: TextStyle(fontSize: _kContentFontSize),
                 ),
               ).marginOnly(top: 6, bottom: 8),
@@ -2091,6 +2104,24 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         ),
       ],
     );
+  }
+
+  // Read the Rust-side transport status. An empty or unparseable answer
+  // renders as "no session yet" instead of erroring.
+  Map<String, dynamic>? _readTransportStatus() {
+    String raw;
+    try {
+      raw = bind.mainGetTransportStatus();
+    } catch (_) {
+      return null;
+    }
+    if (raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
