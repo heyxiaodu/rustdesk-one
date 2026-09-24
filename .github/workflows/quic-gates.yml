@@ -57,7 +57,8 @@ jobs:
             libasound2-dev libpulse-dev libva-dev libvdpau-dev \
             libgtk-3-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxdo-dev libxfixes-dev libunwind-dev pkg-config \
-            libvpx-dev libaom-dev libyuv-dev libopus-dev
+            libvpx-dev libaom-dev libyuv-dev libopus-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       # scrap/link_vcpkg route: any VCPKG_ROOT satisfies the build.rs branch, so a
       # shim pointing at the system /usr/include + /usr/lib is enough (the route
