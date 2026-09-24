@@ -142,8 +142,16 @@ def make_parser():
     parser.add_argument(
         '--quic',
         action='store_true',
-        help='Enable feature quic (QUIC transport). Off by default, so the official packages '
-             'are unchanged; Windows x64 and Linux x64 are the release targets it is wired for.'
+        help='Enable feature quic (QUIC transport). ON BY DEFAULT after the P3-2T product '
+             'decision (2026-09-23): release packages are QUIC-first, and an unset '
+             'transport-mode already means Auto = try QUIC then fall back to KCP. Kept for '
+             'compatibility with release chains that pass it explicitly.'
+    )
+    parser.add_argument(
+        '--no-quic',
+        action='store_true',
+        help='Disable feature quic (QUIC transport). Restores byte-for-byte '
+             'official-equivalent packages: no quic feature compiled, no sidecar build/ship.'
     )
     parser.add_argument(
         '--drm',
@@ -328,7 +336,9 @@ def get_features(args):
         features.append('flutter')
     if args.unix_file_copy_paste:
         features.append('unix-file-copy-paste')
-    if args.quic:
+    if not args.no_quic:
+        # QUIC is default-ON since the P3-2T product decision; --no-quic restores the
+        # official feature set byte-for-byte (verified by the 32-combo equivalence harness).
         features.append('quic')
     if args.drm:
         # Say so rather than quietly handing back a stock build: the backend is Linux-only, so on
@@ -359,6 +369,33 @@ def get_features(args):
             features.append('screencapturekit')
     print("features:", features)
     return features
+
+
+# QUIC sidecar shipping (P3-2T). The relay sidecar is a separate binary (iroh, rustc >= 1.91),
+# built by servers/nervdesk-quic-sidecar/build.sh into that repo's target/release. It must ride
+# along in the release so the client's sidecar_path() (src/quic_sidecar.rs) finds it next to the
+# exe / in the resources dir. Set in main() to the same condition as the feature list.
+SHIP_SIDECAR = False
+
+
+def ship_sidecar(here):
+    """Copy the freshly built sidecar next to the release binary (sidecar_path() "same dir"
+    case). Asserts the artifact instead of assuming it; a missing binary is a loud warning,
+    because a QUIC build without the sidecar silently degrades to legacy relay at runtime.
+    On Windows this normally never runs (the build hook needs bash); if a pre-staged .exe
+    exists anyway it is still shipped."""
+    sidecar = os.path.normpath(os.path.join(here, '..', '..', 'servers', 'nervdesk-quic-sidecar',
+                                            'target', 'release',
+                                            'nervdesk-quic-sidecar' + ('.exe' if windows else '')))
+    dst_dir = os.path.join(here, 'target', 'release')
+    if not os.path.isfile(sidecar):
+        sys.stderr.write(f"[build.py] WARNING: sidecar binary not found at {sidecar}; "
+                         "QUIC client will run without the relay sidecar (silent legacy fallback)\n")
+        return
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.copy2(sidecar, os.path.join(dst_dir, os.path.basename(sidecar)))
+    os.chmod(os.path.join(dst_dir, os.path.basename(sidecar)), 0o755)
+    print(f"[build.py] sidecar shipped to {dst_dir} ({os.path.getsize(sidecar)} bytes)")
 
 
 def generate_control_file(version):
@@ -758,6 +795,9 @@ def build_flutter_deb(version, features):
     system2('rm tmpdeb/usr/bin/rustdesk || true')
     system2(
         f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/rustdesk/')
+    if SHIP_SIDECAR and os.path.isfile('../target/release/nervdesk-quic-sidecar'):
+        # sidecar next to the installed executable (sidecar_path() "same dir" case)
+        system2('cp ../target/release/nervdesk-quic-sidecar tmpdeb/usr/share/rustdesk/')
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
     system2(
@@ -866,6 +906,9 @@ def build_deb_from_folder(version, binary_folder, want_drm=False):
     system2('rm tmpdeb/usr/bin/rustdesk || true')
     system2(
         f'cp -r ../{binary_folder}/* tmpdeb/usr/share/rustdesk/')
+    if SHIP_SIDECAR and os.path.isfile('../target/release/nervdesk-quic-sidecar'):
+        # sidecar next to the installed executable (sidecar_path() "same dir" case)
+        system2('cp ../target/release/nervdesk-quic-sidecar tmpdeb/usr/share/rustdesk/')
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
     system2(
@@ -1031,13 +1074,16 @@ def main():
     features = ','.join(get_features(args))
     # A QUIC release also ships the standalone relay sidecar. It is a separate binary
     # with its own toolchain requirement (rustc >= 1.91 for iroh), so it is built
-    # here as an extra step after the main features resolve; official packages stay
-    # unchanged when --quic is off.
-    if args.quic:
+    # here as an extra step after the main features resolve. Default is QUIC-ON since
+    # the P3-2T product decision; --no-quic restores official packages exactly.
+    global SHIP_SIDECAR
+    SHIP_SIDECAR = not args.no_quic
+    if not args.no_quic:
         here = os.path.dirname(os.path.abspath(__file__))
         sidecar = os.path.normpath(os.path.join(here, '..', '..', 'servers', 'nervdesk-quic-sidecar', 'build.sh'))
         if os.path.isfile(sidecar):
             system2(f'bash {sidecar} --release')
+            ship_sidecar(here)
         else:
             sys.stderr.write(f"[build.py] WARNING: sidecar build script not found at {sidecar}; "
                              "shipping QUIC client without the relay sidecar\n")
@@ -1077,6 +1123,12 @@ def main():
         os.makedirs(res_dir, exist_ok=True)
         system2(
             f'cp -rf target/release/RustDesk.exe {res_dir}')
+        if SHIP_SIDECAR:
+            sc_exe = os.path.join('target', 'release', 'nervdesk-quic-sidecar.exe')
+            if os.path.isfile(sc_exe):
+                # Windows: sidecar must sit next to the exe (sidecar_path() ".exe" case).
+                # Pre-staged binary only — the build hook cannot run build.sh on Windows (bash).
+                system2(f'cp -rf {sc_exe} {res_dir}')
         os.chdir('libs/portable')
         system2('pip3 install -r requirements.txt')
         system2(
@@ -1188,6 +1240,8 @@ def main():
                 system2('strip tmpdeb/usr/bin/rustdesk')
                 system2('mkdir -p tmpdeb/usr/share/rustdesk')
                 system2('mv tmpdeb/usr/bin/rustdesk tmpdeb/usr/share/rustdesk/')
+                if SHIP_SIDECAR and os.path.isfile('../target/release/nervdesk-quic-sidecar'):
+                    system2('cp ../target/release/nervdesk-quic-sidecar tmpdeb/usr/share/rustdesk/')
                 system2('cp libsciter-gtk.so tmpdeb/usr/share/rustdesk/')
                 md5_file_folder("tmpdeb/")
                 system2('dpkg-deb -b tmpdeb rustdesk.deb; /bin/rm -rf tmpdeb/')

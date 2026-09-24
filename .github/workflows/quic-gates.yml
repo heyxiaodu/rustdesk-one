@@ -1,0 +1,178 @@
+name: quic-gates
+
+# P3-2T (task-48): explicit `--features quic` gates for the default-ON QUIC release
+# wiring, per docs/BUILD-P1-GATES.md §7.6.
+#
+# Why this exists: ci.yml tests the workspace WITHOUT any --features, so the
+# opt-in `quic` feature can never break CI there (build- and test-level false
+# green — docs/BUILD-P1-GATES.md §7.2). These jobs close that gap. They are pure
+# additions; the existing build/test jobs in ci.yml / flutter-build.yml are
+# untouched.
+#
+# Validation boundary (honest): this repo has no GitHub Actions runner; the file
+# is syntax-checked and style-aligned locally, real execution happens on CI.
+# The sidecar job additionally depends on the project layout: the relay sidecar
+# lives OUTSIDE the rustdesk repo (a sibling `servers/nervdesk-quic-sidecar`
+# directory; not tracked here), so that job self-skips when the directory is
+# absent and documents the dependency instead of failing.
+#
+# NOTE: the full-lib gate runs on `stable`, NOT 1.75 — build.py --quic's Wayland
+# UI dependency chain (rustix 1.1.2 via base → sctk → calloop) is pre-existing
+# broken on 1.75 (docs/_BASELINE.md §13.1, corrected 2026-09-23). 1.75 only gates
+# hbb_common + the quinn-proto pin.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "README.md"
+      - "res/**"
+      - "appimage/**"
+      - "flatpak/**"
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  quic-gate:
+    name: quic full-lib gate (stable)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang cmake nasm libclang-dev llvm-dev \
+            libasound2-dev libpulse-dev libva-dev libvdpau-dev \
+            libgtk-3-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxdo-dev libxfixes-dev libunwind-dev pkg-config \
+            libvpx-dev libaom-dev libyuv-dev libopus-dev
+
+      # scrap/link_vcpkg route: any VCPKG_ROOT satisfies the build.rs branch, so a
+      # shim pointing at the system /usr/include + /usr/lib is enough (the route
+      # verified locally in docs/BUILD-P1-GATES.md §6.4.2; no .pc files required).
+      - name: Prepare vcpkg shim
+        run: |
+          sudo mkdir -p /opt/vcpkg-shim/installed/x64-linux
+          sudo ln -sfn /usr/include /opt/vcpkg-shim/installed/x64-linux/include
+          sudo ln -sfn /usr/lib/x86_64-linux-gnu /opt/vcpkg-shim/installed/x64-linux/lib
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      # build.py default flip (P3-2T): default = quic-ON; --no-quic restores official.
+      - name: build.py feature selection
+        run: |
+          python3 build.py --print-features | grep -q quic
+          if python3 build.py --print-features --no-quic | grep -q quic; then
+            echo "::error::--no-quic still selects quic"; exit 1
+          fi
+          python3 build.py --print-features --quic | grep -q quic
+
+      - name: Full-lib compile gates (quic ON + --no-quic control)
+        env:
+          VCPKG_ROOT: /opt/vcpkg-shim
+          LIBCLANG_PATH: /usr/lib/llvm-14/lib
+        run: |
+          cargo check --locked -p rustdesk --lib --features "quic"
+          cargo check --locked -p rustdesk --lib        # --no-quic control, official set
+
+      # Test gate: 305 baseline (current measured count, docs/BUILD-P1-GATES.md §6.6;
+      # >= allows growth, < catches silent test loss) + headless skips (upstream
+      # ci.yml:238 pair) + quic feature must add >= 5 tests over the control.
+      - name: Test gate (quic on) + diff assertion
+        env:
+          VCPKG_ROOT: /opt/vcpkg-shim
+          LIBCLANG_PATH: /usr/lib/llvm-14/lib
+        run: |
+          cargo test --locked -p rustdesk --lib --features "quic" \
+            -- --skip test_get_cursor_pos --skip test_get_key_state > /tmp/test-on.log 2>&1 \
+            || { tail -80 /tmp/test-on.log; echo "::error::quic test run failed"; exit 1; }
+          on=$(awk '/test result:/{for(i=1;i<=NF;i++) if($i=="passed;") print $(i-1)}' /tmp/test-on.log)
+          fails=$(awk '/test result:/{for(i=1;i<=NF;i++) if($i=="failed;") print $(i-1)}' /tmp/test-on.log)
+          echo "quic-on tests: passed=${on:-<none>} failed=${fails:-<none>}"
+          [ -n "$on" ] || { echo "::error::could not parse test result"; exit 1; }
+          [ "${fails:-1}" = "0" ] || { echo "::error::quic test failures"; exit 1; }
+          [ "$on" -ge 305 ] || { echo "::error::quic test baseline dropped ($on < 305)"; exit 1; }
+          cargo test --locked -p rustdesk --lib \
+            -- --skip test_get_cursor_pos --skip test_get_key_state > /tmp/test-off.log 2>&1 \
+            || { tail -80 /tmp/test-off.log; echo "::error::control test run failed"; exit 1; }
+          off=$(awk '/test result:/{for(i=1;i<=NF;i++) if($i=="passed;") print $(i-1)}' /tmp/test-off.log)
+          echo "quic-off tests: passed=${off:-<none>}"
+          [ "$on" -ge $((off + 5)) ] || { echo "::error::quic added only $((on-off)) tests (expected >=5)"; exit 1; }
+
+  msrv-175-gate:
+    name: MSRV 1.75 boundary (hbb_common + quinn-proto pin)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: 1.75
+
+      # 1.75 boundary (2026-09-23 corrected): only hbb_common compiles at MSRV.
+      # `-p base` and `-p rustdesk --lib` are blocked by the pre-existing rustix
+      # 1.1.2 Wayland chain (docs/_BASELINE.md §13.1) — NOT gated here.
+      - name: MSRV hbb_common gate
+        run: cargo +1.75.0 check --locked -p hbb_common
+
+      # quinn closure MSRV guard: quinn-proto 0.11.15 has MSRV 1.85; a bare
+      # `cargo update` would instantly red the 1.75 world (BUILD-BASELINE §8.2/8.3).
+      - name: quinn-proto 0.11.14 lock pin
+        run: |
+          qp=$(awk '/^name = "quinn-proto"/{getline; if ($1=="version") {gsub(/"/,"",$3); print $3; exit}}' Cargo.lock)
+          echo "quinn-proto=$qp"
+          [ "$qp" = "0.11.14" ] || { \
+            echo "::error::quinn-proto drifted to ${qp:-<missing>} (0.11.15 = MSRV 1.85 breaks the 1.75 world; fix: cargo update -p quinn-proto --precise 0.11.14)"; \
+            exit 1; }
+
+      - name: Lock consistency (metadata)
+        run: cargo +1.75.0 metadata --locked --no-deps > /dev/null
+
+  sidecar-check:
+    name: sidecar release artifact check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # The sidecar sources live OUTSIDE this repo (project sibling
+      # servers/nervdesk-quic-sidecar, not tracked here; build.py resolves it via
+      # '../../servers/nervdesk-quic-sidecar/build.sh'). Until that directory is
+      # mirrored into the checkout (fork layout), CI cannot exercise it — this job
+      # self-skips and stays honest instead of silently passing on nothing.
+      - name: Sidecar sources present?
+        id: present
+        run: |
+          if [ -f servers/nervdesk-quic-sidecar/build.sh ]; then echo "found=1" >> "$GITHUB_OUTPUT"; else echo "found=0" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Build sidecar (release)
+        if: steps.present.outputs.found == '1'
+        run: bash servers/nervdesk-quic-sidecar/build.sh --release
+
+      # Artifact assertion mirrors build.py ship_sidecar(): the binary must exist
+      # next to the release output and be a real executable, so a QUIC build that
+      # would silently degrade to legacy relay is caught here.
+      - name: Assert sidecar artifact
+        if: steps.present.outputs.found == '1'
+        run: |
+          test -x servers/nervdesk-quic-sidecar/target/release/nervdesk-quic-sidecar
+          file servers/nervdesk-quic-sidecar/target/release/nervdesk-quic-sidecar | grep -q ELF
