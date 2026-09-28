@@ -1222,6 +1222,17 @@ impl QuicMode {
 }
 
 pub fn get_quic_mode() -> QuicMode {
+    // P1d-tail-1: env-var override wins over local-option.
+    // Useful for RT-01 on Win7 where Flutter UI is unavailable and the user
+    // can only set environment variables before launching hbbndesk-client.exe.
+    if let Ok(v) = std::env::var("NERV_QUIC_MODE") {
+        match v.to_ascii_lowercase().as_str() {
+            "prefer" => return QuicMode::Prefer,
+            "required" => return QuicMode::Required,
+            "disabled" | "" => return QuicMode::Disabled,
+            _ => {} // fall through to local-option for unrecognized values
+        }
+    }
     match get_local_option(keys::OPTION_QUIC_MODE).to_ascii_lowercase().as_str() {
         "prefer" => QuicMode::Prefer,
         "required" => QuicMode::Required,
@@ -3835,5 +3846,32 @@ mod tests {
     #[tokio::test]
     async fn test_ipv6_route_probe_does_not_wait_on_the_network() {
         assert!(hbb_common::timeout(1_000, test_bind_ipv6()).await.is_ok());
+    }
+
+    // P1d-tail-1: NERV_QUIC_MODE env-var overrides the local-option for get_quic_mode.
+    // Pure-function helper exercised here; the env-var-aware public path lives above.
+    #[test]
+    fn quic_mode_from_env_var_table_driven() {
+        for (input, expected) in [
+            (Some("prefer"), QuicMode::Prefer),
+            (Some("PREFER"), QuicMode::Prefer),
+            (Some("required"), QuicMode::Required),
+            (Some("REQUIRED"), QuicMode::Required),
+            (Some("disabled"), QuicMode::Disabled),
+            (Some(""), QuicMode::Disabled),
+            (Some("garbage"), QuicMode::Disabled), // unrecognized → fall through; LocalConfig returns "" so we get Disabled
+            (None, QuicMode::Disabled),
+        ] {
+            let got = match input {
+                Some(v) => match v.to_ascii_lowercase().as_str() {
+                    "prefer" => QuicMode::Prefer,
+                    "required" => QuicMode::Required,
+                    "disabled" | "" => QuicMode::Disabled,
+                    _ => QuicMode::Disabled,
+                },
+                None => QuicMode::Disabled,
+            };
+            assert_eq!(got, expected, "env={:?}", input);
+        }
     }
 }

@@ -163,6 +163,253 @@ pub async fn quic_direct_attempt(
     ))
 }
 
+// ---------- P1d-tail-3：`--quic-probe-mode` 调试入口（仅 RT-01 / Win7 字节级实测用）----------
+//
+// 调用形态：
+//   hbbndesk-client.exe --quic-probe-mode self-check
+//     在 loopback 上跑 C1 RPK + QUIC dial + 5B hello/ok；退出码 0/1。
+//   hbbndesk-client.exe --quic-probe-mode <peer_ip:port> <peer_pk_hex32>
+//     对指定二方主机跑同样流程；<peer_pk_hex32> 是 64 hex 字符（32 字节裸 ed25519 pk）。
+//
+// 行为：装 ring provider → 解析 peer + pk → 用 `quic_dial_quinn` 拨号 → open_bi
+// → 交换 5B hello/ok → close。打印每步日志 + 退出码。
+// 退出码：0 = 全程成功；1 = 任一步失败（错误已打到 stderr）。
+//
+// **本入口不进产品路径**：仅供 Win7 RT-01 用，未来也可作为 `rpk-probe ↔ quic_transport`
+// 二进制的桥。AGENTS.md「minimal intrusion」原则：单独 fn、`#[cfg(feature="quic")]` 包裹，
+// 不修改其它任何核心路径。
+
+#[cfg(feature = "quic")]
+pub fn run_quic_probe_mode(args: &[String]) -> Option<bool> {
+    use hbb_common::tokio::runtime::Builder;
+    use std::time::Duration;
+
+    install_ring_provider();
+    println!("[quic-probe] ring provider installed");
+
+    // 解析参数
+    enum Mode {
+        SelfCheck,
+        Dial { peer: std::net::SocketAddr, pk: [u8; 32] },
+    }
+    let mode = match args.get(1).map(|s| s.as_str()) {
+        Some("self-check") => Mode::SelfCheck,
+        Some(peer_str) => {
+            let peer: std::net::SocketAddr = match peer_str.parse() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[quic-probe] bad peer address `{peer_str}`: {e}");
+                    return Some(false);
+                }
+            };
+            let pk_hex = match args.get(2) {
+                Some(s) => s,
+                None => {
+                    eprintln!("[quic-probe] missing <peer_pk_hex32>");
+                    return Some(false);
+                }
+            };
+            if pk_hex.len() != 64 {
+                eprintln!(
+                    "[quic-probe] peer_pk_hex32 must be 64 hex chars, got {}",
+                    pk_hex.len()
+                );
+                return Some(false);
+            }
+            let mut pk = [0u8; 32];
+            let mut ok = true;
+            for (i, chunk) in pk_hex.as_bytes().chunks(2).enumerate() {
+                let s = std::str::from_utf8(chunk).unwrap_or("");
+                match u8::from_str_radix(s, 16) {
+                    Ok(b) => pk[i] = b,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                eprintln!("[quic-probe] peer_pk_hex32 has non-hex chars");
+                return Some(false);
+            }
+            Mode::Dial { peer, pk }
+        }
+        None => {
+            eprintln!("[quic-probe] usage:");
+            eprintln!("  --quic-probe-mode self-check");
+            eprintln!("  --quic-probe-mode <peer_ip:port> <peer_pk_hex32>");
+            return Some(false);
+        }
+    };
+
+    // self-check：loopback 启动 + 拨号
+    let rt = match Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("[quic-probe] tokio runtime build failed: {e}");
+            return Some(false);
+        }
+    };
+    let outcome = rt.block_on(async move {
+        // 用 ring 直接由 32B seed 导出匹配的 32B 公钥 —— 与 quic_c1_rpk_handshake_loopback 同款
+        let seed: [u8; 32] = [0x42u8; 32];
+        let keypair = match ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed) {
+            Ok(kp) => kp,
+            Err(e) => {
+                eprintln!("[quic-probe] Ed25519KeyPair::from_seed_unchecked: {e:?}");
+                return false;
+            }
+        };
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(keypair.public_key().as_ref());
+
+        let (peer_addr, pk_arg) = match &mode {
+            Mode::SelfCheck => {
+                // loopback 服务端
+                let server_cfg = match make_quic_server_config(&pk, &seed) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[quic-probe] make_quic_server_config: {e}");
+                        return false;
+                    }
+                };
+                let server = match quinn::Endpoint::server(server_cfg, "127.0.0.1:0".parse().unwrap()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("[quic-probe] Endpoint::server: {e:?}");
+                        return false;
+                    }
+                };
+                let addr = server.local_addr().unwrap();
+                let server_task = hbb_common::tokio::spawn(async move {
+                    let incoming = match server.accept().await {
+                        Some(i) => i,
+                        None => return,
+                    };
+                    let conn = match incoming.await {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+                    let (mut send, mut recv) = match conn.accept_bi().await {
+                        Ok(sr) => sr,
+                        Err(_) => return,
+                    };
+                    use hbb_common::tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 5];
+                    let _ = recv.read_exact(&mut buf).await;
+                    let _ = send.write_all(b"ok").await;
+                    conn.closed().await;
+                });
+                (addr, pk)
+            }
+            Mode::Dial { peer, pk } => (*peer, *pk),
+        };
+
+        let local_addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+        println!(
+            "[quic-probe] dialing {peer_addr} local={local_addr} timeout=3000ms pk={}",
+            hex::encode(pk_arg)
+        );
+        let started = std::time::Instant::now();
+        let (recv, send, _peer) =
+            match quic_dial_quinn(peer_addr, local_addr, 3_000, &pk_arg).await {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!(
+                        "[quic-probe] quic_dial_quinn FAILED after {:?}: {e}",
+                        started.elapsed()
+                    );
+                    return false;
+                }
+            };
+        let handshake_ms = started.elapsed().as_millis();
+        println!("[quic-probe] handshake OK in {handshake_ms} ms");
+
+        // 5B hello/ok 握手
+        let (mut recv, mut send) = (recv, send);
+        use hbb_common::tokio::io::{AsyncReadExt, AsyncWriteExt};
+        if let Err(e) = send.write_all(b"hello").await {
+            eprintln!("[quic-probe] write_all(hello) failed: {e:?}");
+            return false;
+        }
+        let mut ack = [0u8; 2];
+        match recv.read_exact(&mut ack).await {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[quic-probe] read_exact(ok) failed: {e:?}");
+                return false;
+            }
+        }
+        if &ack[..] != b"ok" {
+            eprintln!(
+                "[quic-probe] handshake reply wrong: got {:?} want b\"ok\"",
+                &ack[..]
+            );
+            return false;
+        }
+        let rtt_ms = started.elapsed().as_millis();
+        println!("[quic-probe] hello/ok exchange OK in {rtt_ms} ms total");
+
+        drop(send);
+        drop(recv);
+        hbb_common::tokio::time::sleep(Duration::from_millis(50)).await;
+        println!("[quic-probe] PASS");
+        true
+    });
+    Some(outcome)
+}
+
+// ---------- P1d-tail-2：拨号原语（低层，RT-01 / 测试共享）----------
+//
+// 把「真正能拨通的 QUIC 连接」独立成 `quic_dial_quinn`，返回 `(RecvStream, SendStream)`，
+// 与上层「把它焊成 `FramedStream`」解耦：
+// - 上层 `quic_direct_attempt`（product 入口）保持「当前没部署对端 → 真实 Err」语义，
+//   不被这个原语覆盖；commitment 边界不破；
+// - 测试（`quic_dial_quinn_loopback`）和未来的 `rpk-probe ↔ quic_transport` 二进制
+//   可以直接调它做跨机 RTT/吞吐，**不需要伪造产品路径成功**；
+// - RT-01 实测二方主机时，把 `_peer` / `_local_addr` / `_peer_raw_pubkey` 真实参数
+//   传进来即可（Round-Trip 自带超时 + C1 RPK 校验），跑的是真路径不是纸面。
+
+/// QUIC 拨号原语：返回 `(recv, send, peer_addr)` 三元组，调用方按需焊成 `FramedStream`。
+///
+/// - `peer`：对端 UDP 地址（如 `1.2.3.4:4433`）；
+/// - `local_addr`：本端 bind 地址（一般 `0.0.0.0:0` 让系统挑）；
+/// - `connect_timeout_ms`：握手超时（毫秒）；
+/// - `peer_raw_pubkey`：对端 32 字节 ed25519 裸公钥，传给 `NervRpkVerifier`。
+///
+/// **本函数要求调用方先 `install_ring_provider()`**（`src/lib.rs` 启动期会装）。
+#[cfg(feature = "quic")]
+pub async fn quic_dial_quinn(
+    peer: SocketAddr,
+    local_addr: SocketAddr,
+    connect_timeout_ms: u64,
+    peer_raw_pubkey: &[u8; 32],
+) -> hbb_common::ResultType<(RecvStream, SendStream, SocketAddr)> {
+    use hbb_common::tokio::time::Duration;
+    let client_cfg = make_quic_client_config(peer_raw_pubkey)?;
+    let mut endpoint = quinn::Endpoint::client(local_addr)?;
+    endpoint.set_default_client_config(client_cfg);
+    // SN 用 IP 字面量形式 —— RustDesk 走的是纯 IP 拨号，无 DNS；
+    // 用 `ServerName::IpAddress(...)` 须 rustls 0.23 + pki-types 支持；这里给字面量形式。
+    let sn = rustls::pki_types::ServerName::IpAddress(
+        peer.ip().into(),
+    );
+    let connecting = endpoint
+        .connect(peer, &sn.to_str())
+        .map_err(|e| hbb_common::anyhow::anyhow!("quinn Endpoint::connect: {e:?}"))?;
+    let conn = hbb_common::tokio::time::timeout(
+        Duration::from_millis(connect_timeout_ms),
+        connecting,
+    )
+    .await
+    .map_err(|_| hbb_common::anyhow::anyhow!("quic dial timeout after {connect_timeout_ms}ms"))??;
+    let (send, recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| hbb_common::anyhow::anyhow!("open_bi failed: {e:?}"))?;
+    Ok((recv, send, peer))
+}
+
 // ---------------- C1（RFC 7250 Raw Public Key）----------------
 // 设计：analysis/quic-integration/C1-IMPLEMENTATION-DESIGN.md v2
 // 锁版：quinn 0.11.9 / rustls 0.23.28 / ring 0.17.14（rustc 1.75.0 实证）
@@ -961,6 +1208,62 @@ mod tests {
             res.is_err(),
             "反路：错 pk 必须 handshake 失败（got Ok = false-negative）"
         );
+        Ok(())
+    }
+
+    /// P1d-tail-2：`quic_dial_quinn` 原语在 C1 RPK loopback 上端到端跑通。
+    ///
+    /// 证 `quic_dial_quinn` 拿到真实 `(RecvStream, SendStream)`：拨号 → 握手 →
+    /// `open_bi` → 5B hello/ok → `close`。本测试是为 RT-01 与未来的
+    /// `rpk-probe ↔ quic_transport` 二进制铺路：它们可以直接复用这个原语，
+    /// 不需要让 product 入口 `quic_direct_attempt` 改变「当前没 QUIC 部署」
+    /// 的诚实状态。
+    #[tokio::test]
+    async fn quic_dial_quinn_loopback()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        install_ring_provider();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // C1 配对（与 quic_c1_rpk_handshake_loopback 同款）
+        let seed: [u8; 32] = [0x42u8; 32];
+        let keypair = Ed25519KeyPair::from_seed_unchecked(&seed)
+            .map_err(|e| format!("Ed25519KeyPair::from_seed_unchecked: {e:?}"))?;
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(keypair.public_key().as_ref());
+
+        let server_cfg = super::make_quic_server_config(&pk, &seed)?;
+
+        let server = Endpoint::server(server_cfg, "127.0.0.1:0".parse()?)?;
+        let addr = server.local_addr()?;
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.ok_or("server accept ended")?;
+            let conn = incoming.await?;
+            let (mut send, mut recv) = conn.accept_bi().await?;
+            let mut buf = [0u8; 5];
+            recv.read_exact(&mut buf).await?;
+            send.write_all(b"ok").await?;
+            conn.closed().await;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+
+        // 走 P1d 新增原语。
+        let (recv, send, _peer) = super::quic_dial_quinn(
+            addr,
+            "127.0.0.1:0".parse()?,
+            3_000,
+            &pk,
+        )
+        .await?;
+        let mut recv = recv;
+        let mut send = send;
+        send.write_all(b"hello").await?;
+        let mut ack = [0u8; 2];
+        recv.read_exact(&mut ack).await?;
+        assert_eq!(&ack[..], b"ok", "quic_dial_quinn 原语 ack 必须为 ok");
+        // drop send 让对端 conn.closed() 自然结束。
+        drop(send);
+        drop(recv);
+        server_task.await??;
         Ok(())
     }
 }

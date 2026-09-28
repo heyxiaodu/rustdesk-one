@@ -142,6 +142,31 @@ pub fn core_main() -> Option<Vec<String>> {
         } else if args[0] == "--build-date" {
             println!("{}", crate::BUILD_DATE);
             return None;
+        } else if args[0] == "--quic-probe-mode" {
+            // P1d-tail-3：仅供 RT-01 / Win7 字节级实测用的调试入口。
+            // 不接入产品路径，不改 RustDesk 任何业务流；只跑 C1 RPK + QUIC
+            // dial + 字节交换 + 元信息打印，然后退出。调用形态：
+            //   hbbndesk-client.exe --quic-probe-mode <peer_ip:port> <peer_pk_hex32>
+            // 或：
+            //   hbbndesk-client.exe --quic-probe-mode self-check
+            //
+            // 必须 cfg-gate：与 src/lib.rs:78 `pub mod quic_transport` 同条件，
+            // feature-off 时 `crate::quic_transport` 整体不存在，否则 E0433。
+            #[cfg(feature = "quic")]
+            {
+                if let Some(outcome) = crate::quic_transport::run_quic_probe_mode(&args) {
+                    std::process::exit(if outcome { 0 } else { 1 });
+                }
+                return None;
+            }
+            #[cfg(not(feature = "quic"))]
+            {
+                eprintln!(
+                    "--quic-probe-mode requires the `quic` feature at build time; \
+                     rebuild with `cargo ... --features quic`"
+                );
+                std::process::exit(2);
+            }
         }
     }
     #[cfg(windows)]
