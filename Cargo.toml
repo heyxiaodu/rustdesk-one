@@ -46,6 +46,11 @@ unix-file-copy-paste = [
     "clipboard/unix-file-copy-paste",
 ]
 screencapturekit = ["cpal/screencapturekit"]
+# QUIC transport (Phase 2a). Deliberately NOT in `default`: the default build must not
+# change, so this feature and its three crates only exist when explicitly asked for.
+# C1 (RFC 7250 raw public key) identity binding reuses the ring crypto provider already
+# used by rustls 0.23, plus rustls itself for the verifier trait surface.
+quic = ["dep:quinn", "dep:quinn-proto", "dep:quinn-udp", "dep:rustls", "dep:ring"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -89,6 +94,21 @@ totp-rs = { version = "5.4", default-features = false, features = ["gen_secret",
 stunclient = "0.4"
 kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys", branch = "rustdesk-patches" }
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
+# QUIC transport (Phase 2a, Path B: a QUIC bi-stream presented as a DynTcpStream). The three
+# `=` pins are load-bearing: quinn 0.11.9 only asks for `quinn-proto >= 0.11.12`, so a caret
+# range resolves to versions needing rustc > 1.75 (quinn-proto 0.11.15+ / quinn-udp 0.5.15+
+# want 1.85) while this workspace's floor is 1.75. Proven on 1.75.0 by
+# analysis/quic-transport-probe.
+quinn = { version = "=0.11.9", optional = true }
+quinn-proto = { version = "=0.11.14", optional = true }
+quinn-udp = { version = "=0.5.14", optional = true }
+# C1 (RFC 7250 raw public key) identity binding for QUIC, gated behind the `quic` feature.
+# Same `=` pin discipline as the three quinn crates: rustls 0.23.28 / ring 0.17.14 are the
+# last versions with rust_version <= 1.75 (proven on 1.75.0 by analysis/rpk-probe, 3/3 PASS).
+# Both are already in the dep graph transitively (reqwest `rustls-tls`); listed as direct
+# optional deps because C1 code needs `use rustls::...` paths (Cargo requires direct deps).
+rustls = { version = "=0.23.28", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
+ring = { version = "=0.17.14", optional = true }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # https://github.com/rustdesk/rustdesk/discussions/10197, not use cpal on linux

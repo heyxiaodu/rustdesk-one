@@ -1203,6 +1203,32 @@ pub fn get_webrtc_enabled() -> bool {
     )
 }
 
+// NERV Desk 2a-3（docs/11 §9）：QUIC_MODE 三档回滚开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicMode {
+    Disabled,
+    Prefer,
+    Required,
+}
+
+impl QuicMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            QuicMode::Disabled => "disabled",
+            QuicMode::Prefer => "prefer",
+            QuicMode::Required => "required",
+        }
+    }
+}
+
+pub fn get_quic_mode() -> QuicMode {
+    match get_local_option(keys::OPTION_QUIC_MODE).to_ascii_lowercase().as_str() {
+        "prefer" => QuicMode::Prefer,
+        "required" => QuicMode::Required,
+        _ => QuicMode::Disabled,
+    }
+}
+
 pub fn get_local_option(key: &str) -> String {
     let v = LocalConfig::get_option(key);
     if key == keys::OPTION_ENABLE_UDP_PUNCH

@@ -1451,6 +1451,97 @@ impl Client {
         log::info!("peer address: {}, timeout: {}", peer, connect_timeout);
         let start = std::time::Instant::now();
 
+        // 2a-3（task-27，docs/11 §9）：QUIC_MODE 三档在传输选择点的接线。
+        // 仅在 `quic` feature 下编译；默认（disabled / 无 feature）与改动前路径等价。
+        // prefer：先试 QUIC，失败记 warn 并回退到原传输（TCP/KCP/WebRTC/relay）；
+        // required：只用 QUIC，失败把真实错误如实上报、不回退。
+        #[cfg(feature = "quic")]
+        {
+            // C1：解出对端 32 字节 raw ed25519 公钥，传给 quic_direct_attempt。
+            // 与 secure_connection 内 decode_id_pk 的语义一致（client.rs:1722）；
+            // 这里独立解一次，因为 quic_direct_attempt 在 secure_connection 之前调用。
+            let rs_pk = get_rs_pk(if key.is_empty() {
+                config::RS_PUB_KEY
+            } else {
+                key
+            });
+            let peer_pk: Option<[u8; 32]> = match rs_pk {
+                Some(rs_pk) if !signed_id_pk.is_empty() => decode_id_pk(&signed_id_pk, &rs_pk)
+                    .ok()
+                    .map(|(_, pk)| pk),
+                _ => None,
+            };
+            match crate::common::get_quic_mode() {
+                crate::common::QuicMode::Disabled => {}
+                mode => {
+                    // 没拿到对端公钥 ⇒ QUIC 拨号无法做身份校验 ⇒ 直接视为不可用。
+                    let peer_pk_ref = match peer_pk.as_ref() {
+                        Some(pk) => pk,
+                        None => {
+                            interface.update_direct(Some(false));
+                            match mode {
+                                crate::common::QuicMode::Prefer => {
+                                    log::warn!(
+                                        "QUIC_MODE=prefer: 缺对端公钥（signed_id_pk 为空或解码失败），回退到原传输"
+                                    );
+                                }
+                                crate::common::QuicMode::Required => {
+                                    bail!("QUIC_MODE=required: 缺对端公钥，无法做 C1 RPK 校验");
+                                }
+                                crate::common::QuicMode::Disabled => unreachable!(),
+                            }
+                            return Err(hbb_common::anyhow::anyhow!(
+                                "QUIC_MODE=prefer/required: no peer pubkey, falling back / bailing"
+                            ));
+                        }
+                    };
+                    match crate::quic_transport::quic_direct_attempt(
+                        peer,
+                        local_addr,
+                        connect_timeout,
+                        peer_pk_ref,
+                    )
+                    .await
+                    {
+                        Ok(stream) => {
+                            // QUIC 直连成功：按 Path B 以 `Stream::Tcp` 交付，走与
+                            // TCP 路径同一条 secure_connection 链（见本函数尾部）。
+                            let mut conn = Stream::Tcp(stream);
+                            let pk = match Self::secure_connection(
+                                peer_id,
+                                signed_id_pk.clone(),
+                                key,
+                                &mut conn,
+                            )
+                            .await
+                            {
+                                Ok(pk) => pk,
+                                Err(e) => {
+                                    // 镜像尾部：失败也更新 direct 状态，供
+                                    // on_establish_connection_error 使用。
+                                    interface.update_direct(Some(true));
+                                    bail!(e);
+                                }
+                            };
+                            return Ok((conn, true, pk, None, "QUIC"));
+                        }
+                        Err(e) => match crate::quic_transport::quic_failure_disposition(mode) {
+                            crate::quic_transport::QuicFailure::Fallback => {
+                                log::warn!(
+                                    "QUIC_MODE=prefer: QUIC 直连失败（{}），回退到原传输",
+                                    e
+                                );
+                            }
+                            crate::quic_transport::QuicFailure::RealError => {
+                                interface.update_direct(Some(false));
+                                bail!("QUIC_MODE=required: {}", e);
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
         // Each attempt carries whether its path is direct (4th field). TCP/UDP/IPv6 punch are
         // always direct; WebRTC is direct only when ICE nominated a non-TURN pair.
         let mut direct_futures = Vec::new();

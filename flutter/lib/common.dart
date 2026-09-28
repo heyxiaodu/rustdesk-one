@@ -248,18 +248,24 @@ class ColorThemeExtension extends ThemeExtension<ColorThemeExtension> {
 class MyTheme {
   MyTheme._();
 
+  // NERV Desk palette B（user-selected 2026-09-27）：
+  //   主黑 #0A0A0A / 次色 #0B1F3F / 强调 #1580D0
+  // docs/13 §5 锁定此组合作为品牌基色。视觉验证待 Flutter SDK + Windows GUI 回归
+  // （本机环境无 Flutter SDK；编译/视觉回归须等 Flutter 接入后跑一次 build_apk / build_windows）。
   static const Color grayBg = Color(0xFFEFEFF2);
-  static const Color accent = Color(0xFF0071FF);
-  static const Color accent50 = Color(0x770071FF);
-  static const Color accent80 = Color(0xAA0071FF);
-  static const Color canvasColor = Color(0xFF212121);
+  static const Color accent = Color(0xFF1580D0); // palette B 强调 #1580D0
+  static const Color accent50 = Color(0x771580D0);
+  static const Color accent80 = Color(0xAA1580D0);
+  static const Color canvasColor = Color(0xFF0A0A0A); // palette B 主黑 #0A0A0A
   static const Color border = Color(0xFFCCCCCC);
   static const Color idColor = Color(0xFF00B6F0);
   static const Color darkGray = Color.fromARGB(255, 148, 148, 148);
   static const Color cmIdColor = Color(0xFF21790B);
   static const Color dark = Colors.black87;
-  static const Color button = Color(0xFF2C8CFF);
+  static const Color button = Color(0xFF1580D0); // palette B 强调 #1580D0
   static const Color hoverBorder = Color(0xFF999999);
+  // palette B 次色 #0B1F3F（NERV dark surface tint，nav bar / drawer 用）
+  static const Color surfaceTint = Color(0xFF0B1F3F);
 
   // ListTile
   static const ListTileThemeData listTileTheme = ListTileThemeData(

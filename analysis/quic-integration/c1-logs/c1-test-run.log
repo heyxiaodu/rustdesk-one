@@ -1,0 +1,494 @@
+warning: the item `secretbox` is imported redundantly
+   --> libs/hbb_common/src/password_security.rs:213:9
+    |
+2   | use sodiumoxide::{base64, crypto::secretbox};
+    |                           ----------------- the item `secretbox` is already imported here
+...
+213 |     use sodiumoxide::crypto::secretbox;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: unknown lint: `static_mut_refs`
+   --> libs/hbb_common/src/fingerprint.rs:251:17
+    |
+251 |         #[allow(static_mut_refs)]
+    |                 ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unknown_lints)]` on by default
+
+warning: unknown lint: `static_mut_refs`
+   --> libs/hbb_common/src/fingerprint.rs:283:17
+    |
+283 |         #[allow(static_mut_refs)]
+    |                 ^^^^^^^^^^^^^^^
+
+warning: `hbb_common` (lib) generated 3 warnings
+warning: type `useconds_t` should have an upper camel case name
+  --> libs/libxdo-sys-stub/src/lib.rs:31:10
+   |
+31 | pub type useconds_t = c_uint;
+   |          ^^^^^^^^^^ help: convert the identifier to upper camel case: `UsecondsT`
+   |
+   = note: `#[warn(non_camel_case_types)]` on by default
+
+warning: `libxdo-sys` (lib) generated 1 warning
+warning: `hbb_common` (lib) generated 3 warnings (3 duplicates)
+warning: scrap@0.5.0: cargo:rustc-check-cfg requires -Zcheck-cfg flag
+warning: unused import: `tokio`
+  --> libs/scrap/src/wayland/pipewire.rs:27:60
+   |
+27 | use hbb_common::{anyhow::anyhow, bail, config, serde_json, tokio, ResultType};
+   |                                                            ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: static `SNAPSHOT_GENERATION` is never used
+   --> libs/scrap/src/wayland/display.rs:305:8
+    |
+305 | static SNAPSHOT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    |        ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `scrap` (lib) generated 2 warnings (run `cargo fix --lib -p scrap` to apply 1 suggestion)
+   Compiling rustdesk v1.5.0 (/vol2/@appdata/deepseek.harness/home/NERVDesk/repos/rustdesk)
+warning: unused import: `allow_err`
+ --> src/server/wayland.rs:2:18
+  |
+2 | use hbb_common::{allow_err, anyhow};
+  |                  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::clipboard_file::*`
+  --> src/server/connection.rs:12:5
+   |
+12 | use crate::clipboard_file::*;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: the item `sim` is imported redundantly
+  --> src/server/video_qos/tests/adaptation.rs:58:22
+   |
+3  | use super::*;
+   |     -------- the item `sim` is already imported here
+...
+58 |     use super::sim::{self, Summary};
+   |                      ^^^^
+
+warning: unused import: `is_installed`
+  --> src/common.rs:40:69
+   |
+40 |     ui_interface::{get_api_server as ui_get_api_server, get_option, is_installed, set_option},
+   |                                                                     ^^^^^^^^^^^^
+
+warning: the item `Enum` is imported redundantly
+    --> src/common.rs:2941:9
+     |
+24   |     protobuf::{Enum, Message as _},
+     |                ---- the item `Enum` is already imported here
+...
+2941 |     use hbb_common::protobuf::Enum;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `bail`
+  --> src/ui_cm_interface.rs:23:16
+   |
+23 |     allow_err, bail,
+   |                ^^^^
+
+warning: unused import: `uuid::Uuid`
+  --> src/ui_session_interface.rs:41:5
+   |
+41 | use uuid::Uuid;
+   |     ^^^^^^^^^^
+
+warning: unused imports: `ClientConfig`, `Ed25519KeyPair`, `KeyPair`, `ServerConfig`, `ring::rand::SystemRandom`
+  --> src/quic_transport.rs:24:5
+   |
+24 |     ring::rand::SystemRandom,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+25 |     ring::signature::{Ed25519KeyPair, KeyPair},
+   |                       ^^^^^^^^^^^^^^  ^^^^^^^
+...
+37 |     rustls::{ClientConfig, DigitallySignedStruct, Error, ServerConfig, SignatureScheme},
+   |              ^^^^^^^^^^^^                                ^^^^^^^^^^^^
+
+warning: use of deprecated function `hbb_common::whoami::hostname`: use `fallible::hostname()` instead
+    --> src/platform/linux.rs:2176:51
+     |
+2176 |                     .replace(&hbb_common::whoami::hostname(), "");
+     |                                                   ^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `hbb_common::whoami::hostname`: use `fallible::hostname()` instead
+    --> src/platform/linux.rs:2191:47
+     |
+2191 |                 .replace(&hbb_common::whoami::hostname(), "")
+     |                                               ^^^^^^^^
+
+warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::encode
+   --> src/hbbs_http/sync.rs:188:52
+    |
+188 |                         hash = hbb_common::base64::encode(&res[..]);
+    |                                                    ^^^^^^
+
+warning: unused import: `AsyncWriteExt`
+   --> src/quic_transport.rs:911:39
+    |
+911 |         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    |                                       ^^^^^^^^^^^^^
+
+warning: unused import: `AsyncReadExt`
+   --> src/quic_transport.rs:911:25
+    |
+911 |         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    |                         ^^^^^^^^^^^^
+
+warning: unused import: `AsyncWriteExt`
+   --> src/quic_transport.rs:746:43
+    |
+746 |             use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    |                                           ^^^^^^^^^^^^^
+
+warning: unused import: `AsyncReadExt`
+   --> src/quic_transport.rs:746:29
+    |
+746 |             use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    |                             ^^^^^^^^^^^^
+
+warning: unused import: `super`
+  --> src/server/video_qos/tests/robustness.rs:10:5
+   |
+10 | use super::*;
+   |     ^^^^^
+
+warning: unused variable: `is_press`
+   --> src/keyboard.rs:689:17
+    |
+689 |             let is_press = matches!(event.event_type, EventType::KeyPress(_));
+    |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_press`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: variable does not need to be mutable
+   --> src/server/display_service.rs:279:24
+    |
+279 |     let (live_changed, mut drifted) = {
+    |                        ----^^^^^^^
+    |                        |
+    |                        help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: variable does not need to be mutable
+   --> src/tray.rs:156:17
+    |
+156 |             let mut builder = TrayIconBuilder::new()
+    |                 ----^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/tray.rs:64:9
+   |
+64 |     let mut event_loop = EventLoopBuilder::new().build();
+   |         ----^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/privacy_mode.rs:140:13
+    |
+140 |         let mut map: HashMap<&'static str, PrivacyModeCreator> = HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: function `is_opensuse` is never used
+    --> src/platform/linux.rs:1395:4
+     |
+1395 | fn is_opensuse() -> bool {
+     |    ^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` on by default
+
+warning: variants `Side`, `Extra`, `Back`, `Forward`, and `Task` are never constructed
+    --> src/server/uinput.rs:1129:9
+     |
+1126 |     pub enum MouseButton {
+     |              ----------- variants in this enum
+...
+1129 |         Side,
+     |         ^^^^
+1130 |         Extra,
+     |         ^^^^^
+1131 |         Right,
+1132 |         Back,
+     |         ^^^^
+1133 |         Forward,
+     |         ^^^^^^^
+1134 |         Task,
+     |         ^^^^
+     |
+     = note: `MouseButton` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Right` and `Left` are never constructed
+    --> src/server/uinput.rs:1141:9
+     |
+1138 |     pub enum ScrollDirection {
+     |              --------------- variants in this enum
+...
+1141 |         Right,
+     |         ^^^^^
+1142 |         Left,
+     |         ^^^^
+     |
+     = note: `ScrollDirection` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `resolution` is never read
+   --> src/server/rdp_input.rs:322:9
+    |
+318 |     pub struct RdpInputMouse {
+    |                ------------- field in this struct
+...
+322 |         resolution: (usize, usize),
+    |         ^^^^^^^^^^
+
+warning: constant `MOUSE_MOVE_PROTECTION_TIMEOUT` is never used
+   --> src/server/input_service.rs:633:7
+    |
+633 | const MOUSE_MOVE_PROTECTION_TIMEOUT: Duration = Duration::from_millis(1_000);
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MOUSE_ACTIVE_DISTANCE` is never used
+   --> src/server/input_service.rs:635:7
+    |
+635 | const MOUSE_ACTIVE_DISTANCE: i32 = 5;
+    |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `SwitchSides` is never constructed
+   --> src/server/connection.rs:315:5
+    |
+310 | enum ConnAuditPrimaryAuth {
+    |      -------------------- variant in this enum
+...
+315 |     SwitchSides = 4,
+    |     ^^^^^^^^^^^
+    |
+    = note: `ConnAuditPrimaryAuth` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `enable_file_transfer` is never read
+   --> src/server/connection.rs:403:5
+    |
+356 | pub struct Connection {
+    |            ---------- field in this struct
+...
+403 |     enable_file_transfer: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `send_switch_login_request` is never used
+    --> src/client.rs:4944:10
+     |
+4944 | async fn send_switch_login_request(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `http_request` and `get_http_status` are never used
+   --> src/ui.rs:614:8
+    |
+198 | impl UI {
+    | ------- methods in this implementation
+...
+614 |     fn http_request(&self, url: String, method: String, body: Option<String>, header: String) {
+    |        ^^^^^^^^^^^^
+...
+630 |     fn get_http_status(&self, url: String) -> Option<String> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: methods `into_string` and `save` are never used
+   --> src/auth_2fa.rs:123:8
+    |
+122 | impl TelegramBot {
+    | ---------------- methods in this implementation
+123 |     fn into_string(&self) -> ResultType<String> {
+    |        ^^^^^^^^^^^
+...
+133 |     fn save(&self) -> ResultType<()> {
+    |        ^^^^
+
+warning: function `get_chatid_telegram` is never used
+   --> src/auth_2fa.rs:165:8
+    |
+165 | pub fn get_chatid_telegram(bot_token: &str) -> ResultType<Option<String>> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS` is never used
+  --> src/clipboard.rs:17:11
+   |
+17 | pub const OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS: &str =
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `update_controlling_session_count` is never used
+  --> src/updater.rs:83:8
+   |
+83 | pub fn update_controlling_session_count(count: usize) {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `close_window` is never used
+   --> src/ui_cm_interface.rs:385:8
+    |
+385 | pub fn close_window(id: i32) {
+    |        ^^^^^^^^^^^^
+
+warning: function `http_request` is never used
+   --> src/ui_interface.rs:858:8
+    |
+858 | pub fn http_request(url: String, method: String, body: Option<String>, header: String) {
+    |        ^^^^^^^^^^^^
+
+warning: function `get_async_http_status` is never used
+   --> src/ui_interface.rs:878:8
+    |
+878 | pub fn get_async_http_status(url: String) -> Option<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `message` is never used
+    --> src/ui_interface.rs:1066:12
+     |
+1065 | impl DeployResult {
+     | ----------------- method in this implementation
+1066 |     pub fn message(&self) -> String {
+     |            ^^^^^^^
+
+warning: function `has_valid_bot` is never used
+    --> src/ui_interface.rs:1655:8
+     |
+1655 | pub fn has_valid_bot() -> bool {
+     |        ^^^^^^^^^^^^^
+
+warning: function `verify_bot` is never used
+    --> src/ui_interface.rs:1659:8
+     |
+1659 | pub fn verify_bot(token: String) -> String {
+     |        ^^^^^^^^^^
+
+warning: variants `ErrorFormat`, `Error`, `DataTypeFormat`, and `Data` are never constructed
+  --> src/hbbs_http.rs:18:5
+   |
+17 | pub enum HbbHttpResponse<T> {
+   |          --------------- variants in this enum
+18 |     ErrorFormat,
+   |     ^^^^^^^^^^^
+19 |     Error(String),
+   |     ^^^^^
+20 |     DataTypeFormat,
+   |     ^^^^^^^^^^^^^^
+21 |     Data(T),
+   |     ^^^^
+   |
+   = note: `HbbHttpResponse` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: associated function `parse` is never used
+  --> src/hbbs_http.rs:25:12
+   |
+24 | impl<T: DeserializeOwned> HbbHttpResponse<T> {
+   | -------------------------------------------- associated function in this implementation
+25 |     pub fn parse(body: &str) -> ResultType<Self> {
+   |            ^^^^^
+
+warning: multiple fields are never read
+  --> src/hbbs_http/downloader.rs:39:5
+   |
+38 | struct Downloader {
+   |        ---------- fields in this struct
+39 |     data: Vec<u8>,
+   |     ^^^^
+40 |     path: Option<PathBuf>,
+   |     ^^^^
+41 |     // Some file may be empty, so we use Option<u64> to indicate if the size is known
+42 |     total_size: Option<u64>,
+   |     ^^^^^^^^^^
+43 |     downloaded_size: u64,
+   |     ^^^^^^^^^^^^^^^
+44 |     error: Option<String>,
+   |     ^^^^^
+45 |     finished: bool,
+   |     ^^^^^^^^
+46 |     tx_cancel: UnboundedSender<()>,
+   |     ^^^^^^^^^
+
+warning: function `download_file` is never used
+  --> src/hbbs_http/downloader.rs:50:8
+   |
+50 | pub fn download_file(
+   |        ^^^^^^^^^^^^^
+
+warning: function `do_download` is never used
+   --> src/hbbs_http/downloader.rs:163:10
+    |
+163 | async fn do_download(
+    |          ^^^^^^^^^^^
+
+warning: function `get_download_data` is never used
+   --> src/hbbs_http/downloader.rs:274:8
+    |
+274 | pub fn get_download_data(id: &str) -> ResultType<DownloadData> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `cancel` is never used
+   --> src/hbbs_http/downloader.rs:299:8
+    |
+299 | pub fn cancel(id: &str) {
+    |        ^^^^^^
+
+warning: function `remove` is never used
+   --> src/hbbs_http/downloader.rs:307:8
+    |
+307 | pub fn remove(id: &str) {
+    |        ^^^^^^
+
+warning: function `create_http_client_async_with_url` is never used
+   --> src/hbbs_http/http_client.rs:260:14
+    |
+260 | pub async fn create_http_client_async_with_url(url: &str) -> AsyncClient {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `create_http_client_async_with_url_strict` is never used
+   --> src/hbbs_http/http_client.rs:278:14
+    |
+278 | pub async fn create_http_client_async_with_url_strict(url: &str) -> ResultType<AsyncClient> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `create_http_client_async_with_url_` is never used
+   --> src/hbbs_http/http_client.rs:306:10
+    |
+306 | async fn create_http_client_async_with_url_(
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused `hbb_common::sodiumoxide::crypto::secretbox::Key` that must be used
+    --> src/common.rs:3545:13
+     |
+3545 |             hbb_common::tcp::Encrypt::decode(&ex.keys[1], &ex.keys[0], &eph_sk).unwrap();
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+3545 |             let _ = hbb_common::tcp::Encrypt::decode(&ex.keys[1], &ex.keys[0], &eph_sk).unwrap();
+     |             +++++++
+
+warning: module `pt_BR` should have a snake case name
+  --> src/lang.rs:36:5
+   |
+36 | mod pt_BR;
+   |     ^^^^^ help: convert the identifier to snake case: `pt_br`
+   |
+   = note: `#[warn(non_snake_case)]` on by default
+
+warning: module `pt_PT` should have a snake case name
+  --> src/lang.rs:37:5
+   |
+37 | mod pt_PT;
+   |     ^^^^^ help: convert the identifier to snake case: `pt_pt`
+
