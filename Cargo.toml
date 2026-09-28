@@ -6,7 +6,12 @@ edition = "2021"
 build= "build.rs"
 description = "RustDesk Remote Desktop"
 default-run = "rustdesk"
-rust-version = "1.75"
+# MSRV: round-22 user decision B = 升 1.91（放弃 Win7 兼容）。
+# 实证：docs/19-phase2-entry-points.md §2.5.2 验证 5 个 `=` 钉版（rustls 0.23.28 /
+# ring 0.17.14 / quinn 0.11.9 / quinn-proto 0.11.14 / quinn-udp 0.5.14）在 rustc 1.91.0
+# 上全部 floor 兼容，无 upper bound 冲突。Phase-1 已 11/11 测试 PASS（rustc 1.75），
+# 升 1.91 后必须重跑（见 docs/19 §3 启动清单）。Round-23 起手动作。
+rust-version = "1.91"
 
 [lib]
 name = "librustdesk"
@@ -96,17 +101,21 @@ kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys", branch = "rustdesk-p
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
 # QUIC transport (Phase 2a, Path B: a QUIC bi-stream presented as a DynTcpStream). The three
 # `=` pins are load-bearing: quinn 0.11.9 only asks for `quinn-proto >= 0.11.12`, so a caret
-# range resolves to versions needing rustc > 1.75 (quinn-proto 0.11.15+ / quinn-udp 0.5.15+
-# want 1.85) while this workspace's floor is 1.75. Proven on 1.75.0 by
-# analysis/quic-transport-probe.
+# range resolves to versions needing rustc > 1.85 (quinn-proto 0.11.15+ / quinn-udp 0.5.15+
+# want 1.85) while this workspace's MSRV is 1.91 (round-22 user decision B; previously 1.75).
+# Pin rationale preserved: Phase-1 11/11 PASS contract on 1.75.0 + 1.91.0 (registry source
+# `rust-version` field is `floor` for all 5 pins, no upper bound conflict).
+# Proven on 1.75.0 by analysis/quic-transport-probe + analysis/rpk-probe; re-proven on 1.91.0
+# in round-23 regression gate (host + linux-pkg-config + quic feature).
 quinn = { version = "=0.11.9", optional = true }
 quinn-proto = { version = "=0.11.14", optional = true }
 quinn-udp = { version = "=0.5.14", optional = true }
 # C1 (RFC 7250 raw public key) identity binding for QUIC, gated behind the `quic` feature.
-# Same `=` pin discipline as the three quinn crates: rustls 0.23.28 / ring 0.17.14 are the
-# last versions with rust_version <= 1.75 (proven on 1.75.0 by analysis/rpk-probe, 3/3 PASS).
-# Both are already in the dep graph transitively (reqwest `rustls-tls`); listed as direct
-# optional deps because C1 code needs `use rustls::...` paths (Cargo requires direct deps).
+# Same `=` pin discipline as the three quinn crates (round-22 user decision P1: keep all pins).
+# rustls 0.23.28 / ring 0.17.14 carry `rust-version` floors of 1.71 / 1.66.0 respectively
+# (registry source verified), so they remain compatible with rustc 1.91.0. Both are already
+# in the dep graph transitively (reqwest `rustls-tls`); listed as direct optional deps because
+# C1 code needs `use rustls::...` paths (Cargo requires direct deps).
 rustls = { version = "=0.23.28", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
 ring = { version = "=0.17.14", optional = true }
 
