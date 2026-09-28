@@ -1,0 +1,11 @@
+[package]
+name = "libsodium-sys"
+version = "0.2.7"
+edition = "2015"
+publish = false
+description = "Cross-build-friendly FFI binding stub for libsodium. Skips upstream build.rs autotools path; emits direct rustc-link-lib directives from SODIUM_LIB_DIR / NERV_SODIUM_LIB_DIR. Used only via [patch.crates-io] in repo Cargo.toml."
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]

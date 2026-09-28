@@ -248,6 +248,16 @@ exclude = ["vdi/host"]
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)
 [patch.crates-io]
 libxdo-sys = { path = "libs/libxdo-sys-stub" }
+# Cross-build-friendly stub for libsodium-sys 0.2.7. Upstream build.rs uses
+# `#[cfg(windows)]` which evaluates at host compile time, not cargo target;
+# cross-compiling from linux to windows-msvc therefore falls into the autotools
+# path whose bundled config.sub rejects MSVC targets. The stub bypasses
+# autotools entirely and emits direct rustc-link-lib directives from
+# NERV_SODIUM_LIB_DIR (preferred) or SODIUM_LIB_DIR. The FFI surface comes
+# from vendoring upstream sodium_bindings.rs verbatim; FFI type names
+# (libc::c_int etc.) are rewritten to a local ffi_types alias (see
+# libs/libsodium-sys-cross-stub/src/lib.rs).
+libsodium-sys = { path = "libs/libsodium-sys-cross-stub" }
 # Upstream reserves a frame's whole declared length as soon as its header is in, so a header alone
 # buys an allocation the size it names, bounded only by max_frame_size. This fork grows the read
 # buffer one read_buffer_size chunk at a time as the bytes actually arrive. Patched rather than

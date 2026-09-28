@@ -16,3 +16,35 @@ rustflags = [
 #]
 [net]
 git-fetch-with-cli = true
+
+# === NERV Desk: Windows x86_64-msvc cross-compile shim (Phase-1 windows-msvc gate) ===
+# When the host is Linux and target is x86_64-pc-windows-msvc, the upstream
+# toolchain (`cc-rs` + the bundled xwin MSVC STL) demands `clang 19+` for any
+# C++ transitive dep (webm-sys, mozjpeg-sys). The shim below is the
+# Phase-2-runnable scaffolding: rustc ships, libsodium-sys ships, ring 0.17.14
+# ships. C++ deps remain BLOCKED (see docs/19 §7.2). To use, also point
+# NERV_SODIUM_LIB_DIR at analysis/build-env/nervdesk-sodium-msvc/lib (contains
+# the cross-compiled sodium.lib). The env values below match the on-host layout
+# of this NERVDesk workspace; override per build server as needed.
+[target.x86_64-pc-windows-msvc.linker]
+"linker" = "/tmp/nervdesk-msvc-shim/link.sh"
+
+[env]
+# Cross-compile wrapper that injects --target=x86_64-pc-windows-msvc and
+# upgrades -std=gnu++11 → -std=gnu++14 (the latter only fires if a C++ source
+# is on the command line). Without this wrapper, cc-rs's default `cc` driver
+# emits ELF .o files, which fail to link in a COFF-target rustc invocation.
+CC_x86_64_pc_windows_msvc = { value = "/tmp/nervdesk-msvc-shim/clang-wrap.sh", force = false }
+CXX_x86_64_pc_windows_msvc = { value = "/tmp/nervdesk-msvc-shim/clang-wrap.sh", force = false }
+AR_x86_64_pc_windows_msvc = { value = "llvm-lib", force = false }
+# CFLAGS are propagated to cc-rs's build invocations on webm-sys / mozjpeg-sys
+# etc. when target = x86_64-pc-windows-msvc. The xwin paths provide the
+# Windows SDK CRT + UCRT + Win32 API headers; without them, native clang's
+# built-in libcxx would try to satisfy them and fail.
+CFLAGS_x86_64_pc_windows_msvc = { value = "--target=x86_64-pc-windows-msvc -fuse-ld=lld -I/vol2/@appdata/deepseek.harness/home/.xwin/crt/include -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/um -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/shared -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/ucrt -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/winrt", force = false }
+CXXFLAGS_x86_64_pc_windows_msvc = { value = "--target=x86_64-pc-windows-msvc -fuse-ld=lld -I/vol2/@appdata/deepseek.harness/home/.xwin/crt/include -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/um -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/shared -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/ucrt -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/winrt", force = false }
+# libsodium location for the cross-compiled libsodium stub. The
+# libsodium-sys-cross-stub crate (see [patch.crates-io] in Cargo.toml) reads
+# NERV_SODIUM_LIB_DIR first, then SODIUM_LIB_DIR.
+NERV_SODIUM_LIB_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-sodium-msvc", force = false }
+NERV_SODIUM_INCLUDE_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-sodium-msvc/include", force = false }
