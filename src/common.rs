@@ -1036,7 +1036,12 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 pub const AUTO_UPDATE_ENABLED: bool = false;
 
 pub fn check_software_update() {
-    if is_custom_client() {
+    // Two independent reasons not to look for a stock update: a branded (OEM)
+    // build must not be replaced by the upstream package, and neither must a
+    // custom-client deployment. Before the decoupling this early return fired
+    // only because a renamed build accidentally reports as a custom client; the
+    // brand reason is now explicit (see `is_oem_build`).
+    if is_oem_build() || is_custom_client() {
         return;
     }
     let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
@@ -2626,6 +2631,49 @@ pub fn get_builtin_option(key: &str) -> String {
 #[inline]
 pub fn is_custom_client() -> bool {
     get_app_name() != "RustDesk"
+}
+
+/// NERV Desk: build-time brand identity -- is this binary an officially branded
+/// (OEM) build?
+///
+/// Division of labour with [`is_custom_client`]:
+/// - [`is_custom_client`] reads the runtime `APP_NAME` (`RwLock`), which a signed
+///   custom-client config rewrites (`read_custom_client`), so the *same* binary
+///   can answer differently depending on deployment; its meaning is "a
+///   custom-client config is in effect".
+/// - this constant is fixed when the binary is built; its meaning is "this
+///   product identity was built by the brand owner". It cannot be flipped by any
+///   runtime configuration, environment variable or option.
+///
+/// Use it wherever the reason for a branch is "this is not a stock RustDesk
+/// build"; keep `is_custom_client()` where the reason is "a custom-client
+/// deployment config is in effect". Classification of every call site, including
+/// the security-relevant `hide_cm` branch, is recorded in
+/// `analysis/oem/is-oem-build-decoupling.md`.
+///
+/// Turning it off: set the value below to `false` and rebuild. `is_oem_build()`
+/// then returns `false` everywhere and every call site converted to it falls back
+/// to its pre-change upstream branch; `is_custom_client()` semantics are
+/// untouched. Keeping the branded machine identifier while doing so still
+/// compiles -- the check below is one-way.
+pub const IS_OEM_BUILD: bool = true;
+
+/// Compile-time sanity check (one-way): claiming to be a branded build while the
+/// compile-time machine identifier is still the upstream literal is a
+/// contradiction. Not checked the other way round: `IS_OEM_BUILD = false`
+/// (brand behaviour off) must compile under any identifier.
+const _: () = assert!(
+    !IS_OEM_BUILD
+        || !matches!(
+            hbb_common::config::APP_NAME_IDENT.as_bytes(),
+            b"rustdesk"
+        )
+);
+
+/// See [`IS_OEM_BUILD`].
+#[inline]
+pub const fn is_oem_build() -> bool {
+    IS_OEM_BUILD
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

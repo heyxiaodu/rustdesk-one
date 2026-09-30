@@ -559,8 +559,10 @@ pub fn check_update_as_root() -> ResultType<bool> {
         log::info!("[root-update] Auto update is disabled, skipping.");
         return Ok(false);
     }
-    if crate::is_custom_client() {
-        log::info!("[root-update] Custom client detected, skipping stock update.");
+    if crate::is_oem_build() || crate::is_custom_client() {
+        // Two independent reasons to refuse the stock package: this is a branded
+        // build, or a custom-client deployment is in effect.
+        log::info!("[root-update] Branded build or custom client detected, skipping stock update.");
         return Ok(false);
     }
     // Clean up only old temp dirs from previous failed updates. The detached

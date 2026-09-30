@@ -967,7 +967,17 @@ async fn handle(data: Data, stream: &mut Connection) {
                         None
                     };
                 } else if name == "hide_cm" {
-                    value = if crate::hbbs_http::sync::is_pro() || crate::common::is_custom_client()
+                    // D5: the capability itself is still decided locally by
+                    // `hide_cm()` (approve mode + permanent-password-only +
+                    // `allow-hide-cm`); this branch only decides whether it is
+                    // reported to the GUI. `is_oem_build()` states the branded
+                    // build's entitlement instead of inheriting it from the
+                    // runtime display name; `is_custom_client()` is kept because
+                    // dropping it would silently disable the capability for
+                    // upstream custom-client deployments.
+                    value = if crate::hbbs_http::sync::is_pro()
+                        || crate::common::is_oem_build()
+                        || crate::common::is_custom_client()
                     {
                         Some(hbb_common::password_security::hide_cm().to_string())
                     } else {
