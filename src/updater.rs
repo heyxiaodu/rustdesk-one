@@ -354,6 +354,23 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf) {
 }
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
+    // Gate 1 (download layer): NERV Desk build policy. Returning `None` here is
+    // the fail-closed answer every caller already understands — `check_update`
+    // bails, `check_update_as_root` bails with the allowlist message. The
+    // allowlist in `allowlisted_update_download_file_from_url()` below is
+    // intentionally left untouched, so flipping `AUTO_UPDATE_ENABLED` back to
+    // `true` restores upstream behaviour exactly.
+    if !crate::common::AUTO_UPDATE_ENABLED {
+        return None;
+    }
+    allowlisted_update_download_file_from_url(url)
+}
+
+/// Upstream allowlist for update downloads, unchanged. Deliberately policy-free:
+/// the build-policy gate lives in `get_update_download_file_from_url()`, so the
+/// unit tests below can still exercise the parsing/allowlist rules regardless of
+/// `crate::common::AUTO_UPDATE_ENABLED`.
+fn allowlisted_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
     // Check the raw prefix before Url normalizes default ports.
     if !url.starts_with("https://github.com/")
@@ -657,11 +674,14 @@ pub fn check_update_as_root() -> ResultType<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::get_download_file_from_url;
+    use super::{
+        allowlisted_update_download_file_from_url, get_download_file_from_url,
+        get_update_download_file_from_url,
+    };
 
     #[test]
     fn update_download_file_accepts_expected_github_asset_urls() {
-        let file = get_download_file_from_url(
+        let file = allowlisted_update_download_file_from_url(
             "https://github.com/rustdesk/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
         )
         .expect("valid GitHub release asset URL");
@@ -687,7 +707,25 @@ mod tests {
             "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe#download",
             "not a url",
         ] {
-            assert!(get_download_file_from_url(url).is_none(), "{url}");
+            assert!(allowlisted_update_download_file_from_url(url).is_none(), "{url}");
+        }
+    }
+
+    #[test]
+    fn update_download_file_is_disabled_by_build_policy() {
+        const ASSET: &str =
+            "https://github.com/rustdesk/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg";
+        // Self-consistent when the constant is flipped back to `true`: this test
+        // then pins the enabled path (wrapper and allowlist agree) instead of
+        // failing forever.
+        if crate::common::AUTO_UPDATE_ENABLED {
+            assert_eq!(
+                get_update_download_file_from_url(ASSET),
+                allowlisted_update_download_file_from_url(ASSET)
+            );
+        } else {
+            assert!(get_update_download_file_from_url(ASSET).is_none());
+            assert!(get_download_file_from_url(ASSET).is_none());
         }
     }
 }

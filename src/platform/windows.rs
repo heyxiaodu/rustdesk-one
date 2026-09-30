@@ -3874,6 +3874,14 @@ pub fn handle_custom_client_staging_dir_before_update(
 
 // Used for auto update and manual update in the main window.
 pub fn update_to(file: &str) -> ResultType<()> {
+    // Gate 3 (install/apply layer): same build policy as gate 1 (`updater.rs`)
+    // and gate 2 (`common.rs`), added as defence in depth. Today the only caller
+    // is inside gate 1 (`flutter_ffi.rs`), but this primitive must not apply an
+    // update on its own. `update_me()` is deliberately left untouched: it is an
+    // OS-trust-boundary primitive, not an update policy decision.
+    if !crate::common::AUTO_UPDATE_ENABLED {
+        bail!("NERV Desk: automatic update disabled by build policy");
+    }
     if file.ends_with(".exe") {
         let custom_client_staging_dir = get_custom_client_staging_dir();
         if crate::is_custom_client() {

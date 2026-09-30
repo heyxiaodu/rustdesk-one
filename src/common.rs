@@ -1017,6 +1017,24 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
     }
 }
 
+/// NERV Desk: automatic software update is disabled (round-4 user decision C,
+/// 2026-10-01: refuse any server-provided update URL).
+///
+/// This is a compile-time build policy, deliberately *not* an environment
+/// variable and *not* a config option: a gate that can be flipped at runtime is
+/// not a gate. Both update layers consult it — the version-check layer in
+/// `do_check_software_update()` below, and the download layer in
+/// `crate::updater::get_update_download_file_from_url()`.
+///
+/// It lives in this module rather than in `updater` because `mod updater` is
+/// `#[cfg(not(any(target_os = "android", target_os = "ios")))]` (`src/lib.rs:58`),
+/// while `pub mod common` is unconditional (`src/lib.rs:23`) — a constant that
+/// only exists on desktop cannot gate the check layer on Android.
+///
+/// Re-enable automatic updates only with an explicit user decision, by setting
+/// this to `true`. See §13 of `analysis/oem/rename-impact.md`.
+pub const AUTO_UPDATE_ENABLED: bool = false;
+
 pub fn check_software_update() {
     if is_custom_client() {
         return;
@@ -1031,6 +1049,15 @@ pub fn check_software_update() {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    // Gate 2 (check layer): NERV Desk build policy — do not even issue the
+    // version-check request, so `SOFTWARE_UPDATE_URL` stays empty and the GUI
+    // never advertises an update. Kept separate from the `is_custom_client()`
+    // short-circuit in `check_software_update()` above, which is an incidental
+    // consequence of the display name and must not be depended on.
+    if !AUTO_UPDATE_ENABLED {
+        log::info!("NERV Desk: automatic update disabled by build policy");
+        return Ok(());
+    }
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
