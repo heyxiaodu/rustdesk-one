@@ -196,6 +196,15 @@ while [ "$i" -le "$n" ]; do
     i=$((i + 1))
 done
 
+# nervdesk: reproducible-build timestamps. /Brepro makes lld-link write a hash
+# of the executable into the COFF TimeDateStamp field instead of the wall-clock
+# time, so two consecutive links of identical inputs are byte-identical. This is
+# a general flag: it is appended unconditionally here next to the other always-on
+# flags (there is no A/B switch, no build-profile branch, and no env gate around
+# it) because round-5's acceptance criterion is exactly "two full builds produce
+# the same sha256 for all four artifacts".
+CMD+=("/Brepro")
+
 # If /MACHINE: was not passed by rustc, default to X64.
 if [ "$HAS_MACHINE" -eq 0 ]; then
     CMD+=("/MACHINE:X64")
@@ -251,79 +260,6 @@ done
 IMMINTRIN_STUBS_O="${NERV_IMMINTRIN_STUBS_O:-$NERV_BE_EFFECTIVE/analysis/build-env/stubs/obj/immintrin_stubs.o}"
 if [ -f "$IMMINTRIN_STUBS_O" ]; then
     CMD+=("$IMMINTRIN_STUBS_O")
-fi
-
-# nervdesk: sodium rust rlibs (sodiumoxide, libsodium_sys) emit __declspec(dllimport)
-# thunks for ALL extern "C" symbols by default on windows-msvc target. When we
-# static-link our own sodium.lib, those __imp_<name> references are unresolved
-# because sodium.lib exports the plain <name> symbols, not the dllimport thunks.
-#
-# /ALTERNATENAME:<alias>=<target> tells lld-link to rewrite any reference to
-# <alias> as if it were <target>. By mapping each __imp_<name> to <name>, the
-# dllimport thunk resolves to our static .lib's definition.
-# Add an /ALTERNATENAME for every sodium symbol that rust rlibs reference with
-# __declspec(dllimport). This list covers debug + release build paths for
-# rustdesk. Release pulls in additional sodiumoxide surface (blake2b, sha512,
-# poly1305, scalarmult_curve25519, stream_salsa20, verify_32, sodium_mem*,
-# sodium_misuse, etc.) — the list is the union of both:
-# nervdesk: NERV_DISABLE_SODIUM_ALTNAME is a PERMANENT switch, not a temporary
-# kill-switch.  The literal value `1` disables the /ALTERNATENAME rewrite below;
-# any other value (unset, "", 0, true, yes) keeps it enabled, so the default and
-# every falsy-looking spelling retain the correct behaviour.  Because a truthy
-# spelling like `true` does NOT disable it, that case now warns on stderr.
-#
-# Applicability: the rewrite is required for any windows-msvc link that resolves
-# sodium symbols from the static sodium.lib, and it is safe exactly there -- the
-# alias merely redirects __imp_<name> to <name>.  It exists only to reproduce the
-# pre-fix P2-9 link (the FFFFFFFFFFFFFFFF page fault documented in
-# scripts/native/README.md) for A/B comparison; never set it in a shipping build.
-if [ "${NERV_DISABLE_SODIUM_ALTNAME:-0}" != "1" ]; then
-for sym in \
-    crypto_box_beforenm \
-    crypto_box_keypair \
-    crypto_core_hchacha20 \
-    crypto_core_hsalsa20 \
-    crypto_core_salsa20 \
-    crypto_generichash_blake2b \
-    crypto_generichash_blake2b_final \
-    crypto_generichash_blake2b_init \
-    crypto_generichash_blake2b_update \
-    crypto_hash_sha512 \
-    crypto_hash_sha512_final \
-    crypto_hash_sha512_init \
-    crypto_hash_sha512_update \
-    crypto_onetimeauth_poly1305_final \
-    crypto_onetimeauth_poly1305_init \
-    crypto_onetimeauth_poly1305_update \
-    crypto_onetimeauth_poly1305_verify \
-    crypto_scalarmult_curve25519 \
-    crypto_scalarmult_curve25519_base \
-    crypto_secretbox_xsalsa20poly1305 \
-    crypto_secretbox_xsalsa20poly1305_open \
-    crypto_stream_chacha20_ietf \
-    crypto_stream_salsa20 \
-    crypto_stream_salsa20_xor \
-    crypto_stream_salsa20_xor_ic \
-    crypto_stream_xsalsa20 \
-    crypto_stream_xsalsa20_xor \
-    crypto_verify_16 \
-    crypto_verify_32 \
-    randombytes_buf \
-    randombytes_stir \
-    randombytes_sysrandom_implementation \
-    sodium_is_zero \
-    sodium_memcmp \
-    sodium_memzero \
-    sodium_misuse; do
-    CMD+=("/ALTERNATENAME:__imp_${sym}=${sym}")
-done
-else
-    # Only the literal `1` gets here, i.e. an explicit opt-out.  Make it loud: a
-    # silent disable shows up much later, as unresolved __imp_ symbols at link
-    # time, with no hint that a switch caused it.
-    echo "WARN: NERV_DISABLE_SODIUM_ALTNAME=1 -- /ALTERNATENAME rewrite DISABLED" >&2
-    echo "WARN:   __imp_<sodium_symbol> references will not resolve against the static sodium.lib." >&2
-    echo "WARN:   This reproduces the broken P2-9 baseline; for A/B comparison only." >&2
 fi
 
 # Emit final CMD to log (must run AFTER all CMD+= calls above).
