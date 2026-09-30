@@ -1,6 +1,9 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=+crt-static"]
-linker = "/tmp/nervdesk-msvc-shim/link.sh"
+# Relative to the workspace root (cargo runs rustc with that as its CWD).
+# scripts/cross-msvc.env additionally exports
+# CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER, so the absolute path always wins.
+linker = "scripts/msvc-shim/link.sh"
 # ---------------------------------------------------------------------------
 # NOTE (NERV Desk, m09628): the CC_/CXX_/AR_/CFLAGS_/CXXFLAGS_/KCP_SYS_*/NERV_*
 # keys that used to live here as `{ value = "...", force = "false" }` were
@@ -41,16 +44,19 @@ git-fetch-with-cli = true
 # === NERV Desk: Windows x86_64-msvc cross-compile shim (Phase-2 windows-msvc gate) ===
 # When the host is Linux and target is x86_64-pc-windows-msvc, the upstream
 # toolchain (`cc-rs` + the bundled xwin MSVC STL) demands `clang 19+` for any
-# C++ transitive dep (webm-sys, mozjpeg-sys). The shim below points CC / CXX
-# at /tmp/nervdesk-msvc-shim/clang-wrap.sh, which forces clang-19 (apt
-# installed 1:19.1.7-3~deb12u1) and injects --target=x86_64-pc-windows-msvc.
-# To use, also point NERV_SODIUM_LIB_DIR at analysis/build-env/nervdesk-sodium-msvc
-# (contains the cross-compiled libsodium.lib). The env values below match the
-# on-host layout of this NERVDesk workspace; override per build server as needed.
+# C++ transitive dep (webm-sys, mozjpeg-sys). scripts/msvc-shim/clang-wrap.sh
+# forces clang-19 (apt installed 1:19.1.7-3~deb12u1) and injects
+# --target=x86_64-pc-windows-msvc.
 #
-# IMPORTANT: All NERV_* env vars and KCP_SYS_EXTRA_HEADER_PATH live inside the
-# `[target.x86_64-pc-windows-msvc]` block above so they only apply to
-# windows-msvc builds. A global `[env]` block would leak them into host
-# (x86_64-unknown-linux-gnu) builds, where kcp-sys's bindgen would pick up
-# KCP_SYS_EXTRA_HEADER_PATH and choke on MSVC `<vadefs.h>` / `<vcruntime.h>`
-# (`__declspec` errors). See m09301/m09349 for the regression history.
+# The shim scripts are versioned in this repository. The xwin SDK
+# ($HOME/.xwin) and the cross-built COFF .lib archives
+# (analysis/build-env/nervdesk-*-msvc) are NOT — see scripts/cross-msvc.env for
+# their default locations and the NERV_* overrides.
+#
+# NOTE: the NERV_* / CC_* / CFLAGS_* values deliberately do NOT live in this
+# file. Cargo does not export `[target.<triple>]` keys as environment variables
+# to build scripts, so they are sourced from scripts/cross-msvc.env by
+# scripts/cross-build-msvc.sh. A global `[env]` block is not a substitute:
+# KCP_SYS_EXTRA_HEADER_PATH would leak into host (x86_64-unknown-linux-gnu)
+# builds and break kcp-sys's bindgen on MSVC `<vadefs.h>` / `<vcruntime.h>`
+# (regression history: m09301/m09349).
