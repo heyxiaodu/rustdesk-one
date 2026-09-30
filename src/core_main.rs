@@ -167,6 +167,84 @@ pub fn core_main() -> Option<Vec<String>> {
                 );
                 std::process::exit(2);
             }
+        } else if args[0] == "--transport" {
+            // P3 Path-A CLI: --transport <name>
+            // Maps <name> to NERV_QUIC_MODE env-var that get_quic_mode() (src/common.rs:1224)
+            // already reads. The connection-site dispatch at src/client.rs:1474 already honors
+            // QuicMode::{Disabled,Prefer,Required}; this CLI is purely a per-launch override
+            // that does NOT touch local-option storage. Falls through to Flutter GUI launch
+            // (no `return None`) so the user can configure once and connect through GUI.
+            //
+            // cfg-gated to mirror --quic-probe-mode (lines 145-169): quic-mode values are only
+            // accepted when the binary was built with `--features quic`. feature-off binaries
+            // accept only the four WebRTC/WebSocket/Tcp/default values, exactly matching the
+            // pre-Path-A behavior (AGENTS.md: feature-off must take original path).
+            #[cfg(feature = "quic")]
+            {
+                match args.get(1).map(String::as_str) {
+                    Some("quic-prefer") | Some("quic") => {
+                        std::env::set_var("NERV_QUIC_MODE", "prefer");
+                    }
+                    Some("quic-required") => {
+                        std::env::set_var("NERV_QUIC_MODE", "required");
+                    }
+                    Some("quic-off")
+                    | Some("web-rtc")
+                    | Some("webrtc")
+                    | Some("ws")
+                    | Some("websocket")
+                    | Some("tcp")
+                    | Some("default") => {
+                        std::env::set_var("NERV_QUIC_MODE", "disabled");
+                    }
+                    Some(other) => {
+                        eprintln!(
+                            "--transport: unknown value {:?}; expected one of \
+                             quic-prefer, quic-required, quic-off, web-rtc, ws, tcp, default",
+                            other
+                        );
+                        std::process::exit(2);
+                    }
+                    None => {
+                        eprintln!("--transport requires a value; expected one of \
+                                   quic-prefer, quic-required, quic-off, web-rtc, ws, tcp, default");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            #[cfg(not(feature = "quic"))]
+            {
+                match args.get(1).map(String::as_str) {
+                    Some("quic-prefer") | Some("quic") | Some("quic-required") => {
+                        eprintln!(
+                            "--transport: quic modes require the `quic` feature at build time; \
+                             rebuild with `cargo ... --features quic`"
+                        );
+                        std::process::exit(2);
+                    }
+                    Some("quic-off")
+                    | Some("web-rtc")
+                    | Some("webrtc")
+                    | Some("ws")
+                    | Some("websocket")
+                    | Some("tcp")
+                    | Some("default") => {
+                        // No-op: default build already maps to these transports.
+                    }
+                    Some(other) => {
+                        eprintln!(
+                            "--transport: unknown value {:?}; expected one of \
+                             web-rtc, ws, tcp, default (quic modes require --features quic)",
+                            other
+                        );
+                        std::process::exit(2);
+                    }
+                    None => {
+                        eprintln!("--transport requires a value");
+                        std::process::exit(2);
+                    }
+                }
+            }
         }
     }
     #[cfg(windows)]

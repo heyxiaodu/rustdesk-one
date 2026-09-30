@@ -199,6 +199,24 @@ fn gen_opus() {
                     vcpkg_root
                 );
             }
+        } else if target_os == "linux" || target_os == "macos" || target_os == "freebsd" {
+            // nervdesk (m09940): the same early-`return` trap as the other two
+            // cross-stubs (scrap, libsodium-sys). Because we skip
+            // `find_package("opus")` at the bottom of this function whenever the
+            // pre-generated bindings exist, the `linux-pkg-config` feature path
+            // never runs and NOTHING emits `-lopus`. The host link then failed
+            // with:
+            //   rust-lld: error: undefined symbol: opus_encoder_create
+            //   rust-lld: error: undefined symbol: opus_decode_float
+            //   rust-lld: error: undefined symbol: opus_strerror
+            // (7 symbols: opus_{encoder,decoder}_{create,destroy},
+            //  opus_{encode,decode}_float, opus_strerror)
+            //
+            // libopus-dev provides /usr/lib/<triple>/libopus.so (1.3.1 on this
+            // host) plus the .pc file; emit the equivalent directive so the host
+            // toolchain finds it. `cargo check` never caught this because check
+            // does not link.
+            println!("cargo:rustc-link-lib=opus");
         }
         return;
     }

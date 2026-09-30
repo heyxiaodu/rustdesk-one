@@ -73,6 +73,18 @@ fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>
         if let Ok(lib_dir) = env::var(&env_var) {
             println!("cargo:rustc-link-search={}", lib_dir);
         }
+    } else if target_os == "linux" {
+        // nervdesk: on a Linux host this pre-generated branch short-circuits
+        // `nervdesk_handle_package()` before it can reach `find_package()`, so
+        // without this arm NO link directive is emitted at all and the final
+        // rustdesk link fails with:
+        //   rust-lld: undefined symbol: vpx_codec_vp8_dx / vpx_codec_vp9_dx
+        //             aom_codec_av1_dx / aom_codec_av1_cx / FixedDiv_X86 ...
+        // The distro ships libvpx.so / libaom.so / libyuv.so, so link them by
+        // name. The msvc arm above is unaffected (target_os is "windows"
+        // there) and keeps using the cross-built .lib search path.
+        let short = name.trim_start_matches("lib");
+        println!("cargo:rustc-link-lib={}", short);
     }
     // Return empty include paths; bindgen is skipped. For real Windows hosts
     // with VCPKG_ROOT set the proper vcpkg-based link path is used (these

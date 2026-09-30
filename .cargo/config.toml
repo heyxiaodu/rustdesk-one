@@ -1,6 +1,26 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=+crt-static"]
 linker = "/tmp/nervdesk-msvc-shim/link.sh"
+# ---------------------------------------------------------------------------
+# NOTE (NERV Desk, m09628): the CC_/CXX_/AR_/CFLAGS_/CXXFLAGS_/KCP_SYS_*/NERV_*
+# keys that used to live here as `{ value = "...", force = "false" }` were
+# REMOVED because cargo does NOT export `[target.<triple>]` keys as environment
+# variables to build scripts. Verified empirically: a build script running under
+# `--target=x86_64-pc-windows-msvc` saw `CC_x86_64_pc_windows_msvc = None` even
+# though the key was present in this table.
+#
+# Consequence of the old (inert) form: cc-rs fell back to a bare host `clang`
+# from PATH, which emitted **ELF** .o files, and `lib.exe` then failed with
+#   "not a COFF object, bitcode, archive, import library or resource file".
+#
+# Cross builds must therefore source the environment explicitly:
+#     scripts/cross-build-msvc.sh --features quic
+# or  set -a; . scripts/cross-msvc.env; set +a; cargo build --target=... 
+#
+# A global `[env]` block is NOT a substitute: the global-named key
+# KCP_SYS_EXTRA_HEADER_PATH would leak into host (linux-gnu) builds and break
+# kcp-sys's bindgen on MSVC `<vadefs.h>` (regression history: m09301/m09349).
+# ---------------------------------------------------------------------------
 [target.i686-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/NODEFAULTLIB:MSVCRT"]
 [target.aarch64-pc-windows-msvc]
@@ -27,46 +47,10 @@ git-fetch-with-cli = true
 # To use, also point NERV_SODIUM_LIB_DIR at analysis/build-env/nervdesk-sodium-msvc
 # (contains the cross-compiled libsodium.lib). The env values below match the
 # on-host layout of this NERVDesk workspace; override per build server as needed.
-
-[env]
-# Cross-compile wrapper that injects --target=x86_64-pc-windows-msvc and
-# upgrades -std=gnu++11 → -std=gnu++14 (the latter only fires if a C++ source
-# is on the command line). Without this wrapper, cc-rs's default `cc` driver
-# emits ELF .o files, which fail to link in a COFF-target rustc invocation.
-CC_x86_64_pc_windows_msvc = { value = "/tmp/nervdesk-msvc-shim/clang-wrap.sh", force = false }
-CXX_x86_64_pc_windows_msvc = { value = "/tmp/nervdesk-msvc-shim/clang-wrap.sh", force = false }
-AR_x86_64_pc_windows_msvc = { value = "llvm-lib", force = false }
-# CFLAGS are propagated to cc-rs's build invocations on webm-sys / mozjpeg-sys
-# etc. when target = x86_64-pc-windows-msvc. The xwin paths provide the
-# Windows SDK CRT + UCRT + Win32 API headers; without them, native clang's
-# built-in libcxx would try to satisfy them and fail.
-CFLAGS_x86_64_pc_windows_msvc = { value = "--target=x86_64-pc-windows-msvc -fuse-ld=lld -I/vol2/@appdata/deepseek.harness/home/.xwin/crt/include -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/um -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/shared -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/ucrt -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/winrt", force = false }
-CXXFLAGS_x86_64_pc_windows_msvc = { value = "--target=x86_64-pc-windows-msvc -fuse-ld=lld -I/vol2/@appdata/deepseek.harness/home/.xwin/crt/include -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/um -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/shared -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/ucrt -I/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/winrt", force = false }
-# libsodium location for the cross-compiled libsodium stub. The
-# libsodium-sys-cross-stub crate (see [patch.crates-io] in Cargo.toml) reads
-# NERV_SODIUM_LIB_DIR first, then SODIUM_LIB_DIR.
-NERV_SODIUM_LIB_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-sodium-msvc", force = false }
-NERV_SODIUM_INCLUDE_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-sodium-msvc/include", force = false }
-# kcp-sys uses bindgen to generate Rust bindings from kcp/ikcp.h, which itself
-# pulls in <stdlib.h>, <stdint.h>, <assert.h>. When target != host and not a
-# zigbuild (our cross from linux to windows-msvc via clang-19), kcp-sys's
-# build.rs only passes --target= and KCP_SYS_EXTRA_HEADER_PATH entries to
-# libclang — it does NOT inherit CFLAGS include paths. Without MSVC target's
-# CRT/UCRT headers on the libclang include path, libclang resolves stdlib.h
-# against the linux host layout and the bindgen call fails with
-# `'stdlib.h' file not found`. The two xwin include dirs below provide the
-# MSVC CRT (crt/) and UCRT (sdk/include/ucrt/) headers.
-KCP_SYS_EXTRA_HEADER_PATH = { value = "/vol2/@appdata/deepseek.harness/home/.xwin/crt/include:/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/ucrt:/vol2/@appdata/deepseek.harness/home/.xwin/sdk/include/shared", force = false }
-# nervdesk: hand-rolled COFF .lib locations for the cross-built native libs
-# (libaom 3.6.0, libvpx 1.12.0, libyuv). libs/scrap/build.rs::link_vcpkg
-# short-circuits to these env vars when target=windows-msvc, instead of
-# looking under a vcpkg installed root.
-NERV_LIBAOM_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-aom-msvc/lib", force = false }
-NERV_LIBVPX_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-vpx-msvc/lib", force = false }
-NERV_LIBYUV_DIR = { value = "/vol2/@appdata/deepseek.harness/home/NERVDesk/analysis/build-env/nervdesk-yuv-msvc/lib", force = false }
-# nervdesk: capture lld-link stderr to a file so we can diagnose link errors
-# that cargo's --message-format=short swallows. Set by cargo at link time.
-NERV_LINK_LOG = { value = "/tmp/nerv-link.log", force = false }
-# nervdesk: log the final lld-link command to NERV_LINK_LOG before exec, so
-# we can see exactly which LIBPATH / .lib files were passed.
-NERV_LINK_VERBOSE = { value = "1", force = false }
+#
+# IMPORTANT: All NERV_* env vars and KCP_SYS_EXTRA_HEADER_PATH live inside the
+# `[target.x86_64-pc-windows-msvc]` block above so they only apply to
+# windows-msvc builds. A global `[env]` block would leak them into host
+# (x86_64-unknown-linux-gnu) builds, where kcp-sys's bindgen would pick up
+# KCP_SYS_EXTRA_HEADER_PATH and choke on MSVC `<vadefs.h>` / `<vcruntime.h>`
+# (`__declspec` errors). See m09301/m09349 for the regression history.
