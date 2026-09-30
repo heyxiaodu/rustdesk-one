@@ -25,9 +25,20 @@ Default locations are derived from the script's own path
 (`NERV_BE`, `NERV_XWIN`, `NERV_SHIM`, `NERV_SODIUM_LIB_DIR`,
 `NERV_SODIUM_INCLUDE_DIR`, `NERV_IMMINTRIN_STUBS_O`) override every default.
 
-Both scripts are safe to re-run: they install atomically-ish (the previous
-archive is renamed to `sodium.lib.bak-<UTC timestamp>` first) and they assert
-their own post-conditions rather than trusting the build.
+Both scripts are safe to re-run and both assert their own post-conditions rather
+than trusting the build, but **"atomic" would be the wrong word for either of
+them, and they differ from each other**:
+
+* `build-libsodium-msvc.sh` **copies** the previous archive aside to
+  `sodium.lib.bak-<UTC timestamp>` (`cp -p` — not a rename) before installing the
+  new one, so a failed build of the new archive leaves the previous one in place.
+* `build-immintrin-stubs.sh` compiles **straight over** the installed object: no
+  temporary file, no backup, no marker. A compile failure therefore destroys the
+  previous good object and the only recovery is to re-run the script. The failure
+  itself is loud (exit 2), so this is a recovery cost, not a silent corruption.
+
+One of the checks the sodium script performs is conditional; it is documented
+separately below so it is not mistaken for an unconditional gate.
 
 ---
 
@@ -36,6 +47,19 @@ their own post-conditions rather than trusting the build.
 ```sh
 repos/rustdesk/scripts/native/build-libsodium-msvc.sh [--jobs N] [--out DIR] [--keep-src]
 ```
+
+`--out` is validated before anything is written: it must be non-empty, must not
+resolve to `/`, and must resolve (after symlinks) to a directory **inside** the
+project tree. The empty case used to be genuinely destructive — `--out ""` made
+`$OUT_DIR/lib`, `$OUT_DIR/include` and the recursive
+`rm -rf "$OUT_DIR/include/sodium"` collapse onto `/lib`, `/include` and
+`/include/sodium`, and this cross-build runs as root. **There is no environment
+override for this check**: it is the only place in the project where a single
+argument could damage the host, so no escape hatch exists (same principle as the
+`EXPECTED_*` constants — a gate the guarded party can switch off is not a gate).
+If you need a scratch copy, put it in a directory inside the project tree (e.g.
+`analysis/security/.tmp-f7/`) and delete it afterwards. `--jobs` must be a
+positive integer.
 
 ### Source of truth, and the provenance gate
 
@@ -91,17 +115,62 @@ upstream 1.0.18 tarball lacks `fe25519_mul32` / `fe25519_notsquare` /
 ### Post-conditions the script asserts
 
 * 106 objects compiled, 0 failures, 106 archive members;
+* the archive's **member-name set** matches the pinned 106-name baseline list
+  (hard failure, exit 4). Member names are derived only from the source-tree
+  layout and the naming rule, so the set is machine-independent — which is what
+  makes it the one *output-side* invariant that can be asserted hard. This gate
+  is **unconditional and fail-closed**: it never consults a hashing tool, so it
+  holds even on a machine with neither `sha256sum` nor `openssl`. The archive's
+  **sha256** and byte size are printed alongside it for human
+  comparison but deliberately **not** asserted, because 7 of 106 members embed an
+  absolute source path (see *Fidelity to the shipped archive*). A second,
+  redundant gate cross-checks the member-set digest against the pinned
+  `EXPECTED_MEMBER_SET_SHA256`; if no hashing tool exists it cannot run, and the
+  script then prints an explicit `WARN: … cross-check was SKIPPED (<unavailable>)`
+  — it never passes that comparison silently, and it never reports a false
+  "digest out of sync" error in that situation;
 * `__imp_` symbol count is exactly **10**, and all 10 match the
   Windows-API allowlist (`Enter|Initialize|LeaveCriticalSection`, `Sleep`,
   `Virtual{Alloc,Free,Lock,Protect,Unlock}`, `GetSystemInfo`) — these are
   genuine kernel32 imports, not sodium self-references;
-* archive format is COFF;
 * `sodium_init`, `randombytes_buf`, `randombytes_implementation_name`,
   `randombytes_sysrandom_implementation` are all defined;
-* **every** `_mm_*` symbol left undefined by the archive is provided by
-  `$NERV_IMMINTRIN_STUBS_O` (`intrinsics needed: 67 / provided by stub: 75`),
-  otherwise it exits 4 with the missing names. This is the gate that would
-  have caught the `_mm_slli_epi64` breakage before lld-link did.
+* archive format is COFF — **a diagnostic, not a gate**. A non-COFF archive
+  prints `WARN: could not confirm COFF archive format` on stderr and the build
+  continues (exit 0). Only `build-immintrin-stubs.sh` fails hard on a non-COFF
+  object, and it does so with **exit 3**. Do not read this line as an assertion.
+
+### Conditional check: `_mm_*` stub coverage — this one does NOT always run
+
+The script additionally cross-checks that **every** `_mm_*` symbol the archive
+leaves undefined is provided by `$NERV_IMMINTRIN_STUBS_O`
+(`intrinsics needed: 67 / provided by stub: 75`), and exits 4 listing the missing
+names otherwise. That is the check which would have caught the `_mm_slli_epi64`
+breakage before `lld-link` did — but it is **conditional**, because it needs the
+stub object to compare against:
+
+| `NERV_IMMINTRIN_STUBS_O` | behaviour |
+| --- | --- |
+| set, pointing at an existing file | the check runs |
+| unset, or pointing at nothing | `NOTE: ... skipping _mm_* coverage check`; the archive is still installed and the script still exits 0 |
+| set and existing, but one symbol list comes back empty | `WARN: could not read one of the symbol lists; skipping coverage check` |
+
+`scripts/cross-msvc.env` does export this variable, but running the script does
+**not** source that file — the usage line above asks for no such step — so if you
+invoke the script directly, the check does not run.
+
+**Not running this check does not mean the archive is broken.** Stub coverage is a
+*link-time* property: if the archive needs an intrinsic the stub does not provide,
+`lld-link` fails hard with
+
+```
+lld-link-19: error: undefined symbol: _mm_slli_epi64
+```
+
+so an uncovered intrinsic can never be silently linked into a working binary.
+Skipping the check costs an earlier and clearer error message, not correctness.
+Making it unconditional is deliberately not done: the stub object is built by a
+different script and need not exist at all for a valid `sodium.lib`.
 
 ### Fidelity to the shipped archive
 
@@ -135,9 +204,12 @@ surfaced as
 `.../crypto_pwhash_argon2_argon2-fill-block-ssse3.obj:(fill_block_with_xor)`,
 446 references). This script compiles the replacements in
 `analysis/build-env/stubs/immintrin_stubs.c` and asserts the object defines
-exactly **77** `T` symbols and is COFF. `--check` compiles to a temporary file
-and diffs the symbol set against the installed object, which proves the
-installed object still matches its source.
+exactly **77** `T` symbols and is COFF. That count is hard-coded in the script
+and is **not** overridable from the environment (the former
+`NERV_IMMINTRIN_EXPECTED_T` override is gone: a guard whose threshold the
+environment can set is not a guard). `--check` compiles to a temporary file and
+diffs the symbol set against the installed object, which proves the installed
+object still matches its source.
 
 The object must stay a **separate positional argument** at link time
 (`$NERV_IMMINTRIN_STUBS_O`, appended by `link.sh`). Do **not** fold it into
@@ -189,7 +261,14 @@ the stale rlib is still cached.
 ## Keep the `NERV_*_LIB_DIR` directories clean
 
 `scripts/msvc-shim/link.sh` appends **every** `*.lib` it finds in each
-`NERV_*_LIB_DIR` to **every** link, with no name filter. Backups created by
-these scripts therefore get linked too. Keep only the real archive in each
-directory and move backups elsewhere (e.g. `stray-quarantine/`); otherwise you
-are silently linking an unknown mixture of archives.
+`NERV_*_LIB_DIR` to **every** link, with no name filter. So any file in one of
+those directories **whose name ends in `.lib`** — including a hand-made copy such
+as `sodium-old.lib` — is silently linked in alongside the real archive.
+
+The automatic backups these scripts create are **not** affected: they are named
+`sodium.lib.bak-<UTC timestamp>`, which does not end in `.lib`, so the glob does
+not match them. (An earlier version of this note claimed the backups "get linked
+too". That was wrong — verified by expanding the glob.) Keep only the real
+archive in each directory and move stray `.lib` files elsewhere (e.g.
+`stray-quarantine/`); otherwise you are silently linking an unknown mixture of
+archives.

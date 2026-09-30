@@ -65,17 +65,159 @@ EXPECTED_MEMBERS=106
 EXPECTED_IMP_SYMBOLS=10
 IMP_ALLOWLIST='^__imp_(Enter|Initialize|Leave)CriticalSection$|^__imp_Sleep$|^__imp_Virtual(Alloc|Free|Lock|Protect|Unlock)$|^__imp_GetSystemInfo$'
 
+# Recorded archive sizes in bytes.  Informational only -- do NOT turn these into
+# assertions.  Seven of the 106 members embed an absolute source path in
+# `.rdata` (see scripts/native/README.md, "Fidelity to the shipped archive"),
+# so the byte size legitimately depends on where the source tree lives.  Both
+# numbers are recorded so that a mismatch is visible rather than surprising:
+#   BASELINE_SHIPPED_SIZE -- the archive the verified PE artefacts were linked
+#                            against, currently installed in analysis/build-env
+#   BASELINE_REBUILT_SIZE -- the same archive rebuilt from the crate tree
+BASELINE_SHIPPED_SIZE=2283100
+BASELINE_REBUILT_SIZE=2282638
+
+# The exact archive member-name set of the shipped archive (sorted, LC_ALL=C).
+#
+# Member names are the source path relative to src/libsodium with '/' replaced
+# by '_' -- a function of the *source tree layout* and the naming rule, and of
+# nothing else.  That makes this list machine-independent, unlike the archive
+# bytes: it is the one output-side invariant that can be asserted hard.
+#
+# It is pinned as an explicit list rather than only as a hash on purpose -- a
+# bare hash is short but does not tell a reviewer what it pins.  The digest of
+# this list is recorded alongside it for convenience, and the archive's own
+# sha256 is printed (never asserted) for human comparison.
+#
+# Regenerate with:  llvm-ar-19 t <archive> | tr -d '\r' | LC_ALL=C sort
+EXPECTED_MEMBER_SET_SHA256="2f810ad2262eddd1b06b5b3d7ff2a9b4dee8488070bf0545a6ef169497e782bd"
+EXPECTED_MEMBER_SET='crypto_aead_aes256gcm_aesni_aead_aes256gcm_aesni.obj
+crypto_aead_chacha20poly1305_sodium_aead_chacha20poly1305.obj
+crypto_aead_xchacha20poly1305_sodium_aead_xchacha20poly1305.obj
+crypto_auth_crypto_auth.obj
+crypto_auth_hmacsha256_auth_hmacsha256.obj
+crypto_auth_hmacsha512256_auth_hmacsha512256.obj
+crypto_auth_hmacsha512_auth_hmacsha512.obj
+crypto_box_crypto_box.obj
+crypto_box_crypto_box_easy.obj
+crypto_box_crypto_box_seal.obj
+crypto_box_curve25519xchacha20poly1305_box_curve25519xchacha20poly1305.obj
+crypto_box_curve25519xchacha20poly1305_box_seal_curve25519xchacha20poly1305.obj
+crypto_box_curve25519xsalsa20poly1305_box_curve25519xsalsa20poly1305.obj
+crypto_core_ed25519_core_ed25519.obj
+crypto_core_ed25519_core_ristretto255.obj
+crypto_core_ed25519_ref10_ed25519_ref10.obj
+crypto_core_hchacha20_core_hchacha20.obj
+crypto_core_hsalsa20_core_hsalsa20.obj
+crypto_core_hsalsa20_ref2_core_hsalsa20_ref2.obj
+crypto_core_salsa_ref_core_salsa_ref.obj
+crypto_generichash_blake2b_generichash_blake2.obj
+crypto_generichash_blake2b_ref_blake2b-compress-avx2.obj
+crypto_generichash_blake2b_ref_blake2b-compress-ref.obj
+crypto_generichash_blake2b_ref_blake2b-compress-sse41.obj
+crypto_generichash_blake2b_ref_blake2b-compress-ssse3.obj
+crypto_generichash_blake2b_ref_blake2b-ref.obj
+crypto_generichash_blake2b_ref_generichash_blake2b.obj
+crypto_generichash_crypto_generichash.obj
+crypto_hash_crypto_hash.obj
+crypto_hash_sha256_cp_hash_sha256_cp.obj
+crypto_hash_sha256_hash_sha256.obj
+crypto_hash_sha512_cp_hash_sha512_cp.obj
+crypto_hash_sha512_hash_sha512.obj
+crypto_kdf_blake2b_kdf_blake2b.obj
+crypto_kdf_crypto_kdf.obj
+crypto_kx_crypto_kx.obj
+crypto_onetimeauth_crypto_onetimeauth.obj
+crypto_onetimeauth_poly1305_donna_poly1305_donna.obj
+crypto_onetimeauth_poly1305_onetimeauth_poly1305.obj
+crypto_onetimeauth_poly1305_sse2_poly1305_sse2.obj
+crypto_pwhash_argon2_argon2-core.obj
+crypto_pwhash_argon2_argon2-encoding.obj
+crypto_pwhash_argon2_argon2-fill-block-avx2.obj
+crypto_pwhash_argon2_argon2-fill-block-avx512f.obj
+crypto_pwhash_argon2_argon2-fill-block-ref.obj
+crypto_pwhash_argon2_argon2-fill-block-ssse3.obj
+crypto_pwhash_argon2_argon2.obj
+crypto_pwhash_argon2_blake2b-long.obj
+crypto_pwhash_argon2_pwhash_argon2i.obj
+crypto_pwhash_argon2_pwhash_argon2id.obj
+crypto_pwhash_crypto_pwhash.obj
+crypto_pwhash_scryptsalsa208sha256_crypto_scrypt-common.obj
+crypto_pwhash_scryptsalsa208sha256_nosse_pwhash_scryptsalsa208sha256_nosse.obj
+crypto_pwhash_scryptsalsa208sha256_pbkdf2-sha256.obj
+crypto_pwhash_scryptsalsa208sha256_pwhash_scryptsalsa208sha256.obj
+crypto_pwhash_scryptsalsa208sha256_scrypt_platform.obj
+crypto_pwhash_scryptsalsa208sha256_sse_pwhash_scryptsalsa208sha256_sse.obj
+crypto_scalarmult_crypto_scalarmult.obj
+crypto_scalarmult_curve25519_ref10_x25519_ref10.obj
+crypto_scalarmult_curve25519_sandy2x_curve25519_sandy2x.obj
+crypto_scalarmult_curve25519_sandy2x_fe51_invert.obj
+crypto_scalarmult_curve25519_sandy2x_fe_frombytes_sandy2x.obj
+crypto_scalarmult_curve25519_scalarmult_curve25519.obj
+crypto_scalarmult_ed25519_ref10_scalarmult_ed25519_ref10.obj
+crypto_scalarmult_ristretto255_ref10_scalarmult_ristretto255_ref10.obj
+crypto_secretbox_crypto_secretbox.obj
+crypto_secretbox_crypto_secretbox_easy.obj
+crypto_secretbox_xchacha20poly1305_secretbox_xchacha20poly1305.obj
+crypto_secretbox_xsalsa20poly1305_secretbox_xsalsa20poly1305.obj
+crypto_secretstream_xchacha20poly1305_secretstream_xchacha20poly1305.obj
+crypto_shorthash_crypto_shorthash.obj
+crypto_shorthash_siphash24_ref_shorthash_siphash24_ref.obj
+crypto_shorthash_siphash24_ref_shorthash_siphashx24_ref.obj
+crypto_shorthash_siphash24_shorthash_siphash24.obj
+crypto_shorthash_siphash24_shorthash_siphashx24.obj
+crypto_sign_crypto_sign.obj
+crypto_sign_ed25519_ref10_keypair.obj
+crypto_sign_ed25519_ref10_obsolete.obj
+crypto_sign_ed25519_ref10_open.obj
+crypto_sign_ed25519_ref10_sign.obj
+crypto_sign_ed25519_sign_ed25519.obj
+crypto_stream_chacha20_dolbeau_chacha20_dolbeau-avx2.obj
+crypto_stream_chacha20_dolbeau_chacha20_dolbeau-ssse3.obj
+crypto_stream_chacha20_ref_chacha20_ref.obj
+crypto_stream_chacha20_stream_chacha20.obj
+crypto_stream_crypto_stream.obj
+crypto_stream_salsa2012_ref_stream_salsa2012_ref.obj
+crypto_stream_salsa2012_stream_salsa2012.obj
+crypto_stream_salsa208_ref_stream_salsa208_ref.obj
+crypto_stream_salsa208_stream_salsa208.obj
+crypto_stream_salsa20_ref_salsa20_ref.obj
+crypto_stream_salsa20_stream_salsa20.obj
+crypto_stream_salsa20_xmm6_salsa20_xmm6.obj
+crypto_stream_salsa20_xmm6int_salsa20_xmm6int-avx2.obj
+crypto_stream_salsa20_xmm6int_salsa20_xmm6int-sse2.obj
+crypto_stream_xchacha20_stream_xchacha20.obj
+crypto_stream_xsalsa20_stream_xsalsa20.obj
+crypto_verify_sodium_verify.obj
+randombytes_internal_randombytes_internal_random.obj
+randombytes_randombytes.obj
+randombytes_sysrandom_randombytes_sysrandom.obj
+sodium_codecs.obj
+sodium_core.obj
+sodium_runtime.obj
+sodium_utils.obj
+sodium_version.obj'
+
 JOBS="$(nproc 2>/dev/null || echo 4)"
 OUT_DIR="${NERV_SODIUM_LIB_DIR:-$NERV_BE/analysis/build-env/nervdesk-sodium-msvc}"
 KEEP_SRC=0
 
+# Declared before the argument loop: the loop validates its own operands, so it
+# needs these already defined.
+fail() {
+    echo "ERROR: $*" >&2
+    exit "${2:-3}"
+}
+note() { printf '\n=== %s ===\n' "$*"; }
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --jobs)
+            [ $# -ge 2 ] || fail "--jobs requires a value" 1
             JOBS="$2"
             shift 2
             ;;
         --out)
+            [ $# -ge 2 ] || fail "--out requires a value" 1
             OUT_DIR="$2"
             shift 2
             ;;
@@ -94,21 +236,79 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# --- validate --out / --jobs -------------------------------------------------
+# `--out` was previously taken verbatim.  `--out ""` then collapsed every
+# install target onto the filesystem root: `$OUT_DIR/lib`, `$OUT_DIR/include` and
+# the recursive `rm -rf "$OUT_DIR/include/sodium"` in the install section would
+# all have resolved to /lib, /include and /include/sodium.  This build runs as
+# root, so that was a single-argument way to damage the host.  Nothing is
+# written until these checks pass.
+#
+# The path must resolve (after symlinks) into one of the two trees this project
+# owns -- the checkout itself or the analysis/ directory beside it -- and must
+# not be either root.  There is deliberately NO environment override here: this
+# is the only place in the project where a single argument could damage the
+# host, and an escape hatch would simply reintroduce what the check exists to
+# stop.  Same principle as the EXPECTED_* constants below -- a gate the guarded
+# party can switch off is not a gate.
+validate_out_dir() { # <dir> -> prints the resolved directory
+    local d="$1" real root_real be_real
+    [ -n "$d" ] || fail "--out must not be empty (it would collapse every install target onto /)" 1
+    real="$(realpath -m -- "$d" 2>/dev/null)" || fail "cannot resolve --out path: $d" 1
+    [ "$real" != "/" ] || fail "--out must not be the filesystem root" 1
+    root_real="$(realpath -m -- "$NERV_REPO_ROOT" 2>/dev/null)" \
+        || fail "cannot resolve NERV_REPO_ROOT=$NERV_REPO_ROOT" 1
+    be_real="$(realpath -m -- "$NERV_BE" 2>/dev/null)" \
+        || fail "cannot resolve NERV_BE=$NERV_BE" 1
+    case "$real" in
+        "$root_real" | "$be_real")
+            fail "--out must not be the project root itself: $real" 1
+            ;;
+        "$root_real"/* | "$be_real"/*) ;;
+        *)
+            echo "ERROR: --out must be inside $be_real" >&2
+            echo "       got: $real" >&2
+            echo "       (if you need a scratch copy, use a directory inside $be_real;" >&2
+            echo "        there is no override for this check by design)" >&2
+            exit 1
+            ;;
+    esac
+    printf '%s\n' "$real"
+}
+OUT_DIR="$(validate_out_dir "$OUT_DIR")"
+
+case "$JOBS" in
+    '' | *[!0-9]*) fail "--jobs must be a positive integer (got '$JOBS')" 1 ;;
+esac
+[ "$JOBS" -ge 1 ] || fail "--jobs must be >= 1 (got $JOBS)" 1
+
 CLANG_WRAP="${NERV_SHIM:-$NERV_SHIM}/clang-wrap.sh"
 TARGET_TRIPLE="x86_64-pc-windows-msvc"
 LLVM_AR="${NERV_LLVM_AR:-/usr/bin/llvm-ar-19}"
 LLVM_NM="${NERV_LLVM_NM:-/usr/bin/llvm-nm-19}"
 LLVM_OBJDUMP="${NERV_LLVM_OBJDUMP:-/usr/bin/llvm-objdump-19}"
 
-fail() {
-    echo "ERROR: $*" >&2
-    exit "${2:-3}"
+# sha256 helpers.  NOT hard prerequisites: the tool is used only to record a
+# digest for human comparison, and degrading to "<unavailable>" must never fail
+# a build that is otherwise sound.
+sha256_of() { # <file> -> hex digest, or "<unavailable>"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    else
+        printf '<unavailable>\n'
+    fi
 }
-note() { printf '\n=== %s ===\n' "$*"; }
 
 note "prerequisites"
 [ -f "$CLANG_WRAP" ] || fail "missing required file: $CLANG_WRAP" 1
-for t in "$LLVM_AR" "$LLVM_NM" "$LLVM_OBJDUMP" curl sha256sum tar find xargs; do
+# `curl` and `sha256sum` were required here and never used: the download /
+# checksum path they guarded was removed (EXIT CODES still reserves 2 for it).
+# Requiring a tool that is never called only makes the script harder to run than
+# it needs to be, so both are gone from this list -- curl for good, and sha256sum
+# because the fingerprint below treats it as optional with an openssl fallback.
+for t in "$LLVM_AR" "$LLVM_NM" "$LLVM_OBJDUMP" tar find xargs; do
     command -v "$t" >/dev/null || fail "$t not available" 1
 done
 echo "clang wrapper : $CLANG_WRAP"
@@ -143,8 +343,10 @@ find_registry_src() {
     local root base
     for base in "${CARGO_HOME:-$HOME/.cargo}/registry/src" "$HOME/.cargo/registry/src"; do
         [ -d "$base" ] || continue
-        # shellcheck disable=SC2086
-        for root in $base/*/libsodium-sys-${SODIUM_SYS_VERSION}; do
+        # Quote the variable expansions, leave the glob metacharacter bare: an
+        # unquoted $base word-splits on spaces (and would break if the registry
+        # path ever contained one), while the `*` must stay a glob.
+        for root in "$base"/*/libsodium-sys-"$SODIUM_SYS_VERSION"; do
             if [ -d "$root/libsodium" ]; then
                 printf '%s\n' "$root/libsodium"
                 return 0
@@ -309,6 +511,60 @@ got_members=$("$LLVM_AR" t "$STAGE/sodium.lib" 2>/dev/null | tr -d '\r' | wc -l)
 echo "members: $got_members (expected $EXPECTED_MEMBERS)"
 [ "$got_members" -eq "$EXPECTED_MEMBERS" ] || fail "member count mismatch" 4
 
+# ---------------------------------------------------------------------------
+# Artefact fingerprint.  Everything above this point pins the *input* (the
+# source tree, by three heuristics).  Nothing pinned the *output*, so a wrong
+# but plausible source tree could still pass every gate and install a different
+# archive unnoticed.  The member-name set closes that: it is derived purely from
+# the source tree layout and the member-naming rule, so it is identical on every
+# build machine, and a hard assertion on it is therefore legitimate.
+#
+# The archive sha256 and byte size are printed but NOT asserted -- see the note
+# on BASELINE_*_SIZE at the top: 7 of 106 members embed an absolute __FILE__
+# path, which makes the bytes a function of where the tree lives.
+note "artefact fingerprint"
+"$LLVM_AR" t "$STAGE/sodium.lib" 2>/dev/null | tr -d '\r' | LC_ALL=C sort >"$WORK/member_names.txt"
+printf '%s\n' "$EXPECTED_MEMBER_SET" | LC_ALL=C sort >"$WORK/member_set_expected.txt"
+if ! diff -u "$WORK/member_set_expected.txt" "$WORK/member_names.txt" >"$WORK/member_set.diff" 2>&1; then
+    echo "ERROR: archive member names do not match the pinned baseline set." >&2
+    echo "       The set depends only on the source tree layout and the naming" >&2
+    echo "       rule, so a difference means one of those changed -- or that a" >&2
+    echo "       stale archive is being fingerprinted.  Refusing to install." >&2
+    sed -n '1,40p' "$WORK/member_set.diff" | sed 's/^/  /' >&2
+    exit 4
+fi
+member_set_hash=$(sha256_of "$WORK/member_names.txt")
+archive_hash=$(sha256_of "$STAGE/sodium.lib")
+archive_size=$(stat -c%s "$STAGE/sodium.lib")
+echo "member-name set: $got_members names, identical to the pinned baseline (sha256 $member_set_hash)"
+echo "archive sha256 : $archive_hash"
+echo "archive size   : $archive_size B"
+echo "  recorded baselines: shipped $BASELINE_SHIPPED_SIZE B / rebuilt-elsewhere $BASELINE_REBUILT_SIZE B"
+echo "  (size varies with the source tree path; only the member set is asserted)"
+if [ "$member_set_hash" = "<unavailable>" ]; then
+    # The member-set *diff* gate at the top of this section is unconditional and
+    # fail-closed: it never consults a sha256 tool, so it still holds on a
+    # machine with neither sha256sum nor openssl.  The digest comparison below
+    # is a second, redundant gate that catches EXPECTED_MEMBER_SET and
+    # EXPECTED_MEMBER_SET_SHA256 drifting apart.  When no hashing tool exists it
+    # provably cannot run -- so it says so, loudly, rather than passing silently
+    # or (worse) reporting a false "out of sync" root cause.
+    echo "WARN: no sha256 tool available (neither sha256sum nor openssl); the" >&2
+    echo "WARN:   EXPECTED_MEMBER_SET_SHA256 cross-check was SKIPPED (<unavailable>)." >&2
+    echo "WARN:   The member-name-set diff gate above DID run and passed; it is the" >&2
+    echo "WARN:   authoritative check on the member set.  Only the redundant" >&2
+    echo "WARN:   recorded-digest drift check is missing on this machine." >&2
+elif [ "$member_set_hash" != "$EXPECTED_MEMBER_SET_SHA256" ]; then
+    # Unreachable while the diff above passes, but a mismatch here means the
+    # recorded digest and the recorded list have drifted apart.  Say so.
+    echo "ERROR: member-set sha256 $member_set_hash != recorded $EXPECTED_MEMBER_SET_SHA256;" >&2
+    echo "       EXPECTED_MEMBER_SET and EXPECTED_MEMBER_SET_SHA256 are out of sync." >&2
+    exit 4
+fi
+if [ "$archive_hash" = "<unavailable>" ]; then
+    echo "WARN: neither sha256sum nor openssl is available; archive digest not recorded (<unavailable>)" >&2
+fi
+
 note "verify __imp_ references (must be exactly the $EXPECTED_IMP_SYMBOLS Windows APIs)"
 "$LLVM_NM" "$STAGE/sodium.lib" 2>/dev/null | tr -d '\r' | grep '__imp' | awk '{print $NF}' | sort -u >"$WORK/imp.txt" || true
 [ -s "$WORK/imp.txt" ] && sed 's/^/  /' "$WORK/imp.txt"
@@ -405,6 +661,7 @@ cp "$OVERLAY/sodium/version.h" "$OUT_DIR/include/sodium/version.h"
 echo
 echo "DONE"
 echo "  archive : $OUT_DIR/lib/sodium.lib ($(stat -c%s "$OUT_DIR/lib/sodium.lib") B, $got_members members)"
+echo "  sha256  : $archive_hash"
 echo "  include : $OUT_DIR/include/sodium"
 echo
 echo "NEXT: this archive is now on disk but a stale rlib may still be cached."

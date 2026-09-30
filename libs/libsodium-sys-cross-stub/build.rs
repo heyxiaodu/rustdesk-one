@@ -71,6 +71,32 @@ fn main() {
         }
     };
 
+    // nervdesk: this value is interpolated into a `cargo:` directive and into a
+    // linker search path, so refuse anything that could forge a directive — a
+    // line break would let `...\ncargo:rustc-link-arg=...` through — and
+    // normalise the path before it is used. The trust boundary here is the
+    // operator's own environment, so this is hardening, not privilege
+    // separation: it stops a malformed value, not an unprivileged attacker.
+    if dir.contains('\n') || dir.contains('\r') {
+        println!("cargo:warning=nervdesk libsodium-sys stub: NERV_SODIUM_LIB_DIR/SODIUM_LIB_DIR contains a line break; refusing to emit link paths");
+        return;
+    }
+    let dir = match Path::new(&dir).canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            println!("cargo:warning=nervdesk libsodium-sys stub: cannot canonicalize {dir}: {e}; refusing to emit link paths");
+            return;
+        }
+    };
+    // `trim_end_matches('/')` below turns a bare "/" into "/lib", so a root-level
+    // value would search the host's own /lib. Refuse it instead of silently
+    // emitting that.
+    if dir.parent().is_none() {
+        println!("cargo:warning=nervdesk libsodium-sys stub: {} resolves to the filesystem root; refusing to emit link paths", dir.display());
+        return;
+    }
+    let dir = dir.to_string_lossy().into_owned();
+
     println!("cargo:rerun-if-env-changed=NERV_SODIUM_LIB_DIR");
     println!("cargo:rerun-if-env-changed=SODIUM_LIB_DIR");
     println!("cargo:rerun-if-env-changed=SODIUM_SHARED");

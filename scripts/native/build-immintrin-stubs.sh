@@ -49,7 +49,13 @@ TARGET_TRIPLE="x86_64-pc-windows-msvc"
 # The expected number of external (T) symbols.  Bump this — with a comment
 # saying which intrinsic was added — whenever immintrin_stubs.c gains a
 # function, so a silently truncated object cannot pass as green.
-EXPECTED_T_SYMBOLS="${NERV_IMMINTRIN_EXPECTED_T:-77}"
+#
+# Hard-coded on purpose: this constant IS the guard, and a guard whose threshold
+# can be set by the environment it guards is not a guard.  It used to be
+# `${NERV_IMMINTRIN_EXPECTED_T:-77}`, which made the check silently opt-out for
+# anyone exporting that variable.  The sodium script's EXPECTED_MEMBERS /
+# EXPECTED_IMP_SYMBOLS are hard-coded for the same reason.
+EXPECTED_T_SYMBOLS=77
 
 CHECK_ONLY=0
 case "${1:-}" in
@@ -123,8 +129,10 @@ got_t=$(count_t "$OBJ_OUT")
 echo "installed: $OBJ_OUT ($(stat -c%s "$OBJ_OUT") B, $got_t T symbols)"
 if [ "$got_t" -ne "$EXPECTED_T_SYMBOLS" ]; then
     echo "ERROR: T-symbol count $got_t != expected $EXPECTED_T_SYMBOLS." >&2
-    echo "       If you added an intrinsic to immintrin_stubs.c, update" >&2
-    echo "       NERV_IMMINTRIN_EXPECTED_T (default in this script)." >&2
+    echo "       If you added an intrinsic to immintrin_stubs.c, bump" >&2
+    echo "       EXPECTED_T_SYMBOLS in this script and name the intrinsic in the" >&2
+    echo "       comment next to it.  The constant is deliberately NOT" >&2
+    echo "       overridable from the environment." >&2
     exit 3
 fi
 
