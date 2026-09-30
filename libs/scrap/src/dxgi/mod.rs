@@ -22,8 +22,6 @@ use winapi::{
     },
 };
 
-use crate::RotationMode::*;
-
 use crate::{AdapterDevice, Frame, PixelBuffer};
 use std::ffi::c_void;
 
@@ -546,11 +544,17 @@ impl Capturer {
                 } else {
                     self.release_frame()?;
                     let r = self.load_frame(timeout)?;
-                    let rotate = match self.display.rotation() {
-                        DXGI_MODE_ROTATION_IDENTITY | DXGI_MODE_ROTATION_UNSPECIFIED => kRotate0,
-                        DXGI_MODE_ROTATION_ROTATE90 => kRotate90,
-                        DXGI_MODE_ROTATION_ROTATE180 => kRotate180,
-                        DXGI_MODE_ROTATION_ROTATE270 => kRotate270,
+                    // libyuv RotationMode values (from /usr/include/libyuv/rotate.h):
+                    //   kRotate0 = 0, kRotate90 = 90, kRotate180 = 180, kRotate270 = 270
+                    // NERV Desk: bindgen emitted `RotationMode` as an opaque integer type
+                    // rather than a Rust enum (the C header uses typedef enum X { ... }
+                    // rotation_name without a tag), so we use the literal integer values
+                    // instead of bare enum identifiers.
+                    let rotate: u32 = match self.display.rotation() {
+                        DXGI_MODE_ROTATION_IDENTITY | DXGI_MODE_ROTATION_UNSPECIFIED => 0,
+                        DXGI_MODE_ROTATION_ROTATE90 => 90,
+                        DXGI_MODE_ROTATION_ROTATE180 => 180,
+                        DXGI_MODE_ROTATION_ROTATE270 => 270,
                         _ => {
                             return Err(io::Error::new(
                                 io::ErrorKind::Other,
@@ -558,7 +562,7 @@ impl Capturer {
                             ));
                         }
                     };
-                    if rotate == kRotate0 {
+                    if rotate == 0 {
                         slice::from_raw_parts(r.0, r.1 as usize * self.height)
                     } else {
                         self.rotated.resize(self.width * self.height * 4, 0);
@@ -567,12 +571,12 @@ impl Capturer {
                             r.1,
                             self.rotated.as_mut_ptr(),
                             4 * self.width as i32,
-                            if rotate == kRotate180 {
+                            if rotate == 180 {
                                 self.width
                             } else {
                                 self.height
                             } as _,
-                            if rotate != kRotate180 {
+                            if rotate != 180 {
                                 self.width
                             } else {
                                 self.height

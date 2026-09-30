@@ -36,5 +36,11 @@ pub mod ffi_types {
     };
 }
 
+// Every `extern "C" { ... }` block in sodium_bindings.rs carries
+// `#[link(name = "sodium", kind = "static")]`, so rustc resolves sodium
+// externs against the static sodium.lib (not as dllimport). Without the
+// `#[link]` attribute, rustc would emit `__imp_<name>` references on Windows
+// MSVC, which lld-link can't resolve against a static archive (which exports
+// `<name>` directly).
 mod sodium_bindings;
 pub use sodium_bindings::*;

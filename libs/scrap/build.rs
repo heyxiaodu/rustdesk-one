@@ -4,6 +4,82 @@ use std::{
     println,
 };
 
+// ============================================================================
+// NERV Desk: pre-generated bindgen fallback (Phase-2 windows-msvc gate)
+//
+// Upstream gen_vcpkg_package unconditionally calls find_package() which
+// panics on non-macos-aarch64 hosts without VCPKG_ROOT. This breaks
+// `cargo check --target=x86_64-pc-windows-msvc` from a Linux host.
+//
+// When libs/scrap/generated/{name}_ffi.rs exists, we skip find_package +
+// bindgen + link_vcpkg and copy the pre-generated file to OUT_DIR. Link
+// directives are also skipped (the actual native libs will be linked at
+// runtime on Windows via vcpkg in production; for `cargo check`, no
+// linker is invoked).
+//
+// To re-generate the bindings on a different host:
+//   bindgen --rust-target 1.75 --rustified-enum "^.*" \
+//           --allowlist-X "<regex>" --output generated/{name}_ffi.rs \
+//           src/bindings/{name}_ffi.h
+// where --allowlist-X matches the regex below.
+// ============================================================================
+
+fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>> {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").ok()?;
+    let src_dir = env::var_os("CARGO_MANIFEST_DIR")?;
+    let src_dir = Path::new(&src_dir);
+    let out_dir = env::var_os("OUT_DIR")?;
+    let out_dir = Path::new(&out_dir);
+
+    let pregen = src_dir.join("generated").join(generated);
+    if !pregen.is_file() {
+        return None;
+    }
+
+    println!("cargo:rerun-if-changed={}", pregen.display());
+
+    let dest = out_dir.join(generated);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    if let Err(e) = fs::copy(&pregen, &dest) {
+        eprintln!(
+            "nervdesk scrap stub: failed to copy {} → {}: {}",
+            pregen.display(),
+            dest.display(),
+            e
+        );
+        return None;
+    }
+    println!(
+        "cargo:warning=nervdesk scrap stub: using pre-generated {} for {} (target_os={})",
+        generated, name, target_os
+    );
+    // nervdesk: when cross-compiling for windows-msvc, emit ONLY the search
+    // path. We intentionally do NOT emit `rustc-link-lib=static=` here because
+    // rustc would then DECOMPOSE the .lib archive and EMBED its .o files into
+    // this crate's rlib. When that rlib is later `--extern`'d by rustdesk, the
+    // embedded .o files would be linked again — producing duplicate symbols
+    // with the same .lib that our cross-built link.sh appends at the final
+    // link step.
+    //
+    // The cross-built .libs are appended as positional args by link.sh, so the
+    // final rustdesk link resolves all symbols. scrap itself does not need to
+    // link them at its own compile step.
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        let short = name.trim_start_matches("lib");
+        let env_var = format!("NERV_LIB{}_DIR", short.to_uppercase());
+        println!("cargo:rerun-if-env-changed={}", env_var);
+        if let Ok(lib_dir) = env::var(&env_var) {
+            println!("cargo:rustc-link-search={}", lib_dir);
+        }
+    }
+    // Return empty include paths; bindgen is skipped. For real Windows hosts
+    // with VCPKG_ROOT set the proper vcpkg-based link path is used (these
+    // crates' build.rs will run with VCPKG_ROOT set and call find_package).
+    Some(Vec::new())
+}
+
 #[cfg(all(target_os = "linux", feature = "linux-pkg-config"))]
 fn link_pkg_config(name: &str) -> Vec<PathBuf> {
     // sometimes an override is needed
@@ -244,24 +320,50 @@ fn main() {
     env::remove_var("CARGO_CFG_TARGET_FEATURE");
     env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
 
-    find_package("libyuv");
-    gen_vcpkg_package("libvpx", "vpx_ffi.h", "vpx_ffi.rs", "^[vV].*");
-    gen_vcpkg_package("aom", "aom_ffi.h", "aom_ffi.rs", "^(aom|AOM|OBU|AV1).*");
-    gen_vcpkg_package("libyuv", "yuv_ffi.h", "yuv_ffi.rs", ".*");
+    // NERV Desk: when the corresponding libs/scrap/generated/{name}_ffi.rs
+    // exists (committed for cross-build from non-Windows hosts), use it
+    // instead of running bindgen + vcpkg. The pre-generated file is
+    // type-checked by rustc during `cargo check`; link directives are
+    // intentionally omitted (cargo check does not link, and a real Windows
+    // build will use VCPKG_ROOT to find the actual .lib files).
+    fn nervdesk_handle_package(package: &str, ffi_header: &str, generated: &str, regex: &str) {
+        if nervdesk_try_pregenerated(package, generated).is_some() {
+            return;
+        }
+        match package {
+            "libyuv" => {
+                // find_package for libyuv is used to populate include paths
+                // for the yuv_ffi.h bindgen invocation below; when using the
+                // pre-generated file we don't need it.
+                let _ = find_package("libyuv");
+            }
+            _ => {}
+        }
+        gen_vcpkg_package(package, ffi_header, generated, regex);
+    }
+    nervdesk_handle_package("libvpx", "vpx_ffi.h", "vpx_ffi.rs", "^[vV].*");
+    nervdesk_handle_package("aom", "aom_ffi.h", "aom_ffi.rs", "^(aom|AOM|OBU|AV1).*");
+    nervdesk_handle_package("libyuv", "yuv_ffi.h", "yuv_ffi.rs", ".*");
     // ffmpeg();
 
     if target_os == "ios" {
         // nothing
     } else if target_os == "android" {
         println!("cargo:rustc-cfg=android");
-    } else if cfg!(windows) {
+    } else if target_os == "windows" {
         // The first choice is Windows because DXGI is amazing.
         println!("cargo:rustc-cfg=dxgi");
-    } else if cfg!(target_os = "macos") {
+    } else if target_os == "macos" {
         // Quartz is second because macOS is the (annoying) exception.
         println!("cargo:rustc-cfg=quartz");
-    } else if cfg!(unix) {
-        // On UNIX we pray that X11 (with XCB) is available.
+    } else {
+        // On other UNIX (linux, freebsd, etc.) we pray that X11 (with XCB)
+        // is available. Note: upstream used `cfg!(unix)` / `cfg!(windows)`
+        // here, which evaluates against the build-script host. That breaks
+        // cross-compile: a Linux host building for windows-msvc still has
+        // `cfg!(unix) == true`, so the x11 cfg flag would be set and the
+        // x11 module would compile, then fail because libc::shmat etc.
+        // are unix-only. Use the cargo TARGET variables instead.
         println!("cargo:rustc-cfg=x11");
     }
 }

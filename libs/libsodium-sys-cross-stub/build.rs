@@ -47,19 +47,38 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SODIUM_SHARED");
     println!("cargo:rerun-if-env-changed=SODIUM_USE_PKG_CONFIG");
 
-    let lib_dir = format!("{}/lib", dir.trim_end_matches('/'));
-    println!("cargo:rustc-link-search=native={}", lib_dir);
-
-    // Choose the link-lib name based on cargo's TARGET env (set by cargo when
-    // running build scripts). This is the *target* triple, not host.
+    // CRITICAL: only emit link directives when the *target* (not host) is
+    // windows-msvc. Cargo invokes libsodium_sys's build.rs for both host
+    // (because some downstream crate's build.rs may need to link libsodium_sys
+    // as a host rlib) and target. For the host invocation, the system
+    // pkg-config + libsodium-dev provides libsodium via the standard -l sodium
+    // mechanism. Emitting our cross-built sodium.lib (COFF/PE archive) for a
+    // host (linux ELF) build causes the host rustc to fail with
+    // "could not find native static library sodium" because the file's MSVC
+    // naming convention doesn't match the GNU convention the host linker
+    // expects (lib<name>.a vs <name>.lib).
+    //
+    // The TARGET env var is set by cargo to the *target* triple (not host)
+    // when invoking build.rs scripts, so this check correctly discriminates.
     let target = env::var("TARGET").unwrap_or_default();
-    if target.ends_with("-windows-msvc") {
-        // Our cross-built artifact is named sodium.lib for both MSVC and GNU.
-        println!("cargo:rustc-link-lib=static=sodium");
-    } else if target.contains("windows") {
-        println!("cargo:rustc-link-lib=static=sodium");
-    } else {
-        // Linux/macOS host: use the same artifact filename.
-        println!("cargo:rustc-link-lib=static=sodium");
+    if !target.ends_with("-windows-msvc") {
+        // Host build (linux/macos) or any non-windows-msvc target: emit
+        // nothing; the host toolchain's pkg-config + libsodium-dev install
+        // provides libsodium via standard -l sodium resolution.
+        return;
     }
+
+    let lib_dir = format!("{}/lib", dir.trim_end_matches('/'));
+    // nervdesk: emit ONLY the search path. Do NOT emit `rustc-link-lib=static=sodium`
+    // because rustc would then decompose sodium.lib and embed its .obj files into
+    // this crate's rlib. When that rlib is later `--extern`'d by hbb_common / sodiumoxide /
+    // rustdesk, the embedded .obj files would conflict with the same symbols in
+    // sodium.lib (which our cross-built link.sh appends at the final link step),
+    // producing duplicate-symbol errors.
+    //
+    // The `#[link(name="sodium", kind="static")]` attributes on the extern blocks
+    // in sodium_bindings.rs tell rustc to resolve all `extern "C"` references
+    // against sodium.lib at link time. The link.sh appends sodium.lib as a
+    // positional arg, so the final rustdesk link finds every symbol.
+    println!("cargo:rustc-link-search=native={}", lib_dir);
 }

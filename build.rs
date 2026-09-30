@@ -1,4 +1,5 @@
-#[cfg(windows)]
+// NERV Desk: dropped `#[cfg(target_os = "windows")]` so the symbol is
+// always present in build.rs. main() gates the call via target_os check.
 fn build_windows() {
     let file = "src/platform/windows.cc";
     let file2 = "src/platform/windows_delete_test_cert.cc";
@@ -8,7 +9,8 @@ fn build_windows() {
     println!("cargo:rerun-if-changed={}", file2);
 }
 
-#[cfg(target_os = "macos")]
+// NERV Desk: dropped `#[cfg(target_os = "macos")]` so the symbol is always
+// present in build.rs. main() gates the call via target_os check.
 fn build_mac() {
     let file = "src/platform/macos.mm";
     let mut b = cc::Build::new();
@@ -22,7 +24,7 @@ fn build_mac() {
     println!("cargo:rerun-if-changed={}", file);
 }
 
-#[cfg(all(windows, feature = "inline"))]
+#[cfg(all(target_os = "windows", feature = "inline"))]
 fn build_manifest() {
     use std::io::Write;
     if std::env::var("PROFILE").unwrap() == "release" {
@@ -88,13 +90,13 @@ fn install_android_deps() {
 fn main() {
     hbb_common::gen_version();
     install_android_deps();
-    #[cfg(all(windows, feature = "inline"))]
-    build_manifest();
-    #[cfg(windows)]
-    build_windows();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if target_os == "windows" {
+        #[cfg(all(target_os = "windows", feature = "inline"))]
+        build_manifest();
+        build_windows();
+    }
     if target_os == "macos" {
-        #[cfg(target_os = "macos")]
         build_mac();
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
     }

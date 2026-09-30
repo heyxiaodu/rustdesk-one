@@ -160,7 +160,7 @@ impl CapturerGDI {
                 stride,
                 self.width,
                 self.height,
-                crate::RotationMode::kRotate180,
+                180,
             );
             Ok(())
         }

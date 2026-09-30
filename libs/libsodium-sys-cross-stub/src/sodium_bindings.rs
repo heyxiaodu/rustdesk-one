@@ -267,44 +267,57 @@ pub const crypto_stream_salsa208_NONCEBYTES: u32 = 8;
 pub type __uint8_t = crate::ffi_types::c_uchar;
 pub type __uint32_t = crate::ffi_types::c_uint;
 pub type __uint64_t = crate::ffi_types::c_ulong;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_version_string() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_library_version_major() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_library_version_minor() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_library_minimal() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_init() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_set_misuse_handler(
         handler: ::std::option::Option<unsafe extern "C" fn()>,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_misuse();
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_is_available() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_nsecbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_npubbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_abytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_messagebytes_max() -> usize;
 }
@@ -315,9 +328,11 @@ pub struct crypto_aead_aes256gcm_state_ {
     pub opaque: [crate::ffi_types::c_uchar; 512usize],
 }
 pub type crypto_aead_aes256gcm_state = crypto_aead_aes256gcm_state_;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_encrypt(
         c: *mut crate::ffi_types::c_uchar,
@@ -331,6 +346,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_decrypt(
         m: *mut crate::ffi_types::c_uchar,
@@ -344,6 +360,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_encrypt_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -358,6 +375,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_decrypt_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -371,12 +389,14 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_beforenm(
         ctx_: *mut crypto_aead_aes256gcm_state,
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_encrypt_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -390,6 +410,7 @@ extern "C" {
         ctx_: *const crypto_aead_aes256gcm_state,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_decrypt_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -403,6 +424,7 @@ extern "C" {
         ctx_: *const crypto_aead_aes256gcm_state,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_encrypt_detached_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -417,6 +439,7 @@ extern "C" {
         ctx_: *const crypto_aead_aes256gcm_state,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_decrypt_detached_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -430,24 +453,31 @@ extern "C" {
         ctx_: *const crypto_aead_aes256gcm_state,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_aes256gcm_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_nsecbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_npubbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_abytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_encrypt(
         c: *mut crate::ffi_types::c_uchar,
@@ -461,6 +491,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_decrypt(
         m: *mut crate::ffi_types::c_uchar,
@@ -474,6 +505,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_encrypt_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -488,6 +520,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_decrypt_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -501,24 +534,31 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_ietf_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_nsecbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_npubbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_abytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_encrypt(
         c: *mut crate::ffi_types::c_uchar,
@@ -532,6 +572,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_decrypt(
         m: *mut crate::ffi_types::c_uchar,
@@ -545,6 +586,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_encrypt_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -559,6 +601,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_decrypt_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -572,24 +615,31 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_chacha20poly1305_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_nsecbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_npubbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_abytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_encrypt(
         c: *mut crate::ffi_types::c_uchar,
@@ -603,6 +653,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_decrypt(
         m: *mut crate::ffi_types::c_uchar,
@@ -616,6 +667,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_encrypt_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -630,6 +682,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_decrypt_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -643,6 +696,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_aead_xchacha20poly1305_ietf_keygen(k: *mut crate::ffi_types::c_uchar);
 }
@@ -653,12 +707,15 @@ pub struct crypto_hash_sha512_state {
     pub count: [u64; 2usize],
     pub buf: [u8; 128usize],
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512(
         out: *mut crate::ffi_types::c_uchar,
@@ -666,9 +723,11 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512_init(state: *mut crypto_hash_sha512_state) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512_update(
         state: *mut crypto_hash_sha512_state,
@@ -676,18 +735,22 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha512_final(
         state: *mut crypto_hash_sha512_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512(
         out: *mut crate::ffi_types::c_uchar,
@@ -696,6 +759,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -710,9 +774,11 @@ pub struct crypto_auth_hmacsha512_state {
     pub ictx: crypto_hash_sha512_state,
     pub octx: crypto_hash_sha512_state,
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_init(
         state: *mut crypto_auth_hmacsha512_state,
@@ -720,6 +786,7 @@ extern "C" {
         keylen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_update(
         state: *mut crypto_auth_hmacsha512_state,
@@ -727,21 +794,26 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_final(
         state: *mut crypto_auth_hmacsha512_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256(
         out: *mut crate::ffi_types::c_uchar,
@@ -750,6 +822,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -759,9 +832,11 @@ extern "C" {
     ) -> crate::ffi_types::c_int;
 }
 pub type crypto_auth_hmacsha512256_state = crypto_auth_hmacsha512_state;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_init(
         state: *mut crypto_auth_hmacsha512256_state,
@@ -769,6 +844,7 @@ extern "C" {
         keylen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_update(
         state: *mut crypto_auth_hmacsha512256_state,
@@ -776,24 +852,30 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_final(
         state: *mut crypto_auth_hmacsha512256_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha512256_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth(
         out: *mut crate::ffi_types::c_uchar,
@@ -802,6 +884,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -810,6 +893,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_keygen(k: *mut crate::ffi_types::c_uchar);
 }
@@ -820,12 +904,15 @@ pub struct crypto_hash_sha256_state {
     pub count: u64,
     pub buf: [u8; 64usize],
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256(
         out: *mut crate::ffi_types::c_uchar,
@@ -833,9 +920,11 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256_init(state: *mut crypto_hash_sha256_state) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256_update(
         state: *mut crypto_hash_sha256_state,
@@ -843,18 +932,22 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_sha256_final(
         state: *mut crypto_hash_sha256_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256(
         out: *mut crate::ffi_types::c_uchar,
@@ -863,6 +956,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -877,9 +971,11 @@ pub struct crypto_auth_hmacsha256_state {
     pub ictx: crypto_hash_sha256_state,
     pub octx: crypto_hash_sha256_state,
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_init(
         state: *mut crypto_auth_hmacsha256_state,
@@ -887,6 +983,7 @@ extern "C" {
         keylen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_update(
         state: *mut crypto_auth_hmacsha256_state,
@@ -894,24 +991,30 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_final(
         state: *mut crypto_auth_hmacsha256_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_auth_hmacsha256_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20(
         c: *mut crate::ffi_types::c_uchar,
@@ -920,6 +1023,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -929,6 +1033,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_xor_ic(
         c: *mut crate::ffi_types::c_uchar,
@@ -939,30 +1044,39 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xsalsa20_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_beforenmbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -970,12 +1084,14 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_keypair(
         pk: *mut crate::ffi_types::c_uchar,
         sk: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_beforenm(
         k: *mut crate::ffi_types::c_uchar,
@@ -983,12 +1099,15 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_boxzerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_zerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305(
         c: *mut crate::ffi_types::c_uchar,
@@ -999,6 +1118,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -1009,6 +1129,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -1018,6 +1139,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xsalsa20poly1305_open_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -1027,27 +1149,35 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -1055,9 +1185,11 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_keypair(pk: *mut crate::ffi_types::c_uchar, sk: *mut crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_easy(
         c: *mut crate::ffi_types::c_uchar,
@@ -1068,6 +1200,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open_easy(
         m: *mut crate::ffi_types::c_uchar,
@@ -1078,6 +1211,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -1089,6 +1223,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -1100,9 +1235,11 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_beforenmbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_beforenm(
         k: *mut crate::ffi_types::c_uchar,
@@ -1110,6 +1247,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_easy_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -1119,6 +1257,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open_easy_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -1128,6 +1267,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_detached_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -1138,6 +1278,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open_detached_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -1148,9 +1289,11 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_sealbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_seal(
         c: *mut crate::ffi_types::c_uchar,
@@ -1159,6 +1302,7 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_seal_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -1168,12 +1312,15 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_zerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_boxzerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box(
         c: *mut crate::ffi_types::c_uchar,
@@ -1184,6 +1331,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -1194,6 +1342,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -1203,6 +1352,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_open_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -1212,18 +1362,23 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hsalsa20_outputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hsalsa20_inputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hsalsa20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hsalsa20_constbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hsalsa20(
         out: *mut crate::ffi_types::c_uchar,
@@ -1232,18 +1387,23 @@ extern "C" {
         c: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hchacha20_outputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hchacha20_inputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hchacha20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hchacha20_constbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_hchacha20(
         out: *mut crate::ffi_types::c_uchar,
@@ -1252,18 +1412,23 @@ extern "C" {
         c: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa20_outputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa20_inputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa20_constbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa20(
         out: *mut crate::ffi_types::c_uchar,
@@ -1272,18 +1437,23 @@ extern "C" {
         c: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa2012_outputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa2012_inputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa2012_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa2012_constbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa2012(
         out: *mut crate::ffi_types::c_uchar,
@@ -1292,18 +1462,23 @@ extern "C" {
         c: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa208_outputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa208_inputbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa208_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa208_constbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_salsa208(
         out: *mut crate::ffi_types::c_uchar,
@@ -1318,33 +1493,43 @@ extern "C" {
 pub struct crypto_generichash_blake2b_state {
     pub opaque: [crate::ffi_types::c_uchar; 384usize],
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_keybytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_keybytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_saltbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_personalbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b(
         out: *mut crate::ffi_types::c_uchar,
@@ -1355,6 +1540,7 @@ extern "C" {
         keylen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_salt_personal(
         out: *mut crate::ffi_types::c_uchar,
@@ -1367,6 +1553,7 @@ extern "C" {
         personal: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_init(
         state: *mut crypto_generichash_blake2b_state,
@@ -1375,6 +1562,7 @@ extern "C" {
         outlen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_init_salt_personal(
         state: *mut crypto_generichash_blake2b_state,
@@ -1385,6 +1573,7 @@ extern "C" {
         personal: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_update(
         state: *mut crypto_generichash_blake2b_state,
@@ -1392,6 +1581,7 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_final(
         state: *mut crypto_generichash_blake2b_state,
@@ -1399,34 +1589,44 @@ extern "C" {
         outlen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_blake2b_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_keybytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_keybytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_primitive() -> *const crate::ffi_types::c_char;
 }
 pub type crypto_generichash_state = crypto_generichash_blake2b_state;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash(
         out: *mut crate::ffi_types::c_uchar,
@@ -1437,6 +1637,7 @@ extern "C" {
         keylen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_init(
         state: *mut crypto_generichash_state,
@@ -1445,6 +1646,7 @@ extern "C" {
         outlen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_update(
         state: *mut crypto_generichash_state,
@@ -1452,6 +1654,7 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_final(
         state: *mut crypto_generichash_state,
@@ -1459,12 +1662,15 @@ extern "C" {
         outlen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_generichash_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash(
         out: *mut crate::ffi_types::c_uchar,
@@ -1472,21 +1678,27 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_hash_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_blake2b_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_blake2b_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_blake2b_contextbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_blake2b_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_blake2b_derive_from_key(
         subkey: *mut crate::ffi_types::c_uchar,
@@ -1496,21 +1708,27 @@ extern "C" {
         key: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_contextbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_derive_from_key(
         subkey: *mut crate::ffi_types::c_uchar,
@@ -1520,24 +1738,31 @@ extern "C" {
         key: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kdf_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_sessionkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -1545,9 +1770,11 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_keypair(pk: *mut crate::ffi_types::c_uchar, sk: *mut crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_client_session_keys(
         rx: *mut crate::ffi_types::c_uchar,
@@ -1557,6 +1784,7 @@ extern "C" {
         server_pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_kx_server_session_keys(
         rx: *mut crate::ffi_types::c_uchar,
@@ -1572,15 +1800,19 @@ extern "C" {
 pub struct crypto_onetimeauth_poly1305_state {
     pub opaque: [crate::ffi_types::c_uchar; 256usize],
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305(
         out: *mut crate::ffi_types::c_uchar,
@@ -1589,6 +1821,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -1597,12 +1830,14 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_init(
         state: *mut crypto_onetimeauth_poly1305_state,
         key: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_update(
         state: *mut crypto_onetimeauth_poly1305_state,
@@ -1610,28 +1845,35 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_final(
         state: *mut crypto_onetimeauth_poly1305_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_poly1305_keygen(k: *mut crate::ffi_types::c_uchar);
 }
 pub type crypto_onetimeauth_state = crypto_onetimeauth_poly1305_state;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth(
         out: *mut crate::ffi_types::c_uchar,
@@ -1640,6 +1882,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_verify(
         h: *const crate::ffi_types::c_uchar,
@@ -1648,12 +1891,14 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_init(
         state: *mut crypto_onetimeauth_state,
         key: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_update(
         state: *mut crypto_onetimeauth_state,
@@ -1661,69 +1906,90 @@ extern "C" {
         inlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_final(
         state: *mut crypto_onetimeauth_state,
         out: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_onetimeauth_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_alg_argon2i13() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_passwd_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_passwd_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_saltbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_strbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_strprefix() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_opslimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_opslimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_memlimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_memlimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_opslimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_memlimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_opslimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_memlimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_opslimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_memlimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i(
         out: *mut crate::ffi_types::c_uchar,
@@ -1736,6 +2002,7 @@ extern "C" {
         alg: crate::ffi_types::c_int,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_str(
         out: *mut crate::ffi_types::c_char,
@@ -1745,6 +2012,7 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_str_verify(
         str: *const crate::ffi_types::c_char,
@@ -1752,6 +2020,7 @@ extern "C" {
         passwdlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2i_str_needs_rehash(
         str: *const crate::ffi_types::c_char,
@@ -1759,60 +2028,79 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_alg_argon2id13() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_passwd_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_passwd_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_saltbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_strbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_strprefix() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_opslimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_opslimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_memlimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_memlimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_opslimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_memlimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_opslimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_memlimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_opslimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_memlimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id(
         out: *mut crate::ffi_types::c_uchar,
@@ -1825,6 +2113,7 @@ extern "C" {
         alg: crate::ffi_types::c_int,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_str(
         out: *mut crate::ffi_types::c_char,
@@ -1834,6 +2123,7 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_str_verify(
         str: *const crate::ffi_types::c_char,
@@ -1841,6 +2131,7 @@ extern "C" {
         passwdlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_argon2id_str_needs_rehash(
         str: *const crate::ffi_types::c_char,
@@ -1848,66 +2139,87 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_alg_argon2i13() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_alg_argon2id13() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_alg_default() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_passwd_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_passwd_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_saltbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_strbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_strprefix() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_opslimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_opslimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_memlimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_memlimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_opslimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_memlimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_opslimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_memlimit_moderate() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_opslimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_memlimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash(
         out: *mut crate::ffi_types::c_uchar,
@@ -1920,6 +2232,7 @@ extern "C" {
         alg: crate::ffi_types::c_int,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_str(
         out: *mut crate::ffi_types::c_char,
@@ -1929,6 +2242,7 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_str_alg(
         out: *mut crate::ffi_types::c_char,
@@ -1939,6 +2253,7 @@ extern "C" {
         alg: crate::ffi_types::c_int,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_str_verify(
         str: *const crate::ffi_types::c_char,
@@ -1946,6 +2261,7 @@ extern "C" {
         passwdlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_str_needs_rehash(
         str: *const crate::ffi_types::c_char,
@@ -1953,15 +2269,19 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_curve25519_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_curve25519_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_curve25519(
         q: *mut crate::ffi_types::c_uchar,
@@ -1969,24 +2289,30 @@ extern "C" {
         p: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_curve25519_base(
         q: *mut crate::ffi_types::c_uchar,
         n: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_base(q: *mut crate::ffi_types::c_uchar, n: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult(
         q: *mut crate::ffi_types::c_uchar,
@@ -1994,18 +2320,23 @@ extern "C" {
         p: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305(
         c: *mut crate::ffi_types::c_uchar,
@@ -2015,6 +2346,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -2024,30 +2356,39 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_boxzerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xsalsa20poly1305_zerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_easy(
         c: *mut crate::ffi_types::c_uchar,
@@ -2057,6 +2398,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_open_easy(
         m: *mut crate::ffi_types::c_uchar,
@@ -2066,6 +2408,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -2076,6 +2419,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_open_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -2086,15 +2430,19 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_zerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_boxzerobytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox(
         c: *mut crate::ffi_types::c_uchar,
@@ -2104,6 +2452,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -2113,15 +2462,19 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20(
         c: *mut crate::ffi_types::c_uchar,
@@ -2130,6 +2483,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -2139,6 +2493,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_xor_ic(
         c: *mut crate::ffi_types::c_uchar,
@@ -2149,18 +2504,23 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf(
         c: *mut crate::ffi_types::c_uchar,
@@ -2169,6 +2529,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -2178,6 +2539,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_xor_ic(
         c: *mut crate::ffi_types::c_uchar,
@@ -2188,30 +2550,39 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_chacha20_ietf_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_abytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_headerbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_tag_message() -> crate::ffi_types::c_uchar;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_tag_push() -> crate::ffi_types::c_uchar;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_tag_rekey() -> crate::ffi_types::c_uchar;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_tag_final() -> crate::ffi_types::c_uchar;
 }
@@ -2222,12 +2593,15 @@ pub struct crypto_secretstream_xchacha20poly1305_state {
     pub nonce: [crate::ffi_types::c_uchar; 12usize],
     pub _pad: [crate::ffi_types::c_uchar; 8usize],
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_init_push(
         state: *mut crypto_secretstream_xchacha20poly1305_state,
@@ -2235,6 +2609,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_push(
         state: *mut crypto_secretstream_xchacha20poly1305_state,
@@ -2247,6 +2622,7 @@ extern "C" {
         tag: crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_init_pull(
         state: *mut crypto_secretstream_xchacha20poly1305_state,
@@ -2254,6 +2630,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_pull(
         state: *mut crypto_secretstream_xchacha20poly1305_state,
@@ -2266,17 +2643,21 @@ extern "C" {
         adlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretstream_xchacha20poly1305_rekey(
         state: *mut crypto_secretstream_xchacha20poly1305_state,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphash24_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphash24_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphash24(
         out: *mut crate::ffi_types::c_uchar,
@@ -2285,12 +2666,15 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphashx24_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphashx24_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_siphashx24(
         out: *mut crate::ffi_types::c_uchar,
@@ -2299,15 +2683,19 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash(
         out: *mut crate::ffi_types::c_uchar,
@@ -2316,6 +2704,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_shorthash_keygen(k: *mut crate::ffi_types::c_uchar);
 }
@@ -2324,24 +2713,31 @@ extern "C" {
 pub struct crypto_sign_ed25519ph_state {
     pub hs: crypto_hash_sha512_state,
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519ph_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519(
         sm: *mut crate::ffi_types::c_uchar,
@@ -2351,6 +2747,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -2360,6 +2757,7 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_detached(
         sig: *mut crate::ffi_types::c_uchar,
@@ -2369,6 +2767,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_verify_detached(
         sig: *const crate::ffi_types::c_uchar,
@@ -2377,12 +2776,14 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_keypair(
         pk: *mut crate::ffi_types::c_uchar,
         sk: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -2390,33 +2791,39 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_pk_to_curve25519(
         curve25519_pk: *mut crate::ffi_types::c_uchar,
         ed25519_pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_sk_to_curve25519(
         curve25519_sk: *mut crate::ffi_types::c_uchar,
         ed25519_sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_sk_to_seed(
         seed: *mut crate::ffi_types::c_uchar,
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519_sk_to_pk(
         pk: *mut crate::ffi_types::c_uchar,
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519ph_init(state: *mut crypto_sign_ed25519ph_state) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519ph_update(
         state: *mut crypto_sign_ed25519ph_state,
@@ -2424,6 +2831,7 @@ extern "C" {
         mlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519ph_final_create(
         state: *mut crypto_sign_ed25519ph_state,
@@ -2432,6 +2840,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_ed25519ph_final_verify(
         state: *mut crypto_sign_ed25519ph_state,
@@ -2440,27 +2849,35 @@ extern "C" {
     ) -> crate::ffi_types::c_int;
 }
 pub type crypto_sign_state = crypto_sign_ed25519ph_state;
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_statebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -2468,9 +2885,11 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_keypair(pk: *mut crate::ffi_types::c_uchar, sk: *mut crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign(
         sm: *mut crate::ffi_types::c_uchar,
@@ -2480,6 +2899,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -2489,6 +2909,7 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_detached(
         sig: *mut crate::ffi_types::c_uchar,
@@ -2498,6 +2919,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_verify_detached(
         sig: *const crate::ffi_types::c_uchar,
@@ -2506,9 +2928,11 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_init(state: *mut crypto_sign_state) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_update(
         state: *mut crypto_sign_state,
@@ -2516,6 +2940,7 @@ extern "C" {
         mlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_final_create(
         state: *mut crypto_sign_state,
@@ -2524,6 +2949,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_sign_final_verify(
         state: *mut crypto_sign_state,
@@ -2531,18 +2957,23 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_primitive() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream(
         c: *mut crate::ffi_types::c_uchar,
@@ -2551,6 +2982,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -2560,18 +2992,23 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20(
         c: *mut crate::ffi_types::c_uchar,
@@ -2580,6 +3017,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -2589,6 +3027,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_xor_ic(
         c: *mut crate::ffi_types::c_uchar,
@@ -2599,24 +3038,31 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa20_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_16_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_16(x: *const crate::ffi_types::c_uchar, y: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_32_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_32(x: *const crate::ffi_types::c_uchar, y: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_64_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_verify_64(x: *const crate::ffi_types::c_uchar, y: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
@@ -2630,12 +3076,15 @@ pub struct randombytes_implementation {
     pub buf: ::std::option::Option<unsafe extern "C" fn(buf: *mut crate::ffi_types::c_void, size: usize)>,
     pub close: ::std::option::Option<unsafe extern "C" fn() -> crate::ffi_types::c_int>,
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_buf(buf: *mut crate::ffi_types::c_void, size: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_buf_deterministic(
         buf: *mut crate::ffi_types::c_void,
@@ -2643,69 +3092,91 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_random() -> u32;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_uniform(upper_bound: u32) -> u32;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_stir();
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_close() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_set_implementation(impl_: *mut randombytes_implementation) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn randombytes_implementation_name() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub static mut randombytes_internal_implementation: randombytes_implementation;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub static mut randombytes_sysrandom_implementation: randombytes_implementation;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_neon() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_sse2() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_sse3() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_ssse3() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_sse41() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_avx() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_avx2() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_avx512f() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_pclmul() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_aesni() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_runtime_has_rdrand() -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_memzero(pnt: *mut crate::ffi_types::c_void, len: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_stackzero(len: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_memcmp(
         b1_: *const crate::ffi_types::c_void,
@@ -2713,6 +3184,7 @@ extern "C" {
         len: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_compare(
         b1_: *const crate::ffi_types::c_uchar,
@@ -2720,18 +3192,23 @@ extern "C" {
         len: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_is_zero(n: *const crate::ffi_types::c_uchar, nlen: usize) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_increment(n: *mut crate::ffi_types::c_uchar, nlen: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_add(a: *mut crate::ffi_types::c_uchar, b: *const crate::ffi_types::c_uchar, len: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_sub(a: *mut crate::ffi_types::c_uchar, b: *const crate::ffi_types::c_uchar, len: usize);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_bin2hex(
         hex: *mut crate::ffi_types::c_char,
@@ -2740,6 +3217,7 @@ extern "C" {
         bin_len: usize,
     ) -> *mut crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_hex2bin(
         bin: *mut crate::ffi_types::c_uchar,
@@ -2751,9 +3229,11 @@ extern "C" {
         hex_end: *mut *const crate::ffi_types::c_char,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_base64_encoded_len(bin_len: usize, variant: crate::ffi_types::c_int) -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_bin2base64(
         b64: *mut crate::ffi_types::c_char,
@@ -2763,6 +3243,7 @@ extern "C" {
         variant: crate::ffi_types::c_int,
     ) -> *mut crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_base642bin(
         bin: *mut crate::ffi_types::c_uchar,
@@ -2775,30 +3256,39 @@ extern "C" {
         variant: crate::ffi_types::c_int,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_mlock(addr: *mut crate::ffi_types::c_void, len: usize) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_munlock(addr: *mut crate::ffi_types::c_void, len: usize) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_malloc(size: usize) -> *mut crate::ffi_types::c_void;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_allocarray(count: usize, size: usize) -> *mut crate::ffi_types::c_void;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_free(ptr: *mut crate::ffi_types::c_void);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_mprotect_noaccess(ptr: *mut crate::ffi_types::c_void) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_mprotect_readonly(ptr: *mut crate::ffi_types::c_void) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_mprotect_readwrite(ptr: *mut crate::ffi_types::c_void) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_pad(
         padded_buflen_p: *mut usize,
@@ -2808,6 +3298,7 @@ extern "C" {
         max_buflen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn sodium_unpad(
         unpadded_buflen_p: *mut usize,
@@ -2816,15 +3307,19 @@ extern "C" {
         blocksize: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20(
         c: *mut crate::ffi_types::c_uchar,
@@ -2833,6 +3328,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -2842,6 +3338,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_xor_ic(
         c: *mut crate::ffi_types::c_uchar,
@@ -2852,30 +3349,39 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_xchacha20_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_seedbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_publickeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_secretkeybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_beforenmbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_seed_keypair(
         pk: *mut crate::ffi_types::c_uchar,
@@ -2883,12 +3389,14 @@ extern "C" {
         seed: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_keypair(
         pk: *mut crate::ffi_types::c_uchar,
         sk: *mut crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_easy(
         c: *mut crate::ffi_types::c_uchar,
@@ -2899,6 +3407,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_open_easy(
         m: *mut crate::ffi_types::c_uchar,
@@ -2909,6 +3418,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -2920,6 +3430,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_open_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -2931,6 +3442,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_beforenm(
         k: *mut crate::ffi_types::c_uchar,
@@ -2938,6 +3450,7 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_easy_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -2947,6 +3460,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_open_easy_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -2956,6 +3470,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_detached_afternm(
         c: *mut crate::ffi_types::c_uchar,
@@ -2966,6 +3481,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_open_detached_afternm(
         m: *mut crate::ffi_types::c_uchar,
@@ -2976,9 +3492,11 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_sealbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_seal(
         c: *mut crate::ffi_types::c_uchar,
@@ -2987,6 +3505,7 @@ extern "C" {
         pk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_box_curve25519xchacha20poly1305_seal_open(
         m: *mut crate::ffi_types::c_uchar,
@@ -2996,24 +3515,31 @@ extern "C" {
         sk: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_uniformbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_hashbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_nonreducedscalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_is_valid_point(p: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_add(
         r: *mut crate::ffi_types::c_uchar,
@@ -3021,6 +3547,7 @@ extern "C" {
         q: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_sub(
         r: *mut crate::ffi_types::c_uchar,
@@ -3028,36 +3555,44 @@ extern "C" {
         q: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_from_uniform(
         p: *mut crate::ffi_types::c_uchar,
         r: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_from_hash(
         p: *mut crate::ffi_types::c_uchar,
         h: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_random(p: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_random(r: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_invert(
         recip: *mut crate::ffi_types::c_uchar,
         s: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_negate(neg: *mut crate::ffi_types::c_uchar, s: *const crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_complement(comp: *mut crate::ffi_types::c_uchar, s: *const crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_add(
         z: *mut crate::ffi_types::c_uchar,
@@ -3065,6 +3600,7 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_sub(
         z: *mut crate::ffi_types::c_uchar,
@@ -3072,6 +3608,7 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_mul(
         z: *mut crate::ffi_types::c_uchar,
@@ -3079,24 +3616,31 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ed25519_scalar_reduce(r: *mut crate::ffi_types::c_uchar, s: *const crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_hashbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_nonreducedscalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_is_valid_point(p: *const crate::ffi_types::c_uchar) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_add(
         r: *mut crate::ffi_types::c_uchar,
@@ -3104,6 +3648,7 @@ extern "C" {
         q: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_sub(
         r: *mut crate::ffi_types::c_uchar,
@@ -3111,33 +3656,40 @@ extern "C" {
         q: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_from_hash(
         p: *mut crate::ffi_types::c_uchar,
         r: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_random(p: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_random(r: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_invert(
         recip: *mut crate::ffi_types::c_uchar,
         s: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_negate(neg: *mut crate::ffi_types::c_uchar, s: *const crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_complement(
         comp: *mut crate::ffi_types::c_uchar,
         s: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_add(
         z: *mut crate::ffi_types::c_uchar,
@@ -3145,6 +3697,7 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_sub(
         z: *mut crate::ffi_types::c_uchar,
@@ -3152,6 +3705,7 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_mul(
         z: *mut crate::ffi_types::c_uchar,
@@ -3159,15 +3713,19 @@ extern "C" {
         y: *const crate::ffi_types::c_uchar,
     );
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_core_ristretto255_scalar_reduce(r: *mut crate::ffi_types::c_uchar, s: *const crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519(
         q: *mut crate::ffi_types::c_uchar,
@@ -3175,6 +3733,7 @@ extern "C" {
         p: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519_noclamp(
         q: *mut crate::ffi_types::c_uchar,
@@ -3182,24 +3741,29 @@ extern "C" {
         p: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519_base(
         q: *mut crate::ffi_types::c_uchar,
         n: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ed25519_base_noclamp(
         q: *mut crate::ffi_types::c_uchar,
         n: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ristretto255_bytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ristretto255_scalarbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ristretto255(
         q: *mut crate::ffi_types::c_uchar,
@@ -3207,24 +3771,30 @@ extern "C" {
         p: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_scalarmult_ristretto255_base(
         q: *mut crate::ffi_types::c_uchar,
         n: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_macbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_easy(
         c: *mut crate::ffi_types::c_uchar,
@@ -3234,6 +3804,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_open_easy(
         m: *mut crate::ffi_types::c_uchar,
@@ -3243,6 +3814,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_detached(
         c: *mut crate::ffi_types::c_uchar,
@@ -3253,6 +3825,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_secretbox_xchacha20poly1305_open_detached(
         m: *mut crate::ffi_types::c_uchar,
@@ -3263,51 +3836,67 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_bytes_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_bytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_passwd_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_passwd_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_saltbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_strbytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_strprefix() -> *const crate::ffi_types::c_char;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_opslimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_opslimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_memlimit_min() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_memlimit_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_opslimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_memlimit_interactive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_opslimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_memlimit_sensitive() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256(
         out: *mut crate::ffi_types::c_uchar,
@@ -3319,6 +3908,7 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_str(
         out: *mut crate::ffi_types::c_char,
@@ -3328,6 +3918,7 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_str_verify(
         str: *const crate::ffi_types::c_char,
@@ -3335,6 +3926,7 @@ extern "C" {
         passwdlen: crate::ffi_types::c_ulonglong,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_ll(
         passwd: *const u8,
@@ -3348,6 +3940,7 @@ extern "C" {
         buflen: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_pwhash_scryptsalsa208sha256_str_needs_rehash(
         str: *const crate::ffi_types::c_char,
@@ -3355,15 +3948,19 @@ extern "C" {
         memlimit: usize,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012(
         c: *mut crate::ffi_types::c_uchar,
@@ -3372,6 +3969,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -3381,18 +3979,23 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa2012_keygen(k: *mut crate::ffi_types::c_uchar);
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208_keybytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208_noncebytes() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208_messagebytes_max() -> usize;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208(
         c: *mut crate::ffi_types::c_uchar,
@@ -3401,6 +4004,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208_xor(
         c: *mut crate::ffi_types::c_uchar,
@@ -3410,6 +4014,7 @@ extern "C" {
         k: *const crate::ffi_types::c_uchar,
     ) -> crate::ffi_types::c_int;
 }
+#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]
 extern "C" {
     pub fn crypto_stream_salsa208_keygen(k: *mut crate::ffi_types::c_uchar);
 }

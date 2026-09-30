@@ -1,4 +1,5 @@
-#[cfg(target_os = "windows")]
+// NERV Desk: dropped `#[cfg(target_os = "windows")]` so the symbol is
+// always present in build.rs. main() gates the call via runtime target_os.
 fn build_c_impl() {
     let mut build = cc::Build::new();
 
@@ -30,6 +31,8 @@ fn build_c_impl() {
 }
 
 fn main() {
-    #[cfg(target_os = "windows")]
-    build_c_impl();
+    // NERV Desk: runtime target_os check instead of compile-time cfg.
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "windows" {
+        build_c_impl();
+    }
 }
