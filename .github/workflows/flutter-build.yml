@@ -18,9 +18,9 @@ on:
 # in this file!
 
 env:
-  SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-  RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-  MAC_RUST_VERSION: "1.81" # 1.81 is requred for macos, because of https://github.com/yury/cidre requires 1.81
+  SCITER_RUST_VERSION: "1.75" # ⚠️ 有意钉版，不是「口径不一致」：rust-sciter 在 rustc 1.78+ 的 i128 ABI 变更下会 panic（scdef.rs:160 的 enum transmute 遇到 0x84 无匹配变体），sciter/Windows-x86 路径必须留在 1.75。上游讨论 https://github.com/rustdesk/rustdesk/discussions/7503 ；ABI 公告 https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+  RUST_VERSION: "1.91" # NERV Desk fork MSRV：与 Cargo.toml:14 `rust-version = "1.91"` 及 Cargo.lock `version = 4`（需 cargo >= 1.78）一致。上游原注释「sciter failed on m1 with 1.78」针对的是 sciter 路径；本变量在本文件供 iOS/Android/Linux(flutter, drm) 使用。
+  MAC_RUST_VERSION: "1.91" # 原值 1.81 只是 macOS cidre 的下限（https://github.com/yury/cidre requires 1.81），已被本 fork MSRV 1.91 覆盖。
   CARGO_NDK_VERSION: "3.1.2"
   SCITER_ARMV7_CMAKE_VERSION: "3.29.7"
   SCITER_NASM_DEBVERSION: "2.15.05-1"

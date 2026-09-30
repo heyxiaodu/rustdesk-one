@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503
+  RUST_VERSION: "1.91" # NERV Desk fork MSRV：与 Cargo.toml:14 `rust-version = "1.91"` 及 Cargo.lock `version = 4`（需 cargo >= 1.78）一致；本 workflow 的 job（build-for-macOS / build-rustdesk-android）无 sciter/x86 专用依赖。上游原钉版 1.75 理由见 https://github.com/rustdesk/rustdesk/discussions/7503
   CARGO_NDK_VERSION: "3.1.2"
   LLVM_VERSION: "15.0.6"
   FLUTTER_VERSION: "3.22.2"

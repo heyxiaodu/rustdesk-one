@@ -8,7 +8,7 @@ on:
 env:
   CARGO_EXPAND_VERSION: "1.0.95"
   FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
-  RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503
+  RUST_VERSION: "1.91" # NERV Desk fork MSRV：与 Cargo.toml:14 `rust-version = "1.91"` 及 Cargo.lock `version = 4`（需 cargo >= 1.78）一致；本 job 只做 flutter-rust-bridge 代码生成，无 sciter/x86 依赖。上游原钉版 1.75 理由见 https://github.com/rustdesk/rustdesk/discussions/7503
 
 jobs:
   generate_bridge:
