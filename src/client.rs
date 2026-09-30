@@ -1053,7 +1053,7 @@ impl Client {
                                     connect_futures.push(
                                         async move {
                                             let (conn, kcp, typ) =
-                                                udp_nat_connect(s, "IPv6", CONNECT_TIMEOUT).await?;
+                                                udp_nat_connect(s, "IPv6", CONNECT_TIMEOUT, None).await?;
                                             Ok((conn, kcp, typ, true))
                                         }
                                         .boxed(),
@@ -1455,96 +1455,79 @@ impl Client {
         // 仅在 `quic` feature 下编译；默认（disabled / 无 feature）与改动前路径等价。
         // prefer：先试 QUIC，失败记 warn 并回退到原传输（TCP/KCP/WebRTC/relay）；
         // required：只用 QUIC，失败把真实错误如实上报、不回退。
+        //
+        // R4-3（task-15，`analysis/network/quic-server-wiring.md`）：QUIC 必须从**已打洞**的
+        // UDP socket 出发 —— NAT 映射就是那个 socket 的源四元组（`docs/00-current-state.md`
+        // §8 R3），另开 socket 的源端口没有映射、必然被丢弃。所以真实拨号落在
+        // `udp_nat_connect()` 里（与 `KcpStream::connect` 共用同一个 socket、二者互斥）。
+        // 本块只做两件事：解析并校验对端身份；对全路径做 required 守卫。
+        // 拨号一旦成为 `direct_futures` 的一员，`is_force_relay()` 兜底就同样覆盖 QUIC
+        // （修复 A5：旧代码在这里 `return` 会绕过那个兜底）。
         #[cfg(feature = "quic")]
-        {
-            // C1：解出对端 32 字节 raw ed25519 公钥，传给 quic_direct_attempt。
-            // 与 secure_connection 内 decode_id_pk 的语义一致（client.rs:1722）；
-            // 这里独立解一次，因为 quic_direct_attempt 在 secure_connection 之前调用。
-            let rs_pk = get_rs_pk(if key.is_empty() {
+        let quic_mode = crate::common::get_quic_mode();
+        #[cfg(feature = "quic")]
+        let peer_pk: Option<[u8; 32]> = if quic_mode == crate::common::QuicMode::Disabled {
+            None
+        } else {
+            // C1：解出对端 32 字节 raw ed25519 公钥，作为 QUIC 的信任锚。
+            // 与 secure_connection 内 decode_id_pk 的语义一致；这里独立解一次，因为
+            // QUIC 拨号发生在 secure_connection 之前。
+            match get_rs_pk(if key.is_empty() {
                 config::RS_PUB_KEY
             } else {
                 key
-            });
-            let peer_pk: Option<[u8; 32]> = match rs_pk {
+            }) {
+                // G1（`analysis/security/quic-rpk-trust-anchor-review.md` §5.4）：`decode_id_pk`
+                // 的元组首元素正是被 RS 签名覆盖的 peer id。只固定 pk、不比对 id，会把可信
+                // 对端集从 {pk_X} 放宽成"所有被 ID 服务器签过名的 pk"（失配时会话会降级为
+                // is_secured()==false 但继续）。这里补上 id == peer_id，失配即视为无公钥，
+                // 走下面的 fail-closed 分支（required 模式直接 bail）。
                 Some(rs_pk) if !signed_id_pk.is_empty() => decode_id_pk(&signed_id_pk, &rs_pk)
                     .ok()
-                    .map(|(_, pk)| pk),
+                    .and_then(|(id, pk)| {
+                        if id == peer_id {
+                            Some(pk)
+                        } else {
+                            log::error!(
+                                "QUIC: signed_id_pk 的 id 与请求的 peer_id 不一致（{} != {}），拒绝固定该公钥",
+                                id,
+                                peer_id
+                            );
+                            None
+                        }
+                    }),
                 _ => None,
-            };
-            match crate::common::get_quic_mode() {
-                crate::common::QuicMode::Disabled => {}
-                mode => {
-                    // 没拿到对端公钥 ⇒ QUIC 拨号无法做身份校验 ⇒ 直接视为不可用。
-                    let peer_pk_ref = match peer_pk.as_ref() {
-                        Some(pk) => pk,
-                        None => {
-                            interface.update_direct(Some(false));
-                            match mode {
-                                crate::common::QuicMode::Prefer => {
-                                    log::warn!(
-                                        "QUIC_MODE=prefer: 缺对端公钥（signed_id_pk 为空或解码失败），回退到原传输"
-                                    );
-                                }
-                                crate::common::QuicMode::Required => {
-                                    bail!("QUIC_MODE=required: 缺对端公钥，无法做 C1 RPK 校验");
-                                }
-                                crate::common::QuicMode::Disabled => unreachable!(),
-                            }
-                            return Err(hbb_common::anyhow::anyhow!(
-                                "QUIC_MODE=prefer/required: no peer pubkey, falling back / bailing"
-                            ));
-                        }
-                    };
-                    match crate::quic_transport::quic_direct_attempt(
-                        peer,
-                        local_addr,
-                        connect_timeout,
-                        peer_pk_ref,
-                    )
-                    .await
-                    {
-                        Ok(stream) => {
-                            // QUIC 直连成功：按 Path B 以 `Stream::Tcp` 交付，走与
-                            // TCP 路径同一条 secure_connection 链（见本函数尾部）。
-                            let mut conn = Stream::Tcp(stream);
-                            let pk = match Self::secure_connection(
-                                peer_id,
-                                signed_id_pk.clone(),
-                                key,
-                                &mut conn,
-                            )
-                            .await
-                            {
-                                Ok(pk) => pk,
-                                Err(e) => {
-                                    // 镜像尾部：失败也更新 direct 状态，供
-                                    // on_establish_connection_error 使用。
-                                    interface.update_direct(Some(true));
-                                    bail!(e);
-                                }
-                            };
-                            return Ok((conn, true, pk, None, "QUIC"));
-                        }
-                        Err(e) => match crate::quic_transport::quic_failure_disposition(mode) {
-                            crate::quic_transport::QuicFailure::Fallback => {
-                                log::warn!(
-                                    "QUIC_MODE=prefer: QUIC 直连失败（{}），回退到原传输",
-                                    e
-                                );
-                            }
-                            crate::quic_transport::QuicFailure::RealError => {
-                                interface.update_direct(Some(false));
-                                bail!("QUIC_MODE=required: {}", e);
-                            }
-                        },
-                    }
-                }
             }
+        };
+        #[cfg(feature = "quic")]
+        if quic_mode != crate::common::QuicMode::Disabled && peer_pk.is_none() {
+            // 没拿到对端公钥 ⇒ QUIC 拨号无法做身份校验 ⇒ 直接视为不可用。
+            interface.update_direct(Some(false));
+            match quic_mode {
+                crate::common::QuicMode::Prefer => {
+                    log::warn!(
+                        "QUIC_MODE=prefer: 缺对端公钥（signed_id_pk 为空或解码失败），回退到原传输"
+                    );
+                }
+                crate::common::QuicMode::Required => {
+                    bail!("QUIC_MODE=required: 缺对端公钥，无法做 C1 RPK 校验");
+                }
+                crate::common::QuicMode::Disabled => unreachable!(),
+            }
+            return Err(hbb_common::anyhow::anyhow!(
+                "QUIC_MODE=prefer/required: no peer pubkey, falling back / bailing"
+            ));
         }
 
         // Each attempt carries whether its path is direct (4th field). TCP/UDP/IPv6 punch are
         // always direct; WebRTC is direct only when ICE nominated a non-TURN pair.
         let mut direct_futures = Vec::new();
+        // R4-3（task-15）：把上面校验过的对端公钥带进打洞接缝 —— QUIC 与 KCP 争同一个
+        // 已打洞 socket。`quic` feature 关闭时恒为 None，`udp_nat_connect` 行为逐字节不变。
+        #[cfg(feature = "quic")]
+        let quic_pk = peer_pk;
+        #[cfg(not(feature = "quic"))]
+        let quic_pk: Option<[u8; 32]> = None;
         if allow_tcp_punch {
             let fut = connect_tcp_local(peer, Some(local_addr), connect_timeout);
             direct_futures.push(
@@ -1559,7 +1542,7 @@ impl Client {
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
-                        udp_nat_connect(udp_socket_nat, "UDP", connect_timeout).await?;
+                        udp_nat_connect(udp_socket_nat, "UDP", connect_timeout, quic_pk).await?;
                     Ok((conn, kcp, typ, true))
                 }
                 .boxed(),
@@ -1569,7 +1552,7 @@ impl Client {
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
-                        udp_nat_connect(udp_socket_v6, "IPv6", connect_timeout).await?;
+                        udp_nat_connect(udp_socket_v6, "IPv6", connect_timeout, quic_pk).await?;
                     Ok((conn, kcp, typ, true))
                 }
                 .boxed(),
@@ -1618,6 +1601,13 @@ impl Client {
             Ok((conn, kcp, typ, direct)) => (Ok(conn), kcp, typ, direct),
             Err(e) => (Err(e), None, "", false),
         };
+        // R4-3（task-15）：`required` 意味着"只允许 QUIC"。拨号搬进 direct_futures 之后，
+        // TCP 打洞 / WebRTC /（下面的）relay 兜底都可能赢，所以这里必须显式守住 ——
+        // 否则 required 会被 `is_force_relay()` 或 relay 兜底悄悄降级成别的传输。
+        #[cfg(feature = "quic")]
+        if quic_mode == crate::common::QuicMode::Required && typ != "QUIC" {
+            bail!("QUIC_MODE=required: 只允许 QUIC，实际结果是 {typ:?}");
+        }
         if let Some(stop) = webrtc_bridge_stop {
             let _ = stop.send(());
         }
@@ -5640,6 +5630,7 @@ async fn udp_nat_connect(
     socket: Arc<UdpSocket>,
     typ: &'static str,
     ms_timeout: u64,
+    quic_peer_pk: Option<[u8; 32]>,
 ) -> ResultType<(Stream, Option<KcpStream>, &'static str)> {
     crate::punch_udp(socket.clone(), false)
         .await
@@ -5647,6 +5638,31 @@ async fn udp_nat_connect(
             log::debug!("{err}");
             anyhow!(err)
         })?;
+    // R4-3（task-15）：QUIC 与 KCP 共用这一个已打洞 socket —— 打洞已把 NAT 映射建好，
+    // 换成别的 socket 会让源端口没有映射（C4）。因此 QUIC 必须在这里尝试、且与 KCP 互斥。
+    // `quic_peer_pk` 为 None（无 feature / disabled / 身份校验失败）时本块完全不参与，
+    // KCP 路径逐字节不变。
+    #[cfg(feature = "quic")]
+    if let Some(peer_pk) = quic_peer_pk {
+        let mode = crate::common::get_quic_mode();
+        if mode != crate::common::QuicMode::Disabled {
+            match crate::quic_transport::quic_direct_attempt(socket.clone(), &peer_pk, ms_timeout)
+                .await
+            {
+                Ok(stream) => return Ok((Stream::Tcp(stream), None, "QUIC")),
+                Err(e) => match crate::quic_transport::quic_failure_disposition(mode) {
+                    crate::quic_transport::QuicFailure::Fallback => {
+                        log::warn!("QUIC_MODE=prefer: QUIC 直连失败（{}），回退到 KCP", e);
+                    }
+                    crate::quic_transport::QuicFailure::RealError => {
+                        return Err(anyhow!("QUIC_MODE=required: {}", e));
+                    }
+                },
+            }
+        }
+    }
+    #[cfg(not(feature = "quic"))]
+    let _ = quic_peer_pk;
     let res = KcpStream::connect(socket, Duration::from_millis(ms_timeout))
         .await
         .map_err(|err| {

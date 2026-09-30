@@ -21,6 +21,8 @@ use quinn::{ClientConfig as QuinnClientConfig, RecvStream, SendStream, ServerCon
 #[cfg(feature = "quic")]
 use {
     quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    quinn::udp::{RecvMeta, Transmit},
+    quinn::{default_runtime, AsyncUdpSocket, EndpointConfig, UdpPoller},
     ring::rand::SystemRandom,
     ring::signature::{Ed25519KeyPair, KeyPair},
     rustls::client::danger::{
@@ -143,24 +145,264 @@ pub fn quic_failure_disposition(mode: crate::common::QuicMode) -> QuicFailure {
     }
 }
 
-/// 2a-3：传输选择点的 QUIC 直连尝试（product 入口，`connect()` 调用，Path B）。
+// ---------- R4-3（task-15）：让 quinn 骑在 RustDesk 自己打洞出来的 UDP socket 上 ----------
+//
+// 设计依据与取舍全文见 `analysis/network/quic-server-wiring.md`。三条硬事实：
+//
+// 1. **NAT 映射是打洞 socket 的源四元组**（`docs/00-current-state.md` §8 R3）。因此 QUIC 端点
+//    不能自己 `Endpoint::client(local_addr)` 新开 socket（会从没打洞的源端口出去），必须复用
+//    `rendezvous_mediator::udp_nat_listen`（被控端）/ `client::udp_nat_connect`（主控端）
+//    手里那个**已被 punch_udp 打过洞的** socket，与 KCP 互斥。
+// 2. quinn 只接受 `AsyncUdpSocket`，所以需要下面这层 tokio 适配（quinn-0.11.9/src/runtime.rs:44）。
+//    tokio 1.44.2 提供 `poll_send_ready` / `try_send_to` / `poll_recv_from`，无需任何新依赖。
+// 3. 打洞 socket 是 `connect()` 过的单对端 socket；quinn 只会发往它从 `Endpoint::connect`
+//    学到的那个地址，因此 `try_send_to` 到该地址与 `send` 等价（Linux/Windows 同）。
+//
+// 已知代价（诚实声明）：`punch_udp` 的监听侧在"对端第一个真实数据包"上返回并**消费**该包
+// （`src/common.rs:2810-2818` 的设计），而 quinn 0.11.9 的 `Endpoint` **没有**把数据报注回
+// 协议栈的公有 API（`endpoint.rs` 无 `pub fn handle`）。所以那第一个 QUIC Initial 会被丢弃，
+// 由客户端按 PTO 重传（默认初值约 1s）才能开始握手。这是本设计的固定成本，缓解方案见文档。
+#[cfg(feature = "quic")]
+#[derive(Debug)]
+struct TokioAsyncUdpSocket {
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+}
+
+#[cfg(feature = "quic")]
+#[derive(Debug)]
+struct TokioUdpPoller {
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+}
+
+#[cfg(feature = "quic")]
+impl UdpPoller for TokioUdpPoller {
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        // 把 quinn 的写就绪等待直接接到 tokio 的 reactor 上；`poll_send_ready` 可以无限次
+        // 复用（UdpPoller 的契约要求如此），不需要自己缓存 future/waker。
+        self.socket.poll_send_ready(cx)
+    }
+}
+
+#[cfg(feature = "quic")]
+impl AsyncUdpSocket for TokioAsyncUdpSocket {
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+        Box::pin(TokioUdpPoller {
+            socket: self.socket.clone(),
+        })
+    }
+
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
+        match self
+            .socket
+            .try_send_to(transmit.contents, transmit.destination)
+        {
+            Ok(_) => Ok(()),
+            // quinn 的契约：WouldBlock 时必须让 `UdpPoller::poll_writable` 去登记唤醒。
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "QUIC udp send would block",
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        // `max_receive_segments()` 取默认值 1，所以一次只填一个 buffer / 一条 RecvMeta。
+        let (Some(buf), Some(meta0)) = (bufs.first_mut(), meta.first_mut()) else {
+            return Poll::Ready(Ok(0));
+        };
+        let mut read_buf = ReadBuf::new(buf);
+        match self.socket.poll_recv_from(cx, &mut read_buf) {
+            Poll::Ready(Ok(addr)) => {
+                let len = read_buf.filled().len();
+                *meta0 = RecvMeta {
+                    addr,
+                    len,
+                    stride: len,
+                    ecn: None,
+                    dst_ip: None,
+                };
+                Poll::Ready(Ok(1))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+}
+
+/// R4-3（task-15）：本机 Sodium ed25519 身份 → `(raw pk, seed)`，供 QUIC 服务端固定 RPK。
+///
+/// 零改动 `libs/hbb_common`（task-15 Q3）：`Config::get_key_pair()`
+/// （`libs/hbb_common/src/config.rs:1116`）已经是 pub，返回 `(sk, pk)`（`type KeyPair =
+/// (Vec<u8>, Vec<u8>)`，同文件 `:61`）。Sodium 的 `sign::SecretKey` 是 64 字节 seed‖pk
+/// （`libs/hbb_common/src/config.rs:1127` 的 `sign::gen_keypair()`），故 seed = `sk[..32]`。
+#[cfg(feature = "quic")]
+pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
+    let (sk, pk) = hbb_common::config::Config::get_key_pair();
+    let pk: [u8; 32] = pk
+        .as_slice()
+        .try_into()
+        .map_err(|_| hbb_common::anyhow::anyhow!("local ed25519 public key is not 32 bytes"))?;
+    let seed: [u8; 32] = sk
+        .get(..32)
+        .ok_or_else(|| hbb_common::anyhow::anyhow!("local ed25519 secret key shorter than 32B"))?
+        .try_into()
+        .map_err(|_| hbb_common::anyhow::anyhow!("local ed25519 seed is not 32 bytes"))?;
+    Ok((pk, seed))
+}
+
+/// R4-3（task-15）：这个数据报是不是 QUIC **v1 长首部**？
+///
+/// 监听侧用它做**纯本地**的协议分流：命中 ⇒ 交给 `quic_accept_attempt`，返回 false ⇒ 逐字节
+/// 走原来的 `KcpStream::accept` 路径。判据（Lead 复核后收紧，见
+/// `analysis/network/quic-server-wiring.md` §4.1）：
+///
+/// 1. 首字节 bit7（长首部形态）与 bit6（fixed bit）**都**置位；
+/// 2. 版本字段 `datagram[1..5]` 恰为 QUIC v1 = `0x00 0x00 0x00 0x01`。
+///
+/// 判据 2 同时排除了版本 0（Version Negotiation）：它不会出现在客户端首包里，本模块的客户端
+/// 也不协商其它版本（见下）。**旧判据（`bit7 != 0 && len > 8 && datagram[1..5] != [0;4]`）
+/// 已被取代，原因是「KCP 首包的 `datagram[1..5]` 恒非 0」不成立**：本仓的 KCP 线格式不是经典
+/// ikcp，而是 `kcp-sys`（branch `rustdesk-patches`）的 14 字节
+/// `KcpPacketHeader { conv: u32, src_session_id: u32, dst_session_id: u32, flag: u8, rsv: u8 }`
+/// （`kcp-sys/src/packet_def.rs:23-30`，无前缀，`KcpStream::accept` 原样注入）。其首字节是
+/// `conv & 0xFF`，而 conv 来自 `cur_conv: AtomicU32::new(rand::random())`
+/// （`kcp-sys/src/endpoint.rs:531`）⇒ bit7 约 1/2 概率置位；`datagram[1..5]` 的末字节是
+/// `src_session_id & 0xFF`，`KcpStream::connect` 硬编码传 0（`src/kcp_stream.rs:117`），故
+/// `!= [0;4]` 在 `conv >= 256` 时恒真（≈1 − 2⁻²⁴）。合起来 ⇒ 旧判据对 KCP SYN 有约 **50%**
+/// 的假阳性，会让被控端把 KCP 连接误导入 QUIC 并等满超时后**杀掉这条打洞连接**。
+///
+/// 收紧后 KCP SYN 要假阳性必须同时满足 `conv < 256`（`conv>>8/16/24` 全 0）**且**
+/// `src_session_id & 0xFF == 1`，而后者由本仓唯一的 connect 调用点固定为 0 ⇒ **结构上不可能**。
+///
+/// 收紧方向是安全方向：漏判只会让被控端退回 `KcpStream::accept`（把该包原样注入 KCP，无害），
+/// 误判才会杀掉连接。
+///
+/// 本模块的客户端恒发 v1：quinn-proto 的 `ClientConfig::new` 默认 `version: 1`
+/// （`quinn-proto-0.11.14/src/config/mod.rs:576`），`make_quic_client_config` 没有覆盖
+/// `.version(...)`。客户端首包的长首部形态为 `LONG_HEADER_FORM | FIXED_BIT | (pn_len − 1)`
+/// （`src/packet.rs:835`）⇒ 首字节 ∈ {0xC0..0xC3}；fixed bit 不会被 grease 掉，因为客户端在
+/// 收到服务端 transport parameters 之前构造首包，此时 `peer_params.grease_quic_bit` 仍是默认
+/// `false`（`src/transport_parameters.rs:127`），grease 只在 `peer_params.grease_quic_bit` 为真
+/// 时随机翻转 fixed bit（`src/connection/packet_builder.rs:127`）。
+pub fn looks_like_quic_long_header(datagram: &[u8]) -> bool {
+    /// QUIC v1 的版本字段（RFC 9000）。
+    const QUIC_V1: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+    let Some(first) = datagram.first() else {
+        return false;
+    };
+    // 短首部（1-RTT）bit7 = 0；fixed bit 是 bit6。`get(1..5)` 在长度 < 5 时返回 None。
+    first & 0xC0 == 0xC0 && datagram.get(1..5) == Some(&QUIC_V1[..])
+}
+
+/// R4-3（task-15）：产品入口 —— 在**已打洞**的 UDP socket 上向对端发起 QUIC（Path B）。
+///
+/// 与调试用的 `quic_dial_quinn` 的唯一区别：socket 由调用方提供（`client.rs:udp_nat_connect`
+/// 里刚 `punch_udp` 成功的那个），而不是自己新开一个 —— 原因见本段开头的第 1 条硬事实。
+/// 对端地址直接取自 socket 的 `peer_addr()`（该 socket 已被 `connect()` 到对端）。
 ///
 /// 一旦返回 `Ok(FramedStream)`，上层按 `Stream::Tcp` 照常 `set_key`/`send_raw`/`next`，
-/// E2E secretbox 链不变。**诚实状态**：C1（RFC 7250 RPK）身份绑定已在本模块落地
-///（`make_quic_client_config` / `make_quic_server_config` / `NervRpkVerifier`），
-/// 但部署中还没有 QUIC 对端端点，因此本函数目前**总是返回真实错误** —— 绝不伪造成功。
-/// `prefer` 据此记 `log::warn!` 并回退；`required` 据此把错误如实上报。
-/// `peer_raw_pubkey` 是对端 32 字节 ed25519 公钥（来自 `signed_id_pk`，
-/// 经 `common::decode_id_pk` 解出）；为未来真实 QUIC 拨号预埋入参。
+/// `stream.rs` 之上的 E2E secretbox 链不变。`peer_raw_pubkey` 是对端 32 字节 ed25519 公钥，
+/// 来自 `signed_id_pk` 经 `common::decode_id_pk` 解出、且已在调用侧做过 `id == peer_id` 校验
+/// （`src/client.rs`，task-15 Q4 裁决 A+）—— 它就是 RFC 7250 的信任锚。
+#[cfg(feature = "quic")]
 pub async fn quic_direct_attempt(
-    _peer: SocketAddr,
-    _local_addr: SocketAddr,
-    _connect_timeout_ms: u64,
-    _peer_raw_pubkey: &[u8; 32],
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+    peer_raw_pubkey: &[u8; 32],
+    connect_timeout_ms: u64,
 ) -> hbb_common::ResultType<FramedStream> {
-    Err(hbb_common::anyhow::Error::msg(
-        "QUIC 直连暂不可用：对端无 QUIC 端点（C1 已落地，等部署配套）",
-    ))
+    // ring provider 是本模块的唯一全局前置条件。此前产品路径没有任何调用者装它，只有
+    // `run_quic_probe_mode` 与测试装（缺口 G3，见
+    // `analysis/network/phase3-wiring-options.md`）。在这里装一次是幂等的，从而不必去改
+    // 共享核心文件 `src/lib.rs`（AGENTS.md：共享文件只留 thin hook）。
+    install_ring_provider();
+
+    let peer = socket.peer_addr()?;
+    let client_cfg = make_quic_client_config(peer_raw_pubkey)?;
+    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
+        EndpointConfig::default(),
+        None,
+        Arc::new(TokioAsyncUdpSocket {
+            socket: socket.clone(),
+        }),
+        default_runtime()
+            .ok_or_else(|| hbb_common::anyhow::anyhow!("no async runtime available for QUIC"))?,
+    )?;
+    endpoint.set_default_client_config(client_cfg);
+    let sn = ServerName::IpAddress(peer.ip().into());
+    let connecting = endpoint
+        .connect(peer, &sn.to_str())
+        .map_err(|e| hbb_common::anyhow::anyhow!("quinn Endpoint::connect: {e:?}"))?;
+    let conn = hbb_common::tokio::time::timeout(
+        std::time::Duration::from_millis(connect_timeout_ms),
+        connecting,
+    )
+    .await
+    .map_err(|_| {
+        hbb_common::anyhow::anyhow!("quic dial timeout after {connect_timeout_ms}ms")
+    })??;
+    let (send, recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| hbb_common::anyhow::anyhow!("open_bi failed: {e:?}"))?;
+    hbb_common::log::info!("QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）");
+    Ok(quic_into_framed_stream(recv, send, peer))
+}
+
+/// R4-3（task-15）：产品入口 —— 在**已打洞**的 UDP socket 上接受一条 QUIC 连接（被控端）。
+///
+/// 由 `rendezvous_mediator::udp_nat_listen` 在 `punch_udp` 之后、`KcpStream::accept` 之前调用，
+/// 且只在「对端首包是 QUIC 长首部」时调用，因此同一个 socket 不会同时被 quinn 与 KCP 持有。
+///
+/// 身份方向性（诚实声明）：`make_quic_server_config` 用 `with_no_client_auth`
+/// （`src/quic_transport.rs` 内），即**QUIC 层只让客户端认证服务端**，服务端不认证客户端 ——
+/// 主控端身份仍由上层既有的 `identity_handshake` 完成。这与服务端侧既有行为一致，未新增缺口。
+#[cfg(feature = "quic")]
+pub async fn quic_accept_attempt(
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+    peer: SocketAddr,
+    accept_timeout_ms: u64,
+    server_cfg: QuinnServerConfig,
+) -> hbb_common::ResultType<FramedStream> {
+    install_ring_provider();
+
+    let endpoint = quinn::Endpoint::new_with_abstract_socket(
+        EndpointConfig::default(),
+        Some(server_cfg),
+        Arc::new(TokioAsyncUdpSocket {
+            socket: socket.clone(),
+        }),
+        default_runtime()
+            .ok_or_else(|| hbb_common::anyhow::anyhow!("no async runtime available for QUIC"))?,
+    )?;
+    let incoming = hbb_common::tokio::time::timeout(
+        std::time::Duration::from_millis(accept_timeout_ms),
+        endpoint.accept(),
+    )
+    .await
+    .map_err(|_| hbb_common::anyhow::anyhow!("quic accept timeout after {accept_timeout_ms}ms"))?
+    .ok_or_else(|| hbb_common::anyhow::anyhow!("QUIC endpoint closed before any connection"))?;
+    let conn = hbb_common::tokio::time::timeout(
+        std::time::Duration::from_millis(accept_timeout_ms),
+        incoming,
+    )
+    .await
+    .map_err(|_| hbb_common::anyhow::anyhow!("quic handshake timeout"))??;
+    let (send, recv) = conn
+        .accept_bi()
+        .await
+        .map_err(|e| hbb_common::anyhow::anyhow!("accept_bi failed: {e:?}"))?;
+    hbb_common::log::info!("QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定");
+    Ok(quic_into_framed_stream(recv, send, peer))
 }
 
 // ---------- P1d-tail-3：`--quic-probe-mode` 调试入口（仅 RT-01 / Win7 字节级实测用）----------
@@ -1045,13 +1287,11 @@ mod tests {
             let (chosen, fallback) = if !attempted {
                 ("original", false)
             } else {
-                match super::quic_direct_attempt(
-                    "127.0.0.1:1".parse()?,
-                    "127.0.0.1:0".parse()?,
-                    1000,
-                    &[0u8; 32],
-                )
-                .await
+                // R4-3（task-15）：真实入口现在骑在调用方的已打洞 socket 上，测试用一个
+                // 连到无人监听的 127.0.0.1:1 的 socket，语义与旧的固定失败一致。
+                let probe_socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await?);
+                probe_socket.connect("127.0.0.1:1").await?;
+                match super::quic_direct_attempt(probe_socket, &[0u8; 32], 1000).await
                 {
                     Ok(_) => ("quic", false),
                     Err(_) => match super::quic_failure_disposition(mode) {
@@ -1265,5 +1505,146 @@ mod tests {
         drop(recv);
         server_task.await??;
         Ok(())
+    }
+
+    /// R4-3（task-15）F-R1：监听侧判别器必须对 KCP SYN 零假阳性。
+    ///
+    /// 旧判据（`bit7 != 0 && len > 8 && datagram[1..5] != [0;4]`）对 KCP SYN 有约 50% 假阳性，
+    /// 会把 KCP 直连误导入 QUIC 并杀掉连接。本测试把收紧后的判据钉死。
+    #[test]
+    fn quic_discriminator_rejects_kcp_syn() {
+        // `kcp-sys` 的线格式（kcp-sys/src/packet_def.rs:23-30，无前缀）：
+        // conv(LE u32) ‖ src_session_id(LE u32) ‖ dst_session_id(LE u32) ‖ flag ‖ rsv = 14 字节。
+        // `KcpStream::connect`（src/kcp_stream.rs:117）把 src_session_id 硬编码为 0。
+        fn kcp_syn(conv: u32, src_session_id: u32) -> [u8; 14] {
+            let mut b = [0u8; 14];
+            b[..4].copy_from_slice(&conv.to_le_bytes());
+            b[4..8].copy_from_slice(&src_session_id.to_le_bytes());
+            b
+        }
+        // Lead 复核给出的反例：conv = 0x0000_0180 ⇒ 首字节 0x80、datagram[1..5] = [1,0,0,0]，
+        // 旧判据判为 QUIC，新判据必须否。
+        assert!(
+            !super::looks_like_quic_long_header(&kcp_syn(0x0000_0180, 0)),
+            "conv = 0x00000180 的 KCP SYN 不得被判为 QUIC"
+        );
+        // 覆盖 bit7/bit6 的四种组合与 conv 边界（1/2 的 bit7 概率由此穷举式钉住）。
+        for conv in [
+            0x0000_0000,
+            0x0000_0001,
+            0x0000_0040,
+            0x0000_0080,
+            0x0000_00c0,
+            0x0000_00ff,
+            0x0000_0100,
+            0x0000_0101,
+            0x0000_0180,
+            0x0000_01c0,
+            0x0000_ffff,
+            0x0001_0000,
+            0x8000_0000,
+            0xffff_ffff,
+        ] {
+            let p = kcp_syn(conv, 0);
+            assert!(
+                !super::looks_like_quic_long_header(&p),
+                "conv = {conv:#010x} 的 KCP SYN 被误判为 QUIC：{p:?}"
+            );
+        }
+        // 收紧后唯一的假阳性形状 = 「conv < 256（版本字段前 3 字节为 0）」**且**
+        // 「src_session_id 低字节 == 1」。后半条本仓不可达（src/kcp_stream.rs:117 恒传 0）——
+        // 下面三条把这个「结构上不可能」钉成可回归的断言。
+        assert!(super::looks_like_quic_long_header(&kcp_syn(0x0000_00c0, 1)));
+        assert!(!super::looks_like_quic_long_header(&kcp_syn(0x0000_00c0, 0)));
+        assert!(!super::looks_like_quic_long_header(&kcp_syn(0x0000_01c0, 1)));
+    }
+
+    /// R4-3（task-15）F-R1：真 QUIC v1 Initial 必须命中。
+    #[test]
+    fn quic_discriminator_accepts_quic_v1_initial() {
+        // 0xC3 = LONG_HEADER_FORM | FIXED_BIT | (pn_len − 1 = 3)；版本 = v1；
+        // 随后 DCID 长度 8 / DCID / SCID 长度 0 / token 长度 0 / length / packet number。
+        // 客户端首包的 fixed bit 不会被 grease 掉（quinn 只在 peer_params.grease_quic_bit
+        // 为真时翻转，而首包构造时 peer 参数还是默认的 false）。
+        fn initial(b0: u8, version: [u8; 4]) -> Vec<u8> {
+            let mut p = vec![b0, version[0], version[1], version[2], version[3], 0x08];
+            p.extend_from_slice(&[0xAA; 8]); // DCID
+            p.push(0x00); // SCID 长度
+            p.push(0x00); // token 长度
+            p.extend_from_slice(&[0x44, 0x9E]); // length
+            p.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // packet number
+            p.resize(1200, 0); // RFC 9000：客户端 Initial 必须填充到 >= 1200 字节
+            p
+        }
+        // 首字节的四种 packet-number 长度都应命中。
+        for b0 in [0xC0u8, 0xC1, 0xC2, 0xC3] {
+            let p = initial(b0, [0x00, 0x00, 0x00, 0x01]);
+            assert!(
+                super::looks_like_quic_long_header(&p),
+                "首字节 {b0:#04x} 的 QUIC v1 Initial 必须命中"
+            );
+        }
+    }
+
+    /// R4-3（task-15）F-R1：打洞探针、空包、过短的包、非 v1 版本都不得命中。
+    #[test]
+    fn quic_discriminator_rejects_non_quic_datagrams() {
+        // src/common.rs:2785-2787：PUNCH_PROBE = *b"RDP?"、PUNCH_ACK = *b"RDP!"，共 12 字节，
+        // 其余 8 字节是随机 tid。首字节 'R' = 0x52，bit7 = 0 ⇒ 恒不命中。
+        for tag in [b"RDP?", b"RDP!"] {
+            let mut p = [0u8; 12];
+            p[..4].copy_from_slice(tag);
+            p[4..].copy_from_slice(&0x0000_0180u64.to_le_bytes());
+            assert!(
+                !super::looks_like_quic_long_header(&p),
+                "打洞探针 {:?} 不得被判为 QUIC",
+                std::str::from_utf8(tag).unwrap_or("?")
+            );
+        }
+        // 空包与长度 < 5 的包：版本字段读不出来 ⇒ 恒不命中。
+        assert!(!super::looks_like_quic_long_header(&[]));
+        for n in 1..5usize {
+            assert!(
+                !super::looks_like_quic_long_header(&vec![0xC0u8; n]),
+                "{n} 字节的包不得被判为 QUIC（版本字段缺失）"
+            );
+        }
+        // 版本 0（Version Negotiation，RFC 9000 §17.2.1）与其它版本：本模块客户端恒发 v1，
+        // 且首包不会是 Version Negotiation，故一律不命中。
+        fn long_header(version: [u8; 4]) -> Vec<u8> {
+            let mut p = vec![0xC0u8, version[0], version[1], version[2], version[3], 0x08];
+            p.extend_from_slice(&[0xBB; 8]);
+            p.resize(1200, 0);
+            p
+        }
+        assert!(!super::looks_like_quic_long_header(&long_header([
+            0x00, 0x00, 0x00, 0x00
+        ])));
+        for v in [0xff00_001du32, 0xff00_001eu32, 0x0000_0002, 0xffff_ffff] {
+            let p = long_header(v.to_be_bytes());
+            assert!(
+                !super::looks_like_quic_long_header(&p),
+                "版本 {v:#010x} 不得被判为 QUIC v1"
+            );
+        }
+    }
+
+    #[test]
+    fn quic_discriminator_known_residual_shape_is_pinned() {
+        // 已知残余形状（本仓不可达，但行为必须被钉住 —— 见 analysis/network/quic-server-wiring.md
+        // §4.1.1「残余形状」）：判据只看首字节的两个高位与版本字段，**不要求 QUIC Initial 的最小长度**。
+        // 因此一个恰好 5 字节的 `C0 00 00 00 01` 会被判为 QUIC。这是刻意保留的：
+        //   - 监听 socket（src/rendezvous_mediator.rs:1486）已 connect 到对端，对端只会发
+        //     12 字节打洞探针（src/common.rs:2785-2787）、14 字节 KCP SYN（src/kcp_stream.rs:117）
+        //     或 >= 1200 字节 QUIC Initial ⇒ 该形状不可达。
+        //   - 若加 `datagram.len() >= 1200`（RFC 9000 §14.1 的填充是**客户端义务**），会引入一个
+        //     **新的误判类**：漏判 ⇒ 退回 KCP ⇒ 连接失败，比「多等一个 PTO」更差的失败模式。
+        //     故记为 round-5 候选，不在 v1 实施（Lead 裁定）。
+        let residual = [0xC0u8, 0x00, 0x00, 0x00, 0x01];
+        assert!(
+            super::looks_like_quic_long_header(&residual),
+            "已知残余形状：5 字节 `C0 00 00 00 01` 当前判为 QUIC。若此处变红，说明判据被改动，\
+             必须同步 analysis/network/quic-server-wiring.md §4.1.1 的残余形状条目"
+        );
     }
 }

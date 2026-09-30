@@ -1485,6 +1485,32 @@ async fn udp_nat_listen(
     let func = async {
         socket.connect(peer_addr).await?;
         let init_packet = crate::punch_udp(socket.clone(), true).await?;
+        // R4-3（task-15，`analysis/network/quic-server-wiring.md`）：若对端首包是 QUIC 长首部
+        // （`docs/00-current-state.md` §7.1 的可判定特征），就把这个**已打过洞**的 socket 交给
+        // quinn —— 另开 socket 会让 QUIC 从没有 NAT 映射的源端口出去、必然被丢弃。
+        // 纯新增 + early return：feature 关闭或 QuicMode::Disabled 时下面这几行完全不编译，
+        // 本函数与改动前逐字节等价。
+        #[cfg(feature = "quic")]
+        if crate::common::get_quic_mode() != crate::common::QuicMode::Disabled
+            && init_packet
+                .as_ref()
+                .is_some_and(|p| crate::quic_transport::looks_like_quic_long_header(p))
+        {
+            let (pk, seed) = crate::quic_transport::quic_local_identity()?;
+            let server_cfg = crate::quic_transport::make_quic_server_config(&pk, &seed)?;
+            let stream = crate::quic_transport::quic_accept_attempt(
+                socket,
+                peer_addr,
+                CONNECT_TIMEOUT as u64,
+                server_cfg,
+            )
+            .await?;
+            // 与下面的 KCP 分支一致：连接层自己的限流接手，这里把打洞位还回去。
+            drop(slot);
+            crate::server::create_tcp_connection(server, Stream::Tcp(stream), peer_addr_v4, true, meta)
+                .await?;
+            return Ok(());
+        }
         let stream = crate::kcp_stream::KcpStream::accept(
             socket,
             Duration::from_millis(CONNECT_TIMEOUT as _),
