@@ -3765,9 +3765,11 @@ const _kLightLogoAsset = 'assets/logo_light.png';
 const _kDarkLogoAsset = 'assets/logo_dark.png';
 
 List<String> _logoAssetCandidatesForBrightness(Brightness brightness) {
+  // assets/logo_light.png currently ships the same white artwork as logo_dark.png,
+  // which is invisible on a light background, so the dark-ink default goes first.
   return brightness == Brightness.dark
       ? [_kDarkLogoAsset, _kDefaultLogoAsset]
-      : [_kLightLogoAsset, _kDefaultLogoAsset];
+      : [_kDefaultLogoAsset, _kLightLogoAsset];
 }
 
 Future<String?> _resolveLogoAsset(Brightness brightness) async {

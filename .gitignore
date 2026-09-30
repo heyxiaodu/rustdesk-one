@@ -17,6 +17,8 @@ cert.pfx
 *png
 *svg
 *jpg
+# flutter/assets holds source artwork, not build output; keep its PNGs versioned.
+!flutter/assets/*png
 sciter.dll
 **pdb
 src/bridge_generated.rs
