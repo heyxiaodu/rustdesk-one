@@ -266,7 +266,17 @@ fi
 # rustdesk. Release pulls in additional sodiumoxide surface (blake2b, sha512,
 # poly1305, scalarmult_curve25519, stream_salsa20, verify_32, sodium_mem*,
 # sodium_misuse, etc.) — the list is the union of both:
-# nervdesk: kill-switch for the P2-9 experiment -- NERV_DISABLE_SODIUM_ALTNAME=1
+# nervdesk: NERV_DISABLE_SODIUM_ALTNAME is a PERMANENT switch, not a temporary
+# kill-switch.  The literal value `1` disables the /ALTERNATENAME rewrite below;
+# any other value (unset, "", 0, true, yes) keeps it enabled, so the default and
+# every falsy-looking spelling retain the correct behaviour.  Because a truthy
+# spelling like `true` does NOT disable it, that case now warns on stderr.
+#
+# Applicability: the rewrite is required for any windows-msvc link that resolves
+# sodium symbols from the static sodium.lib, and it is safe exactly there -- the
+# alias merely redirects __imp_<name> to <name>.  It exists only to reproduce the
+# pre-fix P2-9 link (the FFFFFFFFFFFFFFFF page fault documented in
+# scripts/native/README.md) for A/B comparison; never set it in a shipping build.
 if [ "${NERV_DISABLE_SODIUM_ALTNAME:-0}" != "1" ]; then
 for sym in \
     crypto_box_beforenm \
@@ -307,6 +317,13 @@ for sym in \
     sodium_misuse; do
     CMD+=("/ALTERNATENAME:__imp_${sym}=${sym}")
 done
+else
+    # Only the literal `1` gets here, i.e. an explicit opt-out.  Make it loud: a
+    # silent disable shows up much later, as unresolved __imp_ symbols at link
+    # time, with no hint that a switch caused it.
+    echo "WARN: NERV_DISABLE_SODIUM_ALTNAME=1 -- /ALTERNATENAME rewrite DISABLED" >&2
+    echo "WARN:   __imp_<sodium_symbol> references will not resolve against the static sodium.lib." >&2
+    echo "WARN:   This reproduces the broken P2-9 baseline; for A/B comparison only." >&2
 fi
 
 # Emit final CMD to log (must run AFTER all CMD+= calls above).
