@@ -1334,8 +1334,9 @@ fn get_valid_subkey() -> String {
 
 // Return install options other than InstallLocation.
 pub fn get_install_options() -> String {
-    let app_name = crate::get_app_name();
-    let subkey = format!(".{}", app_name.to_lowercase());
+    // Install options are stored under the portable-config file association key,
+    // which is the machine identifier (see `get_after_install`).
+    let subkey = format!(".{}", hbb_common::config::APP_NAME_IDENT);
     let mut opts = HashMap::new();
 
     let desktop_shortcuts = get_reg_of_hkcr(&subkey, REG_NAME_INSTALL_DESKTOPSHORTCUTS);
@@ -1357,8 +1358,7 @@ pub fn get_silent_install_options(printer_override: Option<bool>) -> &'static st
     let install_printer = match printer_override {
         Some(override_value) => override_value,
         None => {
-            let app_name = crate::get_app_name();
-            let subkey = format!(".{}", app_name.to_lowercase());
+            let subkey = format!(".{}", hbb_common::config::APP_NAME_IDENT);
             let printer = get_reg_of_hkcr(&subkey, REG_NAME_INSTALL_PRINTER);
             printer.as_deref() == Some("1")
         }
@@ -1459,7 +1459,10 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
         "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\{}",
         crate::get_app_name()
     );
-    let exe = format!("{}\\{}.exe", path, crate::get_app_name());
+    // The installed executable base name is an identifier (`nervdesk.exe`), not
+    // the display name: the MSI installs `$(var.ProductExeName).exe` and the
+    // release binary is built as `nervdesk`.
+    let exe = format!("{}\\{}.exe", path, hbb_common::config::APP_NAME_IDENT);
     (subkey, path, start_menu, exe)
 }
 
@@ -1495,13 +1498,17 @@ pub fn rename_exe_cmd(src_exe: &str, path: &str) -> ResultType<String> {
         .ok_or(anyhow!("Can't get file name of {src_exe}"))?
         .to_string_lossy()
         .to_string();
-    let app_name = crate::get_app_name();
-    if src_exe_filename == format!("{app_name}.exe") {
+    // The destination is the installed executable base name, which is an
+    // identifier, and Windows file names are case-insensitive: `build.py` stages
+    // `NervDesk.exe` while the MSI installs `nervdesk.exe`, so the "already named
+    // correctly" short-circuit has to compare case-insensitively.
+    let exe_name = format!("{}.exe", hbb_common::config::APP_NAME_IDENT);
+    if src_exe_filename.eq_ignore_ascii_case(&exe_name) {
         Ok("".to_owned())
     } else {
         Ok(format!(
             "
-        move /Y \"{path}\\{src_exe_filename}\" \"{path}\\{app_name}.exe\"
+        move /Y \"{path}\\{src_exe_filename}\" \"{path}\\{exe_name}\"
         ",
         ))
     }
@@ -1527,7 +1534,15 @@ fn get_after_install(
     reg_value_printer: Option<String>,
 ) -> String {
     let app_name = crate::get_app_name();
-    let ext = app_name.to_lowercase();
+    // Two unrelated identifiers used to share the `ext` name: the file
+    // association for portable config files (`.<ident>`) and the URL protocol
+    // key (`<ident>`, which must match `crate::get_uri_prefix()`). Both are the
+    // machine identifier -- never the display name `APP_NAME`, which may contain
+    // spaces (invalid in a URL scheme) and would not match what the MSI
+    // registers (`RegKeyRoot=".$(var.ProductLower)"` / `HKCR\$(var.ProductLower)`)
+    // nor what `src/ui_session_interface.rs` writes.
+    let file_ext = hbb_common::config::APP_NAME_IDENT;
+    let scheme = hbb_common::config::APP_NAME_IDENT;
     let nested_exe = escape_nested_cmd_ampersands(exe);
 
     // reg delete HKEY_CURRENT_USER\Software\Classes for
@@ -1539,42 +1554,42 @@ fn get_after_install(
 
     let desktop_shortcuts = reg_value_desktop_shortcuts
         .map(|v| {
-            format!("reg add HKEY_CLASSES_ROOT\\.{ext} /f /v {REG_NAME_INSTALL_DESKTOPSHORTCUTS} /t REG_SZ /d \"{v}\"")
+            format!("reg add HKEY_CLASSES_ROOT\\.{file_ext} /f /v {REG_NAME_INSTALL_DESKTOPSHORTCUTS} /t REG_SZ /d \"{v}\"")
         })
         .unwrap_or_default();
     let start_menu_shortcuts = reg_value_start_menu_shortcuts
         .map(|v| {
             format!(
-                "reg add HKEY_CLASSES_ROOT\\.{ext} /f /v {REG_NAME_INSTALL_STARTMENUSHORTCUTS} /t REG_SZ /d \"{v}\""
+                "reg add HKEY_CLASSES_ROOT\\.{file_ext} /f /v {REG_NAME_INSTALL_STARTMENUSHORTCUTS} /t REG_SZ /d \"{v}\""
             )
         })
         .unwrap_or_default();
     let reg_printer = reg_value_printer
         .map(|v| {
             format!(
-                "reg add HKEY_CLASSES_ROOT\\.{ext} /f /v {REG_NAME_INSTALL_PRINTER} /t REG_SZ /d \"{v}\""
+                "reg add HKEY_CLASSES_ROOT\\.{file_ext} /f /v {REG_NAME_INSTALL_PRINTER} /t REG_SZ /d \"{v}\""
             )
         })
         .unwrap_or_default();
 
     format!("
     chcp 65001
-    reg add HKEY_CLASSES_ROOT\\.{ext} /f
+    reg add HKEY_CLASSES_ROOT\\.{file_ext} /f
     {desktop_shortcuts}
     {start_menu_shortcuts}
     {reg_printer}
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\DefaultIcon /f
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\DefaultIcon /f /ve /t REG_SZ  /d \"\\\"{nested_exe}\\\",0\"
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\shell /f
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\shell\\open /f
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\shell\\open\\command /f
-    reg add HKEY_CLASSES_ROOT\\.{ext}\\shell\\open\\command /f /ve /t REG_SZ /d \"\\\"{nested_exe}\\\" --play \\\"%%1\\\"\"
-    reg add HKEY_CLASSES_ROOT\\{ext} /f
-    reg add HKEY_CLASSES_ROOT\\{ext} /f /v \"URL Protocol\" /t REG_SZ /d \"\"
-    reg add HKEY_CLASSES_ROOT\\{ext}\\shell /f
-    reg add HKEY_CLASSES_ROOT\\{ext}\\shell\\open /f
-    reg add HKEY_CLASSES_ROOT\\{ext}\\shell\\open\\command /f
-    reg add HKEY_CLASSES_ROOT\\{ext}\\shell\\open\\command /f /ve /t REG_SZ /d \"\\\"{nested_exe}\\\" \\\"%%1\\\"\"
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\DefaultIcon /f
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\DefaultIcon /f /ve /t REG_SZ  /d \"\\\"{nested_exe}\\\",0\"
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\shell /f
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\shell\\open /f
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\shell\\open\\command /f
+    reg add HKEY_CLASSES_ROOT\\.{file_ext}\\shell\\open\\command /f /ve /t REG_SZ /d \"\\\"{nested_exe}\\\" --play \\\"%%1\\\"\"
+    reg add HKEY_CLASSES_ROOT\\{scheme} /f
+    reg add HKEY_CLASSES_ROOT\\{scheme} /f /v \"URL Protocol\" /t REG_SZ /d \"\"
+    reg add HKEY_CLASSES_ROOT\\{scheme}\\shell /f
+    reg add HKEY_CLASSES_ROOT\\{scheme}\\shell\\open /f
+    reg add HKEY_CLASSES_ROOT\\{scheme}\\shell\\open\\command /f
+    reg add HKEY_CLASSES_ROOT\\{scheme}\\shell\\open\\command /f /ve /t REG_SZ /d \"\\\"{nested_exe}\\\" \\\"%%1\\\"\"
     netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=out action=allow program=\"{exe}\" enable=yes
     netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=in action=allow program=\"{exe}\" enable=yes
     {create_service}
@@ -1787,7 +1802,13 @@ pub fn run_before_uninstall() -> ResultType<()> {
 
 fn get_before_uninstall(kill_self: bool) -> String {
     let app_name = crate::get_app_name();
-    let ext = app_name.to_lowercase();
+    // See `get_after_install`: the portable-config file association extension
+    // and the URL protocol key are both the machine identifier.
+    let file_ext = hbb_common::config::APP_NAME_IDENT;
+    let scheme = hbb_common::config::APP_NAME_IDENT;
+    // The process image name is the executable base name (an identifier); the
+    // service name and firewall rule name below stay display names.
+    let exe_name = hbb_common::config::APP_NAME_IDENT;
     let filter = if kill_self {
         "".to_string()
     } else {
@@ -1799,9 +1820,9 @@ fn get_before_uninstall(kill_self: bool) -> String {
     sc stop {app_name}
     sc delete {app_name}
     taskkill /F /IM {broker_exe}
-    taskkill /F /IM {app_name}.exe{filter}
-    reg delete HKEY_CLASSES_ROOT\\.{ext} /f
-    reg delete HKEY_CLASSES_ROOT\\{ext} /f
+    taskkill /F /IM {exe_name}.exe{filter}
+    reg delete HKEY_CLASSES_ROOT\\.{file_ext} /f
+    reg delete HKEY_CLASSES_ROOT\\{scheme} /f
     netsh advfirewall firewall delete rule name=\"{app_name} Service\"
     ",
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
@@ -2119,10 +2140,12 @@ pub fn update_install_option(k: &str, v: &str) -> ResultType<()> {
     if ![REG_NAME_INSTALL_PRINTER].contains(&k) || !["0", "1"].contains(&v) {
         return Ok(());
     }
-    let app_name = crate::get_app_name();
-    let ext = app_name.to_lowercase();
-    let cmds =
-        format!("chcp 65001 && reg add HKEY_CLASSES_ROOT\\.{ext} /f /v {k} /t REG_SZ /d \"{v}\"");
+    // Same identifier as `get_after_install`: the portable-config file
+    // association extension.
+    let file_ext = hbb_common::config::APP_NAME_IDENT;
+    let cmds = format!(
+        "chcp 65001 && reg add HKEY_CLASSES_ROOT\\.{file_ext} /f /v {k} /t REG_SZ /d \"{v}\""
+    );
     run_cmds(cmds, false, "update_install_option")?;
     Ok(())
 }
@@ -3292,9 +3315,10 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     sc delete {app_name}
     if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
     taskkill /F /IM {broker_exe}
-    taskkill /F /IM {app_name}.exe{filter}
+    taskkill /F /IM {exe_name}.exe{filter}
     ",
         app_name = crate::get_app_name(),
+        exe_name = hbb_common::config::APP_NAME_IDENT,
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
@@ -3327,12 +3351,13 @@ fn get_install_service_commands(path: &str, exe: &str) -> ResultType<String> {
     Ok(format!(
         "
 chcp 65001
-taskkill /F /IM {app_name}.exe{filter}
+taskkill /F /IM {exe_name}.exe{filter}
 {tray_shortcut_commands}
 copy /Y \"%RUSTDESK_OUTPUT_DIR%\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
 {import_config}
 {create_service}
     ",
+        exe_name = hbb_common::config::APP_NAME_IDENT,
         import_config = get_import_config(exe),
         create_service = get_create_service(exe),
     ))
@@ -3411,7 +3436,9 @@ pub fn update_me(debug: bool) -> ResultType<()> {
     let is_msi = is_msi_installed().ok();
     let reg_msi_key = get_reg_msi_key(&subkey, is_msi)?;
 
-    let app_exe_name = &format!("{}.exe", &app_name);
+    // Matched against the process image name, which is the executable base name
+    // (an identifier), not the display name.
+    let app_exe_name = &format!("{}.exe", hbb_common::config::APP_NAME_IDENT);
     // NOTE: The pids below are matched by command line, which can silently come
     // back empty even while the processes are running:
     // - a 32-bit build cannot read the command line of a 64-bit process, so it
@@ -3550,7 +3577,7 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
         "
 chcp 65001
 sc stop {app_name}
-taskkill /F /IM {app_name}.exe{filter}
+taskkill /F /IM {exe_name}.exe{filter}
 {reg_cmd}
 {copy_exe}
 {rename_exe}
@@ -3561,6 +3588,7 @@ taskkill /F /IM {app_name}.exe{filter}
 {sleep}
     ",
         app_name = app_name,
+        exe_name = hbb_common::config::APP_NAME_IDENT,
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         rename_exe = rename_exe_cmd(&src_exe, &path)?,
         remove_meta_toml = remove_meta_toml_cmd(is_msi.unwrap_or(true), &path),
@@ -4199,7 +4227,9 @@ pub fn release_arch_suffix() -> Option<&'static str> {
 pub fn try_kill_rustdesk_main_window_process() -> ResultType<()> {
     // Kill rustdesk.exe without extra arg, should only be called by --server
     // We can find the exact process which occupies the ipc, see more from https://github.com/winsiderss/systeminformer
-    let app_name = crate::get_app_name().to_lowercase();
+    // The image name is the executable base name (an identifier); matching the
+    // display name here would never match `nervdesk.exe`.
+    let app_name = hbb_common::config::APP_NAME_IDENT;
     log::info!("try kill main window process");
     use hbb_common::sysinfo::System;
     let mut sys = System::new();
@@ -4215,7 +4245,7 @@ pub fn try_kill_rustdesk_main_window_process() -> ResultType<()> {
     for (_, p) in sys.processes().iter() {
         let p_name = p.name().to_lowercase();
         // name equal
-        if !(p_name == app_name || p_name == app_name.clone() + ".exe") {
+        if !(p_name == app_name || p_name == format!("{}.exe", app_name)) {
             continue;
         }
         // arg more than 1

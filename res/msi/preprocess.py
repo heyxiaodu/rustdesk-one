@@ -16,6 +16,17 @@ from xml.sax.saxutils import quoteattr
 g_indent_unit = "\t"
 g_version = ""
 g_build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+# Base name of the app executable, WITHOUT the ".exe" suffix. Distinct from the
+# product display name on purpose: the exe that ships is "nervdesk.exe" while the
+# product reads "NERV Desk" everywhere a human looks. Defaults to --app-name so a
+# stock/custom-client invocation that only passes --app-name behaves as before.
+g_exe_name = ""
+
+# Copyright holder / legal entity behind the product. Machine- and human-facing
+# MSI fields that name the legal entity (Package@Manufacturer, the third-party
+# copyright notice inside the license) must use this, NOT the product display
+# name. Kept in sync with the CompanyName in flutter/windows/runner/Runner.rc.
+LEGAL_ENTITY = "NERVDESK"
 
 # Replace the following links with your own in the custom arp properties.
 # https://learn.microsoft.com/en-us/windows/win32/msi/property-reference
@@ -81,7 +92,19 @@ def make_parser():
         help='Connection type, e.g. "incoming", "outgoing". Default is empty, means incoming-outgoing',
     )
     parser.add_argument(
-        "--app-name", type=str, default="RustDesk", help="The app name."
+        "--app-name",
+        type=str,
+        default="RustDesk",
+        help="The app name, as a human reads it (ARP display name, shortcuts, "
+        "install folders, service name, language files).",
+    )
+    parser.add_argument(
+        "--exe-name",
+        type=str,
+        default=None,
+        help="Base name of the app executable, without the .exe suffix. Use it when "
+        "the on-disk executable name differs from the product display name (e.g. "
+        "--app-name \"NERV Desk\" with --exe-name nervdesk). Defaults to --app-name.",
     )
     parser.add_argument(
         "-v", "--version", type=str, default="", help="The app version."
@@ -93,7 +116,7 @@ def make_parser():
         "-m",
         "--manufacturer",
         type=str,
-        default="Purslane Tech Pte. Ltd.",
+        default=LEGAL_ENTITY,
         help="The app manufacturer.",
     )
     return parser
@@ -162,7 +185,7 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir, templ
     idx = 1
     for file_path in path.glob("**/*"):
         if file_path.is_file():
-            if file_path.name.lower() == f"{app_name}.exe".lower():
+            if file_path.name.lower() == f"{g_exe_name}.exe".lower():
                 continue
 
             subdir = str(file_path.parent.relative_to(path))
@@ -228,9 +251,9 @@ def put_app_exe_on_media2():
     target = Path(sys.argv[0]).parent.joinpath("Package/Components/RustDesk.wxs")
     with open(target, "r", encoding="utf-8") as f:
         content = f.read()
-    old = '<File Id="App.exe" Name="$(var.Product).exe" KeyPath="yes" Checksum="yes">'
+    old = '<File Id="App.exe" Name="$(var.ProductExeName).exe" KeyPath="yes" Checksum="yes">'
     new = (
-        '<File Id="App.exe" Name="$(var.Product).exe" KeyPath="yes" Checksum="yes"'
+        '<File Id="App.exe" Name="$(var.ProductExeName).exe" KeyPath="yes" Checksum="yes"'
         f' DiskId="{PER_CUSTOMER_DISK_ID}">'
     )
     if content.count(old) != 1:
@@ -243,15 +266,16 @@ def put_app_exe_on_media2():
 
 def gen_pre_vars(args, dist_dir):
     def func(lines, index_start):
-        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, app_name + ".exe")
+        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, g_exe_name + ".exe")
 
         indent = g_indent_unit * 1
         to_insert_lines = [
             f'{indent}<?define Version="{g_version}" ?>\n',
             f'{indent}<?define Manufacturer="{args.manufacturer}" ?>\n',
             f'{indent}<?define Product="{args.app_name}" ?>\n',
+            f'{indent}<?define ProductExeName="{g_exe_name}" ?>\n',
             f'{indent}<?define Description="{args.app_name} Installer" ?>\n',
-            f'{indent}<?define ProductLower="{args.app_name.lower()}" ?>\n',
+            f'{indent}<?define ProductLower="{g_exe_name.lower()}" ?>\n',
             f'{indent}<?define RegKeyRoot=".$(var.ProductLower)" ?>\n',
             f'{indent}<?define RegKeyInstall="$(var.RegKeyRoot)\\Install" ?>\n',
             f'{indent}<?define BuildDir="{dist_dir}" ?>\n',
@@ -461,7 +485,7 @@ def prepare_resources():
 
 
 def init_global_vars(dist_dir, app_name, args):
-    dist_app = dist_dir.joinpath(app_name + ".exe")
+    dist_app = dist_dir.joinpath(g_exe_name + ".exe")
 
     def read_process_output(args):
         process = subprocess.Popen(
@@ -505,7 +529,7 @@ def update_license_file(app_name):
         license_content = f.read()
     license_content = license_content.replace("website rustdesk.com and other ", "")
     license_content = license_content.replace("RustDesk", app_name)
-    license_content = re.sub(r"Purslane(?: Tech Pte\.)? Ltd", app_name, license_content, flags=re.IGNORECASE)
+    license_content = re.sub(r"Purslane(?: Tech Pte\.)? Ltd", LEGAL_ENTITY, license_content, flags=re.IGNORECASE)
     with open(license_file, "w", encoding="utf-8") as f:
         f.write(license_content)
 
@@ -531,6 +555,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     app_name = args.app_name
+    g_exe_name = args.exe_name or args.app_name
     dist_dir = Path(sys.argv[0]).parent.joinpath(args.dist_dir).resolve()
 
     if not prepare_resources():

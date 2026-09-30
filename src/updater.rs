@@ -117,7 +117,9 @@ fn has_no_controlling_conns() -> bool {
 
 #[cfg(not(any(not(target_os = "windows"), feature = "flutter")))]
 fn has_no_controlling_conns() -> bool {
-    let app_exe = format!("{}.exe", crate::get_app_name().to_lowercase());
+    // Matched against the process image name, which is the executable base name
+    // (an identifier), not the display name.
+    let app_exe = format!("{}.exe", hbb_common::config::APP_NAME_IDENT);
     for arg in [
         "--connect",
         "--play",

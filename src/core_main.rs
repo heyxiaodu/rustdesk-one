@@ -502,11 +502,15 @@ pub fn core_main() -> Option<Vec<String>> {
             #[cfg(target_os = "linux")]
             {
                 hbb_common::allow_err!(crate::platform::check_autostart_config());
-                std::process::Command::new("pkill")
-                    .arg("-f")
-                    .arg(&format!("{} --tray", crate::get_app_name().to_lowercase()))
-                    .status()
-                    .ok();
+                // The tray process is named after the real executable, which on
+                // Linux is neither the display name nor the machine identifier.
+                if let Some(exe_name) = crate::platform::linux::current_exe_name_lower() {
+                    std::process::Command::new("pkill")
+                        .arg("-f")
+                        .arg(&format!("{exe_name} --tray"))
+                        .status()
+                        .ok();
+                }
                 hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
             }
             #[cfg(windows)]
@@ -903,8 +907,10 @@ fn core_main_invoke_new_connection(mut args: std::env::Args) -> Option<Vec<Strin
     let mut uni_links = Default::default();
     if let Some(authority) = authority {
         if let Some(mut id) = id {
-            let app_name = crate::get_app_name();
-            let ext = format!(".{}", app_name.to_lowercase());
+            // `id` may carry the portable-config extension (see
+            // `ui_session_interface.rs`): strip the machine-facing identifier,
+            // not the runtime display name.
+            let ext = format!(".{}", hbb_common::config::APP_NAME_IDENT);
             if id.ends_with(&ext) {
                 id = id.replace(&ext, "");
             }

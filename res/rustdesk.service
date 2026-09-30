@@ -1,10 +1,15 @@
 [Unit]
-Description=RustDesk
+Description=NERV Desk
 Requires=network.target
 After=systemd-user-sessions.service
 
 [Service]
 Type=simple
+# NERV Desk: everything below is machine-facing (binary path, process name, PID
+# file) and must match the binary that Linux packaging actually installs, which is
+# still `rustdesk`: flutter/linux/CMakeLists.txt:7 (BINARY_NAME), build.py:737
+# (build_flutter_deb) and res/DEBIAN/postinst:8 (/usr/bin/rustdesk symlink).
+# Only `Description` above carries the display name `NERV Desk`.
 ExecStart=/usr/bin/rustdesk --service
 # kill --tray and --server both
 ExecStop=pkill -f "rustdesk --"

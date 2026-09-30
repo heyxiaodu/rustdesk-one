@@ -847,7 +847,9 @@ pub mod client {
     }
 
     fn has_running_portable_service_process() -> bool {
-        let app_exe = format!("{}.exe", crate::get_app_name().to_lowercase());
+        // Matched against the process image name, which is the executable base
+        // name (an identifier), not the display name.
+        let app_exe = format!("{}.exe", hbb_common::config::APP_NAME_IDENT);
         !crate::platform::get_pids_of_process_with_first_arg(&app_exe, "--portable-service")
             .is_empty()
     }

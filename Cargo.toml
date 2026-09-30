@@ -1,11 +1,11 @@
 [package]
-name = "rustdesk"
+name = "nervdesk"
 version = "1.5.0"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
 build= "build.rs"
-description = "RustDesk Remote Desktop"
-default-run = "rustdesk"
+description = "NERV Desk Remote Desktop"
+default-run = "nervdesk"
 # MSRV: round-22 user decision B = 升 1.91（放弃 Win7 兼容）。
 # 实证：docs/19-phase2-entry-points.md §2.5.2 验证 5 个 `=` 钉版（rustls 0.23.28 /
 # ring 0.17.14 / quinn 0.11.9 / quinn-proto 0.11.14 / quinn-udp 0.5.14）在 rustc 1.91.0
@@ -293,10 +293,10 @@ webrtc-util = { git = "https://github.com/rustdesk-org/webrtc", rev = "49c89bd8d
 webrtc-sctp = { git = "https://github.com/rustdesk-org/webrtc", rev = "49c89bd8d30e6e62e4c1a96cee38fdc11f79ef63" }
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2026 Purslane Tech Pte. Ltd. All rights reserved."
-ProductName = "RustDesk"
-FileDescription = "RustDesk Remote Desktop"
-OriginalFilename = "rustdesk.exe"
+LegalCopyright = "Copyright © 2026 NERVDESK. All rights reserved."
+ProductName = "NERV Desk"
+FileDescription = "NERV Desk Remote Desktop"
+OriginalFilename = "nervdesk.exe"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
 winres = "0.1"
@@ -313,8 +313,8 @@ docopt = "1.1"
 tokio = { version = "1.44", features = ["test-util"] }
 
 [package.metadata.bundle]
-name = "RustDesk"
-identifier = "com.carriez.rustdesk"
+name = "NERV Desk"
+identifier = "com.nervdesk.nervdesk"
 icon = ["res/32x32.png", "res/128x128.png", "res/128x128@2x.png"]
 osx_minimum_system_version = "10.14"
 

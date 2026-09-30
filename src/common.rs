@@ -1117,7 +1117,10 @@ pub fn is_rustdesk() -> bool {
 
 #[inline]
 pub fn get_uri_prefix() -> String {
-    format!("{}://", get_app_name().to_lowercase())
+    // A URL scheme is an identifier, not a display name: it must be RFC 3986
+    // safe and must not follow the runtime display name `APP_NAME`, which may
+    // contain spaces and is overridable by a custom-client config.
+    format!("{}://", hbb_common::config::APP_NAME_IDENT)
 }
 
 #[cfg(target_os = "macos")]

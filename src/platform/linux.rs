@@ -988,11 +988,38 @@ fn set_x11_env(desktop: &Desktop) {
     }
 }
 
+/// Lowercased file name of the executable that is actually running, for
+/// process-name matching.
+///
+/// On Linux neither the display name (`APP_NAME`, which may contain spaces) nor
+/// the machine identifier (`APP_NAME_IDENT`) names the binary while
+/// `flutter/linux/CMakeLists.txt` keeps `BINARY_NAME = "rustdesk"`, so process
+/// matching has to follow the real file name. `run_me()` relaunches through
+/// `std::env::current_exe()`, so the tray and server processes share it.
+///
+/// Returns `None` when the current executable cannot be resolved; callers must
+/// then skip the match instead of substituting an empty pattern, because
+/// `Regex::new("")` and `pkill -f ""` match every process.
+///
+/// Caveat (pre-existing, unchanged here): in an AppImage `run_me()` prefers
+/// `$APPDIR/AppRun`, so a tray started that way is named `AppRun` and does not
+/// match this name either.
+pub fn current_exe_name_lower() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+        .filter(|n| !n.is_empty())
+}
+
 #[inline]
 fn stop_rustdesk_servers() {
+    let Some(exe_name) = current_exe_name_lower() else {
+        log::warn!("Cannot resolve the current executable name, skip stopping servers");
+        return;
+    };
     let _ = run_cmds(&format!(
         r##"ps -ef | grep -E '{} +--server' | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
+        exe_name,
     ));
 }
 
@@ -2066,7 +2093,15 @@ mod desktop {
         }
 
         fn get_display_xauth_xwayland(&mut self) {
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            // The tray process is named after the real executable. If that
+            // cannot be resolved, fall back to the identifier, which cannot name
+            // a Linux process: the candidate is then simply dropped, whereas an
+            // empty pattern would match every process.
+            let tray = format!(
+                "{} +--tray",
+                current_exe_name_lower()
+                    .unwrap_or_else(|| hbb_common::config::APP_NAME_IDENT.to_owned())
+            );
             for _ in 1..=10 {
                 let display_proc = vec![
                     XDG_DESKTOP_PORTAL,
@@ -2273,7 +2308,15 @@ mod desktop {
 
         fn get_xauth_x11(&mut self) {
             // try by direct access to window manager process by name
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            // The tray process is named after the real executable. If that
+            // cannot be resolved, fall back to the identifier, which cannot name
+            // a Linux process: the candidate is then simply dropped, whereas an
+            // empty pattern would match every process.
+            let tray = format!(
+                "{} +--tray",
+                current_exe_name_lower()
+                    .unwrap_or_else(|| hbb_common::config::APP_NAME_IDENT.to_owned())
+            );
             for _ in 1..=10 {
                 let display_proc = vec![
                     XWAYLAND,

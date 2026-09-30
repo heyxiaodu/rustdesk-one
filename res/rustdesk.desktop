@@ -1,5 +1,8 @@
 [Desktop Entry]
-Name=RustDesk
+# NERV Desk: Exec/Icon/StartupWMClass are machine-facing and must match the binary
+# Linux packaging actually installs, which is still `rustdesk`
+# (flutter/linux/CMakeLists.txt:7, res/DEBIAN/postinst:8). Only `Name` is display.
+Name=NERV Desk
 GenericName=Remote Desktop
 Comment=Remote Desktop
 Exec=rustdesk %u
