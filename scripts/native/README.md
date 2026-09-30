@@ -91,7 +91,9 @@ upstream 1.0.18 tarball lacks `fe25519_mul32` / `fe25519_notsquare` /
   data**: for the data symbol `randombytes_sysrandom_implementation` a
   dllimport reference is compiled as "load a pointer out of the import slot".
   The old `/ALTERNATENAME:__imp_<sym>=<sym>` repair made that slot resolve to
-  the symbol itself, so the loader read the struct's *first field*
+  the symbol itself (that repair was deleted in round-5 — see
+  "Reproducible builds and the removed `/ALTERNATENAME` shim" below), so the
+  loader read the struct's *first field*
   (`const char *name`) and used it as an implementation pointer, giving a
   deterministic
   `wine: Unhandled page fault on read access to FFFFFFFFFFFFFFFF at 0000000142975C8A`.
@@ -272,3 +274,38 @@ too". That was wrong — verified by expanding the glob.) Keep only the real
 archive in each directory and move stray `.lib` files elsewhere (e.g.
 `stray-quarantine/`); otherwise you are silently linking an unknown mixture of
 archives.
+
+## Reproducible builds and the removed `/ALTERNATENAME` shim (round-5)
+
+Two unconditional changes were made to `scripts/msvc-shim/link.sh`; both are
+motivated by the same goal — the link step must be explainable and its output
+must be checkable byte-for-byte.
+
+1. **The `/ALTERNATENAME` segment is deleted.** The shim used to append 36
+   `/ALTERNATENAME:__imp_<sym>=<sym>` lines, wrapped in
+   `if [ "${NERV_DISABLE_SODIUM_ALTNAME:-0}" != "1" ]` with an `else` branch
+   that printed three WARN lines, plus a 24-line comment block. Once
+   `-DSODIUM_STATIC` was defined, that segment was dead code: the P2-9
+   experiment recorded by the team fed 475 inputs through the link and got
+   **0/36 hits** on those aliases, and flipping the kill-switch no longer
+   changed the output. `grep -c 'ALTERNATENAME\|NERV_DISABLE_SODIUM_ALTNAME'
+   scripts/msvc-shim/link.sh` now returns **0**. If a link ever fails with
+   `undefined __imp_<sodium symbol>`, the cause is a **stale `sodium.lib`** —
+   rebuild it with `-DSODIUM_STATIC` and clear the rlib/fingerprint groups
+   above. Do **not** reintroduce the aliases: on the data symbol
+   `randombytes_sysrandom_implementation` they produced the
+   `FFFFFFFFFFFFFFFF` page fault described in the flags section.
+
+2. **`/Brepro` is now passed to lld-link.** It is appended in the
+   common-flags area (immediately after the argv loop, next to the
+   `/MACHINE:X64` default) — never inside a build-profile branch and never
+   behind an environment gate. lld-link then stores a hash of the executable
+   in the COFF `TimeDateStamp` field instead of the wall-clock time, so two
+   consecutive links of identical inputs are byte-identical.
+
+   The acceptance check for (2) requires a **real relink on both runs**:
+   delete the final four artefacts in `debug/` **and** their hard links in
+   `debug/deps/` (the four groups listed under "The rlib bundle trap") before
+   each run. Otherwise cargo relinks nothing and the sha256 comparison is
+   vacuous. Measured byte sizes and hashes are recorded in
+   `analysis/wine-smoke/round5-build-baseline.md`.
