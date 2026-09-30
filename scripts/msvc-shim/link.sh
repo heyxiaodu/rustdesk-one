@@ -266,6 +266,8 @@ fi
 # rustdesk. Release pulls in additional sodiumoxide surface (blake2b, sha512,
 # poly1305, scalarmult_curve25519, stream_salsa20, verify_32, sodium_mem*,
 # sodium_misuse, etc.) — the list is the union of both:
+# nervdesk: kill-switch for the P2-9 experiment -- NERV_DISABLE_SODIUM_ALTNAME=1
+if [ "${NERV_DISABLE_SODIUM_ALTNAME:-0}" != "1" ]; then
 for sym in \
     crypto_box_beforenm \
     crypto_box_keypair \
@@ -305,6 +307,7 @@ for sym in \
     sodium_misuse; do
     CMD+=("/ALTERNATENAME:__imp_${sym}=${sym}")
 done
+fi
 
 # Emit final CMD to log (must run AFTER all CMD+= calls above).
 if [ -n "$NERV_LINK_VERBOSE_LOG" ]; then

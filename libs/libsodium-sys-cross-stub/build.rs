@@ -82,6 +82,23 @@ fn main() {
     // sodium", because the file's MSVC naming convention does not match the GNU
     // convention the host linker expects (lib<name>.a vs <name>.lib).
     let lib_dir = format!("{}/lib", dir.trim_end_matches('/'));
+
+    // nervdesk: declare the archive itself as an input.
+    //
+    // The extern blocks in sodium_bindings.rs carry
+    // `#[link(name = "sodium", kind = "static")]`, so rustc *bundles*
+    // sodium.lib into liblibsodium_sys-*.rlib. Cargo's fingerprint does not
+    // watch that external file, so replacing the archive on disk used to leave
+    // the stale rlib in place: the next build reported "Finished dev profile in
+    // ~15s" and the final binaries were hard-linked back out of deps/
+    // unchanged, silently discarding the new archive.
+    //
+    // Naming it as an input makes cargo re-run this script and rebuild the
+    // crate, which re-bundles the current archive.
+    let lib_file = format!("{}/sodium.lib", lib_dir);
+    if Path::new(&lib_file).is_file() {
+        println!("cargo:rerun-if-changed={}", lib_file);
+    }
     // nervdesk: emit ONLY the search path. Do NOT emit `rustc-link-lib=static=sodium`
     // because rustc would then decompose sodium.lib and embed its .obj files into
     // this crate's rlib. When that rlib is later `--extern`'d by hbb_common / sodiumoxide /
