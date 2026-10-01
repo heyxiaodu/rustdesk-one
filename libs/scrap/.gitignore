@@ -1,4 +1,7 @@
 /target/
 **/*.rs.bk
 Cargo.lock
-generated/
+generated/*
+!generated/aom_ffi.rs
+!generated/vpx_ffi.rs
+!generated/yuv_ffi.rs
