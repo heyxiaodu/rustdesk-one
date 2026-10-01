@@ -4,7 +4,10 @@ set -e
 
 case $1 in
     purge)
-		rm -rf /root/.config/rustdesk || true
+		# The config directory follows the application name: this fork stores it under
+		# ~/.config/nervdesk. The upstream path is kept as well so that a purge after an
+		# upgrade from a stock install still cleans up. NERV Desk (task-54).
+		rm -rf /root/.config/rustdesk /root/.config/nervdesk || true
         ;;
 esac
 

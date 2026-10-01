@@ -2124,8 +2124,11 @@ jobs:
       - name: Check the deb is a drm build
         run: |
           set -euo pipefail
-          # Resolve by glob, not from env.VERSION: build.py names the deb from Cargo.toml, so a
-          # hardcoded name fails with a bare exit 1 the first time those two drift.
+          # Resolve by glob, not from env.VERSION: build.py writes "<prefix>-<version>.deb" with a
+          # literal prefix (rustdesk, or DRM_PACKAGE_NAME = rustdesk-unattended-wayland for the drm
+          # variant) and the version taken from Cargo.toml, so hardcoding either one fails with a
+          # bare exit 1 the first time the two drift. Renaming that prefix (build.py:607, :787,
+          # :928, :1174) must update this glob too -- see analysis/oem/rename-packaging-fix.md.
           shopt -s nullglob
           debs=(rustdesk-unattended-wayland-*-x86_64.deb)
           if [ "${#debs[@]}" -ne 1 ]; then
@@ -2381,10 +2384,30 @@ jobs:
             cargo build --locked --features inline${{ matrix.job.extra_features }} --release --bins --jobs 1
             # make debian package
             mkdir -p ./Release
-            mv ./target/release/nervdesk ./Release/nervdesk
+            # Ship the payload under the name everything downstream expects: the deb's control
+            # script and the .service/.desktop files in res/ all speak "rustdesk", while the cargo
+            # artefact is now named after the crate (nervdesk). Renaming here keeps one name and
+            # is what makes /usr/bin/rustdesk resolvable after install. NERV Desk (task-54).
+            mv ./target/release/nervdesk ./Release/rustdesk
             wget -O ./Release/libsciter-gtk.so https://github.com/c-smile/sciter-sdk/raw/master/bin.lnx/${{ matrix.job.sciter_arch }}/libsciter-gtk.so
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             ./build.py --package ./Release
+
+      - name: Check the deb resolves its /usr/bin entry
+        shell: bash
+        # The deb ships the payload in /usr/share/rustdesk/ and only creates /usr/bin/rustdesk in
+        # its postinst, so a payload staged under a different name (nervdesk) installs cleanly and
+        # then fails at run time: the unit's ExecStart cannot be found. Assert it from the deb
+        # itself -- no install, no systemd, no root. See analysis/oem/rename-packaging-fix.md.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(rustdesk-*??.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::expected one rustdesk-*.deb, found ${#debs[@]}: ${debs[*]-none}"
+            exit 1
+          fi
+          ./scripts/check-linux-package-entry.sh "${debs[0]}"
 
       - name: Rename rustdesk
         shell: bash

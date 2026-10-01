@@ -25,7 +25,9 @@ mkdir -p %{buildroot}/usr/share/rustdesk/
 mkdir -p %{buildroot}/usr/share/rustdesk/files/
 mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps/
 mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps/
-install -m 755 $HBB/target/release/rustdesk %{buildroot}/usr/bin/rustdesk
+# The cargo artefact is named after the crate (nervdesk) since the rename; ship it under the
+# name that the service and desktop files packaged here call, /usr/bin/rustdesk. NERV Desk (task-54).
+install -m 755 $HBB/target/release/nervdesk %{buildroot}/usr/bin/rustdesk
 install $HBB/libsciter-gtk.so %{buildroot}/usr/share/rustdesk/libsciter-gtk.so
 install $HBB/res/rustdesk.service %{buildroot}/usr/share/rustdesk/files/
 install $HBB/res/128x128@2x.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/rustdesk.png

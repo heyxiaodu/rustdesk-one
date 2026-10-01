@@ -5,7 +5,17 @@ set -e
 if [ "$1" = configure ]; then
 
 	INITSYS=$(ls -al /proc/1/exe | awk -F' ' '{print $NF}' | awk -F'/' '{print $NF}')
-	ln -f -s /usr/share/rustdesk/rustdesk /usr/bin/rustdesk
+	# The payload basename is not guaranteed to be "rustdesk": the Flutter bundle and the
+	# renamed Sciter artefact are staged under that name, but a build that keeps the renamed
+	# cargo artefact ships "nervdesk" instead. Link whichever is present -- preferring
+	# "rustdesk" -- so that /usr/bin/rustdesk, the path used by the .service and .desktop
+	# files shipped in this package, always resolves. NERV Desk (task-54).
+	for _payload in rustdesk nervdesk; do
+		if [ -e "/usr/share/rustdesk/$_payload" ]; then
+			ln -f -s "/usr/share/rustdesk/$_payload" /usr/bin/rustdesk
+			break
+		fi
+	done
 
 	if [ "systemd" == "$INITSYS" ]; then
 

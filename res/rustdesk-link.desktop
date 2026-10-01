@@ -1,7 +1,7 @@
 [Desktop Entry]
 # NERV Desk: TryExec/Exec/Icon/StartupWMClass are machine-facing and must match the
 # binary Linux packaging actually installs, which is still `rustdesk`
-# (flutter/linux/CMakeLists.txt:7, res/DEBIAN/postinst:8). `Name` is display only.
+# (flutter/linux/CMakeLists.txt:7, res/DEBIAN/postinst). `Name` is display only.
 Name=NERV Desk
 NoDisplay=true
 # The scheme stays `nervdesk`: it is registered by the application itself
