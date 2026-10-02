@@ -1,9 +1,18 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=+crt-static"]
-# Relative to the workspace root (cargo runs rustc with that as its CWD).
-# scripts/cross-msvc.env additionally exports
-# CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER, so the absolute path always wins.
-linker = "scripts/msvc-shim/link.sh"
+# NO `linker` key in this table on purpose (NERV Desk, 2026-10-02). A `linker`
+# key here applies to EVERY host, so the Linux-only bash shim
+# (scripts/msvc-shim/link.sh, which translates rustc's msvc argv for lld-link-19)
+# was also handed to native Windows runners; rustc tried to exec it and died with
+#   error: could not exec the linker `D:\a\...\scripts/msvc-shim/link.sh`
+#   note: %1 is not a valid Win32 application. (os error 193)
+# which broke `Build rustdesk` in CI (github.com/heyxiaodu/rustdesk-one run 37013759486).
+# The shim is supplied from the environment only:
+#   CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER  (exported by scripts/cross-msvc.env,
+#   which scripts/cross-build-msvc.sh sources; env vars beat this file anyway).
+# Cross builds must therefore go through that script (see the note below): a bare
+# `cargo build --target=x86_64-pc-windows-msvc` on Linux now leaves cargo with the
+# default linker and will fail to link.
 # ---------------------------------------------------------------------------
 # NOTE (NERV Desk, m09628): the CC_/CXX_/AR_/CFLAGS_/CXXFLAGS_/KCP_SYS_*/NERV_*
 # keys that used to live here as `{ value = "...", force = "false" }` were
