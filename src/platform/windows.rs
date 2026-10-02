@@ -127,6 +127,19 @@ const MSI_EXIT_SUCCESS_REBOOT_INITIATED: u32 = 1641;
 const MSI_EXIT_SUCCESS_REBOOT_REQUIRED: u32 = 3010;
 const HKLM_PREFIX: &str = "HKEY_LOCAL_MACHINE\\";
 
+/// Machine-facing application identifier.
+///
+/// This value reaches the SCM verbatim: it is passed to
+/// `StartServiceCtrlDispatcherW` and `RegisterServiceCtrlHandlerExW` at runtime,
+/// used as the `sc create` service name, and mirrored by the MSI in `res/msi`.
+/// It is therefore the space-free identifier (`nervdesk`), never the
+/// human-readable name (`NERV Desk`, which the SCM command lines would split).
+fn service_name() -> &'static str {
+    hbb_common::config::APP_NAME_IDENT
+}
+
+/// Validate the machine-facing install identifier: it is embedded in command
+/// lines and passed to the SCM unquoted, so it must be command-safe.
 fn validate_install_app_name(app_name: &str) -> ResultType<()> {
     if app_name.is_empty()
         || !app_name
@@ -134,6 +147,21 @@ fn validate_install_app_name(app_name: &str) -> ResultType<()> {
             .all(|character| character.is_ascii_alphanumeric() || character == '-')
     {
         bail!("Application name must match [a-zA-Z0-9-]+");
+    }
+    Ok(())
+}
+
+/// Validate the human-readable app name. It is only ever interpolated inside
+/// double quotes (`DisplayName= "NERV Desk Service"`, shortcut file names), so
+/// spaces are allowed; anything that could terminate the quoted token or be
+/// expanded by `cmd` stays rejected.
+fn validate_install_display_name(app_name: &str) -> ResultType<()> {
+    if app_name.is_empty()
+        || !app_name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == ' '
+        })
+    {
+        bail!("Application name must match [a-zA-Z0-9- ]+");
     }
     Ok(())
 }
@@ -555,7 +583,7 @@ fn service_main(arguments: Vec<OsString>) {
 
 pub fn start_os_service() {
     if let Err(e) =
-        windows_service::service_dispatcher::start(crate::get_app_name(), ffi_service_main)
+        windows_service::service_dispatcher::start(service_name(), ffi_service_main)
     {
         log::error!("start_service failed: {}", e);
     }
@@ -676,7 +704,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     };
 
     // Register system service event handler
-    let status_handle = service_control_handler::register(crate::get_app_name(), event_handler)?;
+    let status_handle = service_control_handler::register(service_name(), event_handler)?;
 
     let next_status = ServiceStatus {
         // Should match the one from system service registry
@@ -1071,7 +1099,7 @@ pub fn is_share_rdp() -> bool {
 pub fn set_share_rdp(enable: bool) {
     let (subkey, _, _, _) = get_install_info();
     let cmd = format!(
-        "reg add {} /f /v share_rdp /t REG_SZ /d \"{}\"",
+        "reg add \"{}\" /f /v share_rdp /t REG_SZ /d \"{}\"",
         subkey,
         if enable { "true" } else { "false" }
     );
@@ -1742,20 +1770,20 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
 chcp 65001
 md \"{path}\"
 {copy_exe}
-reg add {subkey} /f
-reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{display_icon}\"
-reg add {subkey} /f /v DisplayName /t REG_SZ /d \"{app_name}\"
-reg add {subkey} /f /v DisplayVersion /t REG_SZ /d \"{version}\"
-reg add {subkey} /f /v Version /t REG_SZ /d \"{version}\"
-reg add {subkey} /f /v BuildDate /t REG_SZ /d \"{build_date}\"
-reg add {subkey} /f /v InstallLocation /t REG_SZ /d \"{path}\"
-reg add {subkey} /f /v Publisher /t REG_SZ /d \"{app_name}\"
-reg add {subkey} /f /v VersionMajor /t REG_DWORD /d {version_major}
-reg add {subkey} /f /v VersionMinor /t REG_DWORD /d {version_minor}
-reg add {subkey} /f /v VersionBuild /t REG_DWORD /d {version_build}
-reg add {subkey} /f /v UninstallString /t REG_SZ /d \"\\\"{nested_exe}\\\" --uninstall\"
-reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
-reg add {subkey} /f /v WindowsInstaller /t REG_DWORD /d 0
+reg add \"{subkey}\" /f
+reg add \"{subkey}\" /f /v DisplayIcon /t REG_SZ /d \"{display_icon}\"
+reg add \"{subkey}\" /f /v DisplayName /t REG_SZ /d \"{app_name}\"
+reg add \"{subkey}\" /f /v DisplayVersion /t REG_SZ /d \"{version}\"
+reg add \"{subkey}\" /f /v Version /t REG_SZ /d \"{version}\"
+reg add \"{subkey}\" /f /v BuildDate /t REG_SZ /d \"{build_date}\"
+reg add \"{subkey}\" /f /v InstallLocation /t REG_SZ /d \"{path}\"
+reg add \"{subkey}\" /f /v Publisher /t REG_SZ /d \"{app_name}\"
+reg add \"{subkey}\" /f /v VersionMajor /t REG_DWORD /d {version_major}
+reg add \"{subkey}\" /f /v VersionMinor /t REG_DWORD /d {version_minor}
+reg add \"{subkey}\" /f /v VersionBuild /t REG_DWORD /d {version_build}
+reg add \"{subkey}\" /f /v UninstallString /t REG_SZ /d \"\\\"{nested_exe}\\\" --uninstall\"
+reg add \"{subkey}\" /f /v EstimatedSize /t REG_DWORD /d {size}
+reg add \"{subkey}\" /f /v WindowsInstaller /t REG_DWORD /d 0
 {mk_shortcut_commands}
 {uninstall_shortcut_commands}
 {tray_shortcuts}
@@ -1806,8 +1834,9 @@ fn get_before_uninstall(kill_self: bool) -> String {
     // and the URL protocol key are both the machine identifier.
     let file_ext = hbb_common::config::APP_NAME_IDENT;
     let scheme = hbb_common::config::APP_NAME_IDENT;
-    // The process image name is the executable base name (an identifier); the
-    // service name and firewall rule name below stay display names.
+    // The process image name and the service name are machine identifiers; the
+    // firewall rule name below stays a display name (the MSI creates it with the
+    // product name), which is why it stays quoted in the command below.
     let exe_name = hbb_common::config::APP_NAME_IDENT;
     let filter = if kill_self {
         "".to_string()
@@ -1817,8 +1846,8 @@ fn get_before_uninstall(kill_self: bool) -> String {
     format!(
         "
     chcp 65001
-    sc stop {app_name}
-    sc delete {app_name}
+    sc stop \"{service_name}\"
+    sc delete \"{service_name}\"
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {exe_name}.exe{filter}
     reg delete HKEY_CLASSES_ROOT\\.{file_ext} /f
@@ -1826,6 +1855,7 @@ fn get_before_uninstall(kill_self: bool) -> String {
     netsh advfirewall firewall delete rule name=\"{app_name} Service\"
     ",
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
+        service_name = service_name(),
     )
 }
 
@@ -1866,7 +1896,7 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> ResultType<String>
     {before_uninstall}
     {uninstall_printer_cmd}
     {uninstall_cert_cmd}
-    reg delete {subkey} /f
+    reg delete \"{subkey}\" /f
     {uninstall_amyuni_idd}
     if exist \"{path}\" rd /s /q \"{path}\"
     if exist \"{start_menu}\" rd /s /q \"{start_menu}\"
@@ -3311,8 +3341,8 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     let cmds = format!(
         "
     chcp 65001
-    sc stop {app_name}
-    sc delete {app_name}
+    sc stop \"{service_name}\"
+    sc delete \"{service_name}\"
     if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {exe_name}.exe{filter}
@@ -3320,10 +3350,13 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
         app_name = crate::get_app_name(),
         exe_name = hbb_common::config::APP_NAME_IDENT,
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
+        service_name = service_name(),
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
         Config::set_option("stop-service".into(), "".into());
-        log::debug!("{err}");
+        // Leave `stop-service` empty: the service was NOT uninstalled, and the
+        // tray exit path must not believe it succeeded.
+        log::error!("Failed to uninstall the service: {err}");
         return true;
     }
     run_after_run_cmds(!show_new_window);
@@ -3380,7 +3413,10 @@ pub fn install_service() -> bool {
     if let Err(err) = run_cmds(cmds, false, "install") {
         Config::set_option("stop-service".into(), "Y".into());
         crate::ipc::EXIT_RECV_CLOSE.store(true, Ordering::Relaxed);
-        log::debug!("{err}");
+        // The service was NOT installed: report it at the default log level and
+        // leave the persistent `stop-service=Y` flag set (read by the tray and by
+        // `set_option` to avoid reinstalling a service that just failed).
+        log::error!("Failed to install the service: {err}");
         return true;
     }
     run_after_run_cmds(false);
@@ -3502,20 +3538,20 @@ pub fn update_me(debug: bool) -> ResultType<()> {
             "".to_string()
         } else {
             format!(
-                "reg add {} /f /v DisplayIcon /t REG_SZ /d \"{}\"",
+                "reg add \"{}\" /f /v DisplayIcon /t REG_SZ /d \"{}\"",
                 subkey, display_icon
             )
         };
         format!(
             "
 {reg_display_icon}
-reg add {subkey} /f /v DisplayVersion /t REG_SZ /d \"{version}\"
-reg add {subkey} /f /v Version /t REG_SZ /d \"{version}\"
-reg add {subkey} /f /v BuildDate /t REG_SZ /d \"{build_date}\"
-reg add {subkey} /f /v VersionMajor /t REG_DWORD /d {version_major}
-reg add {subkey} /f /v VersionMinor /t REG_DWORD /d {version_minor}
-reg add {subkey} /f /v VersionBuild /t REG_DWORD /d {version_build}
-reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
+reg add \"{subkey}\" /f /v DisplayVersion /t REG_SZ /d \"{version}\"
+reg add \"{subkey}\" /f /v Version /t REG_SZ /d \"{version}\"
+reg add \"{subkey}\" /f /v BuildDate /t REG_SZ /d \"{build_date}\"
+reg add \"{subkey}\" /f /v VersionMajor /t REG_DWORD /d {version_major}
+reg add \"{subkey}\" /f /v VersionMinor /t REG_DWORD /d {version_minor}
+reg add \"{subkey}\" /f /v VersionBuild /t REG_DWORD /d {version_build}
+reg add \"{subkey}\" /f /v EstimatedSize /t REG_DWORD /d {size}
         "
         )
     }
@@ -3535,7 +3571,7 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
         let reg_cmd_msi = if let Some(reg_msi_key) = &reg_msi_key {
             // This is best-effort: failure may leave a stale version in the Windows app list,
             // but should not interrupt the update.
-            format!("reg add {reg_msi_key} /f /v DisplayVersion /t REG_SZ /d \"{version}\"")
+            format!("reg add \"{reg_msi_key}\" /f /v DisplayVersion /t REG_SZ /d \"{version}\"")
         } else {
             "".to_owned()
         };
@@ -3544,7 +3580,8 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
 
     let filter = format!(" /FI \"PID ne {}\"", get_current_pid());
     let restore_service_cmd = if is_service_running {
-        format!("sc start {}", &app_name)
+        // The SCM service name is the machine identifier, not the display name.
+        format!("sc start \"{}\"", service_name())
     } else {
         "".to_owned()
     };
@@ -3576,7 +3613,7 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
     let cmds = format!(
         "
 chcp 65001
-sc stop {app_name}
+sc stop \"{service_name}\"
 taskkill /F /IM {exe_name}.exe{filter}
 {reg_cmd}
 {copy_exe}
@@ -3587,7 +3624,7 @@ taskkill /F /IM {exe_name}.exe{filter}
 {install_printer_cmd}
 {sleep}
     ",
-        app_name = app_name,
+        service_name = service_name(),
         exe_name = hbb_common::config::APP_NAME_IDENT,
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         rename_exe = rename_exe_cmd(&src_exe, &path)?,
@@ -3961,14 +3998,15 @@ fn get_import_config(exe: &str) -> String {
     let config_path = Config::file();
     let config_path = escape_nested_cmd_ampersands(config_path.to_str().unwrap_or(""));
     format!("
-sc stop {app_name}
-sc delete {app_name}
-sc create {app_name} binpath= \"\\\"{exe}\\\" --import-config \\\"{config_path}\\\"\" start= auto DisplayName= \"{app_name} Service\"
-sc start {app_name}
-sc stop {app_name}
-sc delete {app_name}
+sc stop \"{service_name}\"
+sc delete \"{service_name}\"
+sc create \"{service_name}\" binpath= \"\\\"{exe}\\\" --import-config \\\"{config_path}\\\"\" start= auto DisplayName= \"{app_name} Service\"
+sc start \"{service_name}\"
+sc stop \"{service_name}\"
+sc delete \"{service_name}\"
 ",
     app_name = crate::get_app_name(),
+    service_name = service_name(),
 )
 }
 
@@ -3984,10 +4022,11 @@ if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{ap
     } else {
         let exe = escape_nested_cmd_ampersands(exe);
         format!("
-sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
-sc start {app_name}
+sc create \"{service_name}\" binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
+sc start \"{service_name}\"
 ",
-    app_name = crate::get_app_name())
+    app_name = crate::get_app_name(),
+    service_name = service_name())
     }
 }
 
@@ -4196,7 +4235,7 @@ fn get_uninstall_amyuni_idd() -> String {
 
 #[inline]
 pub fn is_self_service_running() -> bool {
-    is_service_running(&crate::get_app_name())
+    is_service_running(service_name())
 }
 
 pub fn is_service_running(service_name: &str) -> bool {
@@ -4888,6 +4927,34 @@ mod tests {
             assert!(
                 validate_install_app_name(app_name).is_err(),
                 "unsafe application name was accepted: {app_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_uses_machine_identifiers_and_display_names() {
+        // The machine-facing identifier is what reaches `sc create` and
+        // `StartServiceCtrlDispatcherW`. If the shipped value stopped passing the
+        // command-safety check, every install command would be rejected before it
+        // runs, which is the regression this test guards against.
+        assert!(
+            validate_install_app_name(hbb_common::config::APP_NAME_IDENT).is_ok(),
+            "machine-facing identifier must be command-safe: {}",
+            hbb_common::config::APP_NAME_IDENT
+        );
+        // The display name may contain spaces (it is only used inside quotes),
+        // but a spaced value must never pass the identifier check.
+        assert!(validate_install_display_name("NERV Desk").is_ok());
+        assert!(validate_install_display_name("RustDesk").is_ok());
+        assert!(validate_install_display_name("RustDesk-Admin1").is_ok());
+        assert!(
+            validate_install_app_name("NERV Desk").is_err(),
+            "a display name with a space must not pass the identifier check"
+        );
+        for display_name in ["", "NERV\tDesk", "NERV\"Desk", "NERV%PATH%", "NERV&whoami"] {
+            assert!(
+                validate_install_display_name(display_name).is_err(),
+                "unsafe display name was accepted: {display_name}"
             );
         }
     }

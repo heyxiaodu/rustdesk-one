@@ -505,6 +505,7 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     LPWSTR pwz = NULL;
     LPWSTR pwzData = NULL;
     LPWSTR svcName = NULL;
+    LPWSTR svcDisplayName = NULL;
     LPWSTR svcBinary = NULL;
     wchar_t szSvcDisplayName[500] = { 0 };
     DWORD cchSvcDisplayName = sizeof(szSvcDisplayName) / sizeof(szSvcDisplayName[0]);
@@ -521,6 +522,10 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
 
     WcaLog(LOGMSG_STANDARD, "Try create start service : %ls", svcParams);
 
+    // CustomActionData layout: "<service name>;<binary> --service", or
+    // "<service name>;<display name>;<binary> --service". The service name is the
+    // machine identifier the application itself registers and queries; the display
+    // name is only shown in services.msc.
     svcName = svcParams;
     svcBinary = wcschr(svcParams, L';');
     if (svcBinary == NULL) {
@@ -530,7 +535,19 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     svcBinary[0] = L'\0';
     svcBinary += 1;
 
-    hr = StringCchPrintfW(szSvcDisplayName, cchSvcDisplayName, L"%ls Service", svcName);
+    // Optional display name. When the field is absent the historical
+    // "<service name> Service" is kept, so older callers keep working. The binary
+    // is the LAST field, so the display name is the field just before it and the
+    // binary keeps the remainder.
+    LPWSTR pDisplaySeparator = wcschr(svcBinary, L';');
+    if (pDisplaySeparator != NULL) {
+        pDisplaySeparator[0] = L'\0';
+        svcDisplayName = svcBinary;
+        svcBinary = pDisplaySeparator + 1;
+    }
+
+    hr = StringCchPrintfW(szSvcDisplayName, cchSvcDisplayName, L"%ls Service",
+                          svcDisplayName != NULL ? svcDisplayName : svcName);
     ExitOnFailure(hr, "Failed to compose a resource identifier string");
     if (MyCreateServiceW(svcName, szSvcDisplayName, svcBinary)) {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created.", svcName);
@@ -887,7 +904,7 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
         }
     }
 
-    hr = StringCchPrintfW(szCmd, cchCmd, L"create %ls binpath= \"%ls\" start= auto DisplayName= \"%ls\"", svcName, szNewBin, szSvcDisplayName);
+    hr = StringCchPrintfW(szCmd, cchCmd, L"create \"%ls\" binpath= \"%ls\" start= auto DisplayName= \"%ls\"", svcName, szNewBin, szSvcDisplayName);
     if (FAILED(hr)) {
         WcaLog(LOGMSG_STANDARD, "Failed to make command: %ls", svcName);
         return;
@@ -928,7 +945,7 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
         }
     }
 
-    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc start %ls", svcName);
+    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc start \"%ls\"", svcName);
     if (FAILED(hr)) {
         WcaLog(LOGMSG_STANDARD, "Failed to make command: %ls", svcName);
         return;
@@ -953,7 +970,7 @@ void TryStopDeleteServiceByShell(LPWSTR svcName)
 
     WcaLog(LOGMSG_STANDARD, "TryStopDeleteServiceByShell, service: %ls", svcName);
 
-    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc stop %ls", svcName);
+    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc stop \"%ls\"", svcName);
     if (FAILED(hr)) {
         WcaLog(LOGMSG_STANDARD, "Failed to make command: %ls", svcName);
         return;
@@ -978,7 +995,7 @@ void TryStopDeleteServiceByShell(LPWSTR svcName)
         WcaLog(LOGMSG_STANDARD, "Status of service: \"%ls\" with shell, current status: %d.", svcName, svcStatus.dwCurrentState);
     }
 
-    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc delete %ls", svcName);
+    hr = StringCchPrintfW(szCmd, cchCmd, L"/c sc delete \"%ls\"", svcName);
     if (FAILED(hr)) {
         WcaLog(LOGMSG_STANDARD, "Failed to make command: %ls", svcName);
         return;

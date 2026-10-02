@@ -169,11 +169,24 @@ pub fn core_main() -> Option<Vec<String>> {
             }
         } else if args[0] == "--transport" {
             // P3 Path-A CLI: --transport <name>
-            // Maps <name> to NERV_QUIC_MODE env-var that get_quic_mode() (src/common.rs:1224)
-            // already reads. The connection-site dispatch at src/client.rs:1474 already honors
+            // Maps <name> to NERV_QUIC_MODE env-var that get_quic_mode() (src/common.rs:1259)
+            // already reads. The connection-site dispatch at src/client.rs:1467 already honors
             // QuicMode::{Disabled,Prefer,Required}; this CLI is purely a per-launch override
             // that does NOT touch local-option storage. Falls through to Flutter GUI launch
             // (no `return None`) so the user can configure once and connect through GUI.
+            //
+            // 【2026-10-02 事实更正｜task-73 R3，仅注释，逻辑未动】
+            // 上一段「Falls through to Flutter GUI launch」**只对 Flutter 构建成立**。
+            // 在 **sciter 构建**（Win7 产物）上，`--transport` 会被 `ui::start` 的合法命令表
+            // 判为未知参数，走到 `src/ui.rs:162` 的 `log::error!("Wrong command: {:?}", args);`
+            // 后直接 `return`（`src/ui.rs:161-164`）——整个进程**不建立任何连接就退出**。
+            // release 产物实测：`--transport quic-required` ⇒ EXIT=0 + 一行
+            // `ERROR [src/ui.rs:162] Wrong command`，全程零 QUIC 代码
+            //（依据 analysis/network/quic-required-recon.md §3.2 / §4.0，task-66）。
+            // ⇒ 本 CLI 目前只在 Flutter 构建上是有效入口；sciter/Win7 上要覆盖 QUIC_MODE，
+            //    必须直接设 `NERV_QUIC_MODE` 环境变量（`get_quic_mode()` 优先读它）。
+            // 另：上面两个行号亦已复核更正 —— `src/common.rs:1224` → `:1259`；
+            //     `src/client.rs:1474` → `:1467`。
             //
             // cfg-gated to mirror --quic-probe-mode (lines 145-169): quic-mode values are only
             // accepted when the binary was built with `--features quic`. feature-off binaries

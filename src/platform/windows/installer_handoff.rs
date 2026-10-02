@@ -4,7 +4,7 @@ use super::{
         run_elevated_and_wait, trusted_install_environment,
         BATCH_SHORTCUT_DECODE_FAILURE_EXIT_CODE, CMD_RELATIVE_PATH,
     },
-    validate_install_app_name, ResultType,
+    validate_install_app_name, validate_install_display_name, ResultType,
 };
 use hbb_common::{
     bail, log,
@@ -142,7 +142,10 @@ fn verified_install_parameters(script: &InstallCommandScript) -> ResultType<Stri
 }
 
 pub(super) fn run_cmds(cmds: String, show: bool, tip: &str) -> ResultType<()> {
-    validate_install_app_name(&crate::get_app_name())?;
+    // The commands embed the machine-facing identifier (`nervdesk`, never quoted)
+    // and the display name (`NERV Desk`, always inside quotes): validate both.
+    validate_install_app_name(hbb_common::config::APP_NAME_IDENT)?;
+    validate_install_display_name(&crate::get_app_name())?;
     let script = write_install_script(cmds)?;
     let cmd_path = get_system_executable(CMD_RELATIVE_PATH)?;
     let parameters = verified_install_parameters(&script)?;
