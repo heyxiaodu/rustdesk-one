@@ -1,10 +1,14 @@
-Name:       rustdesk
+# The package is named after the OEM identity, not the upstream one. NERV Desk (task-69).
+Name:       nervdesk
 Version:    1.1.9
 Release:    0
 Summary:    RPM package
 License:    GPL-3.0
 Requires:   gtk3 libxcb1 libXfixes3 alsa-utils libXtst6 libva2 gstreamer-plugins-base gstreamer-plugin-pipewire
 Recommends: libayatana-appindicator3-1 xdotool
+# See res/rpm.spec for why the Obsoletes/Provides pair is required.
+Obsoletes:  rustdesk
+Provides:   rustdesk
 
 # https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/
 
@@ -29,20 +33,20 @@ mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps/
 # name that the service and desktop files packaged here call, /usr/bin/rustdesk. NERV Desk (task-54).
 install -m 755 $HBB/target/release/nervdesk %{buildroot}/usr/bin/rustdesk
 install $HBB/libsciter-gtk.so %{buildroot}/usr/share/rustdesk/libsciter-gtk.so
-install $HBB/res/rustdesk.service %{buildroot}/usr/share/rustdesk/files/
-install $HBB/res/128x128@2x.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/rustdesk.png
-install $HBB/res/scalable.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/rustdesk.svg
-install $HBB/res/rustdesk.desktop %{buildroot}/usr/share/rustdesk/files/
-install $HBB/res/rustdesk-link.desktop %{buildroot}/usr/share/rustdesk/files/
+install $HBB/res/nervdesk.service %{buildroot}/usr/share/rustdesk/files/
+install $HBB/res/128x128@2x.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/nervdesk.png
+install $HBB/res/scalable.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/nervdesk.svg
+install $HBB/res/nervdesk.desktop %{buildroot}/usr/share/rustdesk/files/
+install $HBB/res/nervdesk-link.desktop %{buildroot}/usr/share/rustdesk/files/
 
 %files
 /usr/bin/rustdesk
 /usr/share/rustdesk/libsciter-gtk.so
-/usr/share/rustdesk/files/rustdesk.service
-/usr/share/icons/hicolor/256x256/apps/rustdesk.png
-/usr/share/icons/hicolor/scalable/apps/rustdesk.svg
-/usr/share/rustdesk/files/rustdesk.desktop
-/usr/share/rustdesk/files/rustdesk-link.desktop
+/usr/share/rustdesk/files/nervdesk.service
+/usr/share/icons/hicolor/256x256/apps/nervdesk.png
+/usr/share/icons/hicolor/scalable/apps/nervdesk.svg
+/usr/share/rustdesk/files/nervdesk.desktop
+/usr/share/rustdesk/files/nervdesk-link.desktop
 
 %changelog
 # let's skip this for now
@@ -55,26 +59,36 @@ case "$1" in
   ;;
   2)
     # for upgrade
-    systemctl stop rustdesk || true
+    systemctl stop nervdesk || true
   ;;
 esac
 
 %post
-cp /usr/share/rustdesk/files/rustdesk.service /etc/systemd/system/rustdesk.service
-cp /usr/share/rustdesk/files/rustdesk.desktop /usr/share/applications/
-cp /usr/share/rustdesk/files/rustdesk-link.desktop /usr/share/applications/
+systemctl disable rustdesk.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/rustdesk.service /usr/lib/systemd/system/rustdesk.service /usr/lib/systemd/user/rustdesk.service
+cp /usr/share/rustdesk/files/nervdesk.service /etc/systemd/system/nervdesk.service
+cp /usr/share/rustdesk/files/nervdesk.desktop /usr/share/applications/
+cp /usr/share/rustdesk/files/nervdesk-link.desktop /usr/share/applications/
+
+# NERV Desk (task-76): the desktop entry and icons are installed under the new
+# `nervdesk` names now. Remove files left behind by an older `rustdesk` install so
+# the application menu cannot list the same product twice.
+rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+    /usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+    /usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
 systemctl daemon-reload
-systemctl enable rustdesk
-systemctl start rustdesk
+systemctl enable nervdesk
+systemctl start nervdesk
 update-desktop-database
 
 %preun
 case "$1" in
   0)
     # for uninstall
-    systemctl stop rustdesk || true
-    systemctl disable rustdesk || true
-    rm /etc/systemd/system/rustdesk.service || true
+    systemctl stop nervdesk || true
+    systemctl disable nervdesk || true
+    rm -f /etc/systemd/system/nervdesk.service || true
+    rm -f /etc/systemd/system/rustdesk.service /usr/lib/systemd/system/rustdesk.service /usr/lib/systemd/user/rustdesk.service || true
   ;;
   1)
     # for upgrade
@@ -85,8 +99,14 @@ esac
 case "$1" in
   0)
     # for uninstall
-    rm /usr/share/applications/rustdesk.desktop || true
-    rm /usr/share/applications/rustdesk-link.desktop || true
+    rm -f /usr/share/applications/nervdesk.desktop /usr/share/applications/nervdesk-link.desktop || true
+
+    # NERV Desk (task-76): the desktop entry and icons are installed under the new
+    # `nervdesk` names now. Remove files left behind by an older `rustdesk` install so
+    # the application menu cannot list the same product twice.
+    rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+        /usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+        /usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
     update-desktop-database
   ;;
   1)

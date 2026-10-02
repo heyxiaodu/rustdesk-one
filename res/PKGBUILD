@@ -1,4 +1,7 @@
-pkgname=rustdesk
+# The package name is the OEM identity. The provides/conflicts/replaces triad below is what makes
+# `pacman -U` of this package replace an installed rustdesk: both own /usr/share/rustdesk and
+# /usr/bin/rustdesk, so pacman refuses the install on a file conflict without it. NERV Desk (task-69).
+pkgname=nervdesk
 pkgver=1.5.0
 pkgrel=0
 epoch=
@@ -11,9 +14,9 @@ depends=('gtk3' 'xdotool' 'libxcb' 'libxfixes' 'alsa-lib' 'libva' 'libappindicat
 makedepends=()
 checkdepends=()
 optdepends=()
-provides=()
-conflicts=()
-replaces=()
+provides=('rustdesk')
+conflicts=('rustdesk')
+replaces=('rustdesk')
 backup=()
 options=()
 install=pacman_install
@@ -27,9 +30,9 @@ package() {
   fi
   mkdir -p "${pkgdir}/usr/bin"
   pushd ${pkgdir} && ln -s /usr/share/rustdesk/rustdesk usr/bin/rustdesk && popd
-  install -Dm 644 $HBB/res/rustdesk.service -t "${pkgdir}/usr/share/rustdesk/files"
-  install -Dm 644 $HBB/res/rustdesk.desktop -t "${pkgdir}/usr/share/rustdesk/files"
-  install -Dm 644 $HBB/res/rustdesk-link.desktop -t "${pkgdir}/usr/share/rustdesk/files"
-  install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/rustdesk.png"
-  install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/rustdesk.svg"
+  install -Dm 644 $HBB/res/nervdesk.service -t "${pkgdir}/usr/share/rustdesk/files"
+  install -Dm 644 $HBB/res/nervdesk.desktop -t "${pkgdir}/usr/share/rustdesk/files"
+  install -Dm 644 $HBB/res/nervdesk-link.desktop -t "${pkgdir}/usr/share/rustdesk/files"
+  install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/nervdesk.png"
+  install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/nervdesk.svg"
 }

@@ -5,43 +5,71 @@
 # arg 1:  the new package version
 post_install() {
 	# do something here
-	cp /usr/share/rustdesk/files/rustdesk.service /etc/systemd/system/rustdesk.service
-	cp /usr/share/rustdesk/files/rustdesk.desktop /usr/share/applications/
-	cp /usr/share/rustdesk/files/rustdesk-link.desktop /usr/share/applications/
+	# NERV Desk (task-76): the unit is installed as `nervdesk.service` (src/** uses
+	# APP_NAME_IDENT = "nervdesk"). Drop the upstream unit rather than installing an alias,
+	# so only one unit of this service can ever be enabled.
+	systemctl disable rustdesk.service >/dev/null 2>&1 || true
+	rm -f /etc/systemd/system/rustdesk.service
+	cp /usr/share/rustdesk/files/nervdesk.service /etc/systemd/system/nervdesk.service
+	cp /usr/share/rustdesk/files/nervdesk.desktop /usr/share/applications/
+	cp /usr/share/rustdesk/files/nervdesk-link.desktop /usr/share/applications/
+
+	# NERV Desk (task-76): the desktop entry and icons are installed under the new
+	# `nervdesk` names now. Remove files left behind by an older `rustdesk` install so
+	# the application menu cannot list the same product twice.
+	rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+	    /usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+	    /usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
 	systemctl daemon-reload
-	systemctl enable rustdesk
-	systemctl start rustdesk
+	systemctl enable nervdesk
+	systemctl start nervdesk
 	update-desktop-database
 }
 
 # arg 1:  the new package version
 # arg 2:  the old package version
 pre_upgrade() {
-    systemctl stop rustdesk || true
+    systemctl stop nervdesk || true
 }
 
 # arg 1:  the new package version
 # arg 2:  the old package version
 post_upgrade() {
-	cp /usr/share/rustdesk/files/rustdesk.service /etc/systemd/system/rustdesk.service
-	cp /usr/share/rustdesk/files/rustdesk.desktop /usr/share/applications/
-	cp /usr/share/rustdesk/files/rustdesk-link.desktop /usr/share/applications/
+	systemctl disable rustdesk.service >/dev/null 2>&1 || true
+	rm -f /etc/systemd/system/rustdesk.service
+	cp /usr/share/rustdesk/files/nervdesk.service /etc/systemd/system/nervdesk.service
+	cp /usr/share/rustdesk/files/nervdesk.desktop /usr/share/applications/
+	cp /usr/share/rustdesk/files/nervdesk-link.desktop /usr/share/applications/
+
+	# NERV Desk (task-76): the desktop entry and icons are installed under the new
+	# `nervdesk` names now. Remove files left behind by an older `rustdesk` install so
+	# the application menu cannot list the same product twice.
+	rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+	    /usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+	    /usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
 	systemctl daemon-reload
-	systemctl enable rustdesk
-	systemctl start rustdesk
+	systemctl enable nervdesk
+	systemctl start nervdesk
 	update-desktop-database
 }
 
 # arg 1:  the old package version
 pre_remove() {
-	systemctl stop rustdesk || true
-	systemctl disable rustdesk || true
-	rm /etc/systemd/system/rustdesk.service || true
+	systemctl stop nervdesk || true
+	systemctl disable nervdesk || true
+	rm -f /etc/systemd/system/nervdesk.service /etc/systemd/system/rustdesk.service || true
+	systemctl disable rustdesk.service >/dev/null 2>&1 || true
 }
 
 # arg 1:  the old package version
 post_remove() {
-	rm /usr/share/applications/rustdesk.desktop || true
-	rm /usr/share/applications/rustdesk-link.desktop || true
+	rm -f /usr/share/applications/nervdesk.desktop /usr/share/applications/nervdesk-link.desktop || true
+
+	# NERV Desk (task-76): the desktop entry and icons are installed under the new
+	# `nervdesk` names now. Remove files left behind by an older `rustdesk` install so
+	# the application menu cannot list the same product twice.
+	rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+	    /usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+	    /usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
 	update-desktop-database
 }

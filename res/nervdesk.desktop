@@ -1,0 +1,25 @@
+[Desktop Entry]
+# NERV Desk (task-76): this file is installed as `nervdesk.desktop`, so `Icon=` below
+# names the *installed icon* `nervdesk` (hicolor/256x256/apps/nervdesk.png and
+# hicolor/scalable/apps/nervdesk.svg). It does NOT name the binary.
+# `Exec=` and `StartupWMClass=` are still the real *binary* name `rustdesk`
+# (flutter/linux/CMakeLists.txt:7 set(BINARY_NAME "rustdesk"), res/DEBIAN/postinst).
+# Only `Name=` is display text.
+Name=NERV Desk
+GenericName=Remote Desktop
+Comment=Remote Desktop
+Exec=rustdesk %u
+Icon=nervdesk
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Network;RemoteAccess;GTK;
+Keywords=internet;linux;dart;rust;remote-control;p2p;teamviewer;rust-lang;rdp;remote-desktop;vnc;
+Actions=new-window;
+StartupWMClass=rustdesk
+
+X-Desktop-File-Install-Version=0.23
+
+[Desktop Action new-window]
+Name=Open a New Window
+Exec=rustdesk %u

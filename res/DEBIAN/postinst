@@ -17,21 +17,38 @@ if [ "$1" = configure ]; then
 		fi
 	done
 
+	# NERV Desk (task-76): the desktop entry and the two icons are installed as `nervdesk.*`
+	# now. Remove the files an older `rustdesk` package left behind so the application menu
+	# cannot list the same product twice. `update-desktop-database` / `gtk-update-icon-cache`
+	# are deliberately NOT called here (that would be new install-time behaviour).
+	rm -f /usr/share/applications/rustdesk.desktop /usr/share/applications/rustdesk-link.desktop \
+		/usr/share/icons/hicolor/256x256/apps/rustdesk.png \
+		/usr/share/icons/hicolor/scalable/apps/rustdesk.svg || true
+
 	if [ "systemd" == "$INITSYS" ]; then
 
-		if [ -e /etc/systemd/system/rustdesk.service ]; then
-			rm -f /etc/systemd/system/rustdesk.service /usr/lib/systemd/system/rustdesk.service /usr/lib/systemd/user/rustdesk.service >/dev/null  2>&1
-		fi
+		# NERV Desk (task-76): the unit is now `nervdesk.service` -- src/** uses APP_NAME_IDENT
+		# ("nervdesk") for the service name and for the in-app "install service" path, so a package
+		# that shipped only `rustdesk.service` could no longer be found. Remove the upstream unit
+		# from every location this package ever wrote it to, and disable it first so an old unit
+		# cannot keep autostarting next to the new one. No compatibility alias is installed: two
+		# units of the same service would both be enabled at boot.
+		for _legacy in /etc/systemd/system/rustdesk.service /usr/lib/systemd/system/rustdesk.service /usr/lib/systemd/user/rustdesk.service; do
+			if [ -e "$_legacy" ]; then
+				systemctl disable rustdesk.service >/dev/null 2>&1 || true
+				rm -f "$_legacy"
+			fi
+		done
 		mkdir -p /usr/lib/systemd/system/
-		cp /usr/share/rustdesk/files/systemd/rustdesk.service /usr/lib/systemd/system/rustdesk.service
+		cp /usr/share/rustdesk/files/systemd/nervdesk.service /usr/lib/systemd/system/nervdesk.service
 		# try fix error in Ubuntu 18.04
-		# Failed to reload rustdesk.service: Unit rustdesk.service is not loaded properly: Exec format error.
-		# /usr/lib/systemd/system/rustdesk.service:10: Executable path is not absolute: pkill -f "rustdesk --"
+		# Failed to reload nervdesk.service: Unit nervdesk.service is not loaded properly: Exec format error.
+		# /usr/lib/systemd/system/nervdesk.service:10: Executable path is not absolute: pkill -f "rustdesk --"
 		if [ -e /usr/bin/pkill ]; then
-			sed -i "s|pkill|/usr/bin/pkill|g" /usr/lib/systemd/system/rustdesk.service
+			sed -i "s|pkill|/usr/bin/pkill|g" /usr/lib/systemd/system/nervdesk.service
 		fi
 		systemctl daemon-reload
-		systemctl enable rustdesk
-		systemctl start rustdesk
+		systemctl enable nervdesk
+		systemctl start nervdesk
 	fi
 fi

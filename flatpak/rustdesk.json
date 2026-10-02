@@ -1,12 +1,12 @@
 {
-  "id": "com.rustdesk.RustDesk",
+  "id": "com.nervdesk.NERVDesk",
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "24.08",
   "sdk": "org.freedesktop.Sdk",
   "command": "rustdesk",
   "cleanup": ["/include", "/lib/pkgconfig", "/share/gtk-doc"],
-  "rename-desktop-file": "rustdesk.desktop",
-  "rename-icon": "rustdesk",
+  "rename-desktop-file": "nervdesk.desktop",
+  "rename-icon": "nervdesk",
   "modules": [
     "shared-modules/libappindicator/libappindicator-gtk3-12.10.json",
     {
@@ -25,7 +25,7 @@
       "name": "rustdesk",
       "buildsystem": "simple",
       "build-commands": [
-        "bsdtar -Oxf rustdesk.deb data.tar.xz | bsdtar -xf -",
+        "bsdtar -Oxf nervdesk.deb data.tar.xz | bsdtar -xf -",
         "cp -r usr/* /app/",
         "mkdir -p /app/bin",
         "if [ ! -e /app/share/rustdesk/rustdesk ] && [ -e /app/share/rustdesk/nervdesk ]; then ln -s /app/share/rustdesk/nervdesk /app/share/rustdesk/rustdesk; fi",
@@ -35,11 +35,11 @@
       "sources": [
         {
           "type": "file",
-          "path": "rustdesk.deb"
+          "path": "nervdesk.deb"
         },
         {
           "type": "file",
-          "path": "com.rustdesk.RustDesk.metainfo.xml"
+          "path": "com.nervdesk.NERVDesk.metainfo.xml"
         }
       ]
     }

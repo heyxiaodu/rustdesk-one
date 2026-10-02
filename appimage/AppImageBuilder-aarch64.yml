@@ -2,23 +2,28 @@
 version: 1
 script:
  - rm -rf ./AppDir || true
- - bsdtar -zxvf rustdesk.deb
+ - bsdtar -zxvf nervdesk.deb
  - tar -xvf ./data.tar.xz
  - mkdir ./AppDir
  - mv ./usr ./AppDir/usr
  # 32x32 icon
- - for i in {32,64,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp ../res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/rustdesk.png; done
- - mkdir -p ./AppDir/usr/share/icons/hicolor/scalable/apps/; cp ../res/scalable.svg ./AppDir/usr/share/icons/hicolor/scalable/apps/rustdesk.svg
+ - for i in {32,64,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp ../res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/nervdesk.png; done
+ - mkdir -p ./AppDir/usr/share/icons/hicolor/scalable/apps/; cp ../res/scalable.svg ./AppDir/usr/share/icons/hicolor/scalable/apps/nervdesk.svg
  # desktop file
- # - sed -i "s/Icon=\/usr\/share\/rustdesk\/files\/rustdesk.png/Icon=rustdesk/g" ./AppDir/usr/share/applications/rustdesk.desktop
+ # NERV Desk (task-76): the icons above are installed as `nervdesk.png` / `nervdesk.svg` and
+ # the desktop file is `nervdesk.desktop` with `Icon=nervdesk`, so this upstream rewrite is
+ # no longer needed; it is also moot because the next line deletes the desktop dir entirely.
+ # - sed -i "s|Icon=/usr/share/rustdesk/files/rustdesk.png|Icon=rustdesk|g" ./AppDir/usr/share/applications/rustdesk.desktop
  - rm -rf ./AppDir/usr/share/applications
 AppDir:
   path: ./AppDir
   app_info:
-    id: rustdesk
-    name: rustdesk
-    icon: rustdesk
+    id: nervdesk
+    name: nervdesk
+    icon: nervdesk
     version: 1.5.0
+    # The bundle's entry point stays usr/share/rustdesk/rustdesk: the Flutter bundle is built with
+    # BINARY_NAME "rustdesk" (flutter/linux/CMakeLists.txt:7) and nothing in this rename moves it.
     exec: usr/share/rustdesk/rustdesk
     exec_args: $@
   apt:

@@ -1,0 +1,19 @@
+[Desktop Entry]
+# NERV Desk (task-76): this file is installed as `nervdesk-link.desktop`, so `Icon=`
+# below names the *installed icon* `nervdesk` (hicolor/256x256/apps/nervdesk.png and
+# hicolor/scalable/apps/nervdesk.svg). It does NOT name the binary.
+# `TryExec=`, `Exec=` and `StartupWMClass=` are still the real *binary* name `rustdesk`
+# (flutter/linux/CMakeLists.txt:7 set(BINARY_NAME "rustdesk"), res/DEBIAN/postinst).
+# `Name=` is display only.
+Name=NERV Desk
+NoDisplay=true
+# The scheme stays `nervdesk`: it is registered by the application itself
+# (get_uri_prefix() -> nervdesk://), while the binary name is decided by packaging.
+MimeType=x-scheme-handler/nervdesk;
+TryExec=rustdesk
+Exec=rustdesk %u
+Icon=nervdesk
+Terminal=false
+Type=Application
+StartupNotify=false
+StartupWMClass=rustdesk
