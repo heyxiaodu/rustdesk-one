@@ -18,7 +18,16 @@ on:
 # in this file!
 
 env:
-  SCITER_RUST_VERSION: "1.75" # ⚠️ 有意钉版，不是「口径不一致」：rust-sciter 在 rustc 1.78+ 的 i128 ABI 变更下会 panic（scdef.rs:160 的 enum transmute 遇到 0x84 无匹配变体），sciter/Windows-x86 路径必须留在 1.75。上游讨论 https://github.com/rustdesk/rustdesk/discussions/7503 ；ABI 公告 https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+  # ⚠️ 有意钉版，不是「口径不一致」。原文（2026-09，写在同一行）的理由是「rust-sciter 在 rustc 1.78+
+  # 的 i128 ABI 变更下会 panic（scdef.rs:160 的 enum transmute 遇到 0x84 无匹配变体）」。
+  # 【2026-10-02 就地更正】该归因有误：真正的机制是「枚举判别值有效性检查」，位置在 rust-sciter
+  # scdef.rs:159-160（transmute 之后对判别值做穷尽性检查），触发条件是 -C debug-assertions 而不是
+  # ABI 变更（实测 1.75 → 0 次、1.91 → 134 次）。上游讨论
+  # https://github.com/rustdesk/rustdesk/discussions/7503 与 i128 布局公告
+  # https://blog.rust-lang.org/2024/03/30/i128-layout-update.html 保留为背景。
+  # release 产物不会 abort，但 --transport 会被 src/ui.rs 判为 Wrong command 并退出 ⇒ 到不了 QUIC
+  # （依据 analysis/network/quic-required-recon.md）。结论不变：sciter/Windows-x86 路径必须留在 1.75。
+  SCITER_RUST_VERSION: "1.75"
   RUST_VERSION: "1.91" # NERV Desk fork MSRV：与 Cargo.toml:14 `rust-version = "1.91"` 及 Cargo.lock `version = 4`（需 cargo >= 1.78）一致。上游原注释「sciter failed on m1 with 1.78」针对的是 sciter 路径；本变量在本文件供 iOS/Android/Linux(flutter, drm) 使用。
   MAC_RUST_VERSION: "1.91" # 原值 1.81 只是 macOS cidre 的下限（https://github.com/yury/cidre requires 1.81），已被本 fork MSRV 1.91 覆盖。
   CARGO_NDK_VERSION: "3.1.2"
@@ -1778,7 +1787,10 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
-            for name in rustdesk*??.deb; do
+            # nullglob: the artefact prefix is now nervdesk (build.py:807/:948), so a stale pattern
+            # would leave the literal glob as the loop item instead of failing loudly. NERV Desk (task-69).
+            shopt -s nullglob
+            for name in nervdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
 
@@ -1792,7 +1804,8 @@ jobs:
             esac
             HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
             pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
+            shopt -s nullglob
+            for name in nervdesk*??.rpm; do
                 mv "$name" /workspace/"${name%%.rpm}.rpm"
             done
 
@@ -1806,9 +1819,71 @@ jobs:
             esac
             HBB=`pwd` rpmbuild ./res/rpm-flutter-suse.spec -bb
             pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
+            shopt -s nullglob
+            for name in nervdesk*??.rpm; do
                 mv "$name" /workspace/"${name%%.rpm}-suse.rpm"
             done
+
+      - name: Check the built packages are the renamed ones
+        shell: bash
+        # Products, not build status: build.py and rpmbuild can both exit 0 while the artefact prefix
+        # is stale (the rename is what analysis/security/packaging-review.md F1/F3 is about), and the
+        # artifact upload below names a single file, so a second deb would either be published by
+        # accident or break the upload with no explanation.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # The container renamed the deb to <name>-<matrix arch>.deb above, and "Upload deb" below
+          # publishes exactly nervdesk-${VERSION}-${arch}.deb. Assert that name rather than a wildcard:
+          # the previous glob `nervdesk-*??.deb` also matched names with no arch suffix, because `?`
+          # matches `.` as well. NERV Desk (task-71).
+          arch='${{ matrix.job.arch }}'
+          if [ -z "$arch" ]; then
+            echo "::error::matrix.job.arch is empty, cannot derive the expected deb name"
+            exit 1
+          fi
+          expected="nervdesk-${{ env.VERSION }}-${arch}.deb"
+          debs=(nervdesk-*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::expected one nervdesk-*.deb, found ${#debs[@]}: ${debs[*]-none}"
+            exit 1
+          fi
+          if [ ! -e "$expected" ] || [ "${debs[0]}" != "$expected" ]; then
+            echo "::error::the built deb ${debs[0]} is not the expected $expected"
+            exit 1
+          fi
+          # fedora + suse; both are renamed by the rpm loops above, and the suse one keeps its suffix.
+          rpms=(nervdesk-*.rpm)
+          if [ "${#rpms[@]}" -ne 2 ]; then
+            echo "::error::expected two nervdesk-*.rpm (fedora, suse), found ${#rpms[@]}: ${rpms[*]-none}"
+            exit 1
+          fi
+          suse_rpms=(nervdesk-*-suse.rpm)
+          if [ "${#suse_rpms[@]}" -ne 1 ]; then
+            echo "::error::expected one nervdesk-*-suse.rpm, found ${#suse_rpms[@]}: ${suse_rpms[*]-none}"
+            exit 1
+          fi
+          # The deb ships the payload in /usr/share/rustdesk/ and only creates /usr/bin/rustdesk in
+          # its postinst, so a payload staged under a different name installs cleanly and then fails
+          # at run time: the unit's ExecStart cannot be found. Assert it from the deb itself -- no
+          # install, no systemd, no root. NERV Desk (task-69).
+          ./scripts/check-linux-package-entry.sh "${debs[0]}"
+
+      - name: Check the rpm specs guard their /usr/bin entry
+        shell: bash
+        # Static read of the four specs: the %post that links /usr/bin/rustdesk must be guarded by an
+        # existence test on that source and must exit non-zero when the payload is absent, and a name
+        # %install stages as /usr/bin/<name> must be listed in %files. This is the layer that catches
+        # res/rpm-flutter*.spec %post as it stood before task-69 (an unguarded `ln -sf` that silently
+        # creates a dangling /usr/bin/rustdesk). --require-tools is deliberate: the .spec layer needs
+        # only grep/sed/awk, so on a runner that has them it must never degrade into a skip --
+        # scripts/check-linux-package-entry.sh reports "not checked" as exit 3, never as a pass.
+        # The .rpm artefact layer is NOT covered here: rpmbuild runs inside the run-on-arch container,
+        # which installs rpm but not rpm2cpio/cpio, so no .rpm is inspected. NERV Desk (task-71).
+        run: |
+          set -euo pipefail
+          ./scripts/check-linux-package-entry.sh --rpm --require-tools \
+            res/rpm-flutter.spec res/rpm-flutter-suse.spec res/rpm.spec res/rpm-suse.spec
 
       - name: Publish debian/rpm package
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -1817,15 +1892,15 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk-*.deb
-            rustdesk-*.rpm
+            nervdesk-*.deb
+            nervdesk-*.rpm
 
       - name: Upload deb
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
-          name: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
-          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          name: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          path: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
 
       # only x86_64 for arch since we can not find newest arm64 docker image to build
       # old arch image does not make sense for arch since it is "arch" which always update to date
@@ -1853,11 +1928,11 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            res/rustdesk-${{ env.VERSION }}*.zst
+            res/nervdesk-${{ env.VERSION }}*.zst
 
   # Same build as build-rustdesk-linux x86_64 -- same vcpkg/ffmpeg, same ubuntu18.04 container, same
   # rust and flutter -- only with the drm feature on, so it ships as the separate
-  # rustdesk-unattended-wayland deb. libdrmtap is built on the runner because bionic's meson is too
+  # nervdesk-unattended-wayland deb. libdrmtap is built on the runner because bionic's meson is too
   # old for it. A separate job rather than a matrix entry of build-rustdesk-linux: appimage and
   # flatpak need that job, and a failure here must not skip them.
   build-rustdesk-linux-drm:
@@ -2114,7 +2189,8 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=amd64
             python3 ./build.py --flutter --drm --hwcodec --unix-file-copy-paste --skip-cargo
-            for name in rustdesk*??.deb; do
+            shopt -s nullglob
+            for name in nervdesk*??.deb; do
               mv "$name" "${name%%.deb}-x86_64.deb"
             done
 
@@ -2125,18 +2201,23 @@ jobs:
         run: |
           set -euo pipefail
           # Resolve by glob, not from env.VERSION: build.py writes "<prefix>-<version>.deb" with a
-          # literal prefix (rustdesk, or DRM_PACKAGE_NAME = rustdesk-unattended-wayland for the drm
+          # literal prefix (nervdesk, or DRM_PACKAGE_NAME = nervdesk-unattended-wayland for the drm
           # variant) and the version taken from Cargo.toml, so hardcoding either one fails with a
-          # bare exit 1 the first time the two drift. Renaming that prefix (build.py:607, :787,
-          # :928, :1174) must update this glob too -- see analysis/oem/rename-packaging-fix.md.
+          # bare exit 1 the first time the two drift. Renaming that prefix (build.py:615, :807,
+          # :948, :1194) must update this glob too -- see analysis/oem/rename-packaging-fix.md.
+          # This job has no matrix, so the architecture suffix stays the literal x86_64 written by
+          # the rename loop above.
           shopt -s nullglob
-          debs=(rustdesk-unattended-wayland-*-x86_64.deb)
+          debs=(nervdesk-unattended-wayland-*-x86_64.deb)
           if [ "${#debs[@]}" -ne 1 ]; then
-            echo "::error::expected one rustdesk-unattended-wayland-*-x86_64.deb, found ${#debs[@]}: ${debs[*]-none}"
+            echo "::error::expected one nervdesk-unattended-wayland-*-x86_64.deb, found ${#debs[@]}: ${debs[*]-none}"
             exit 1
           fi
           deb="${debs[0]}"
           echo "DRM_DEB=$deb" >> "$GITHUB_ENV"
+          # The drm deb carries a package identity of its own, so its /usr/bin entry has to resolve
+          # like any other: the payload is staged in /usr/share/rustdesk and only linked by postinst.
+          ./scripts/check-linux-package-entry.sh "$deb"
           contents="$(dpkg -c "$deb")"
           if [[ ! "$contents" =~ usr/lib/rustdesk/libdrmtap\.so\.0\.[0-9]+\.[0-9]+ ]]; then
             echo "::error::$deb has no versioned libdrmtap.so.0.x.y"
@@ -2402,17 +2483,29 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          debs=(rustdesk-*??.deb)
+          # build.py --package emits nervdesk-<Cargo.toml version>.deb here; the matrix arch and the
+          # -sciter suffix are appended by "Rename nervdesk" below, so the expected name carries
+          # neither. Assert the exact name instead of `nervdesk-*??.deb`, which also matched names with
+          # no arch suffix (`?` matches `.`), and which would have accepted a stale artefact. This also
+          # catches a Cargo.toml version that disagrees with env.VERSION, which would otherwise make the
+          # Publish/Upload steps below name a file that does not exist. NERV Desk (task-71).
+          expected="nervdesk-${{ env.VERSION }}.deb"
+          debs=(nervdesk-*.deb)
           if [ "${#debs[@]}" -ne 1 ]; then
-            echo "::error::expected one rustdesk-*.deb, found ${#debs[@]}: ${debs[*]-none}"
+            echo "::error::expected one nervdesk-*.deb, found ${#debs[@]}: ${debs[*]-none}"
+            exit 1
+          fi
+          if [ ! -e "$expected" ] || [ "${debs[0]}" != "$expected" ]; then
+            echo "::error::the built deb ${debs[0]} is not the expected $expected"
             exit 1
           fi
           ./scripts/check-linux-package-entry.sh "${debs[0]}"
 
-      - name: Rename rustdesk
+      - name: Rename nervdesk
         shell: bash
         run: |
-          for name in rustdesk*??.deb; do
+          shopt -s nullglob
+          for name in nervdesk*??.deb; do
               # use cp to duplicate deb files to fit other packages.
               cp "$name" "${name%%.deb}-${{ matrix.job.arch }}-sciter.deb"
           done
@@ -2424,14 +2517,14 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
+            nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
 
       - name: Upload deb
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
-          name: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
-          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
+          name: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
+          path: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
 
   build-appimage:
     name: Build appimage ${{ matrix.job.target }}
@@ -2453,12 +2546,12 @@ jobs:
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          name: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
           path: .
 
       - name: Rename Binary
         run: |
-          mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb appimage/rustdesk.deb
+          mv nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb appimage/nervdesk.deb
 
       - name: Build appimage package
         shell: bash
@@ -2484,7 +2577,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
+            ./appimage/nervdesk-${{ env.VERSION }}-*.AppImage
 
   build-flatpak:
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
@@ -2529,12 +2622,12 @@ jobs:
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb
+          name: nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb
           path: .
 
       - name: Rename Binary
         run: |
-          mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb flatpak/rustdesk.deb
+          mv nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb flatpak/nervdesk.deb
 
       - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8 # no release tag; commit 2026-05-26
         name: Build rustdesk flatpak package for ${{ matrix.job.arch }}
@@ -2561,7 +2654,7 @@ jobs:
             pushd flatpak
             git clone https://github.com/flathub/shared-modules.git --depth=1
             flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
-            flatpak build-bundle ./repo rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.rustdesk.RustDesk
+            flatpak build-bundle ./repo nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.nervdesk.NERVDesk
 
       - name: Publish flatpak package
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -2569,7 +2662,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            flatpak/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
+            flatpak/nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
   build-rustdesk-web:
     if: False
