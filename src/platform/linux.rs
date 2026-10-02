@@ -2709,6 +2709,15 @@ pub fn run_me_with(secs: u32) {
         .ok();
 }
 
+/// Machine-facing application identifier (`nervdesk`).
+///
+/// Used for the systemd unit name and for the GNOME `.desktop` application id:
+/// both must match the file names installed by the packages (see `res/`), and both
+/// must be space-free. The human-readable name (`NERV Desk`) is only for menus.
+fn app_ident() -> &'static str {
+    hbb_common::config::APP_NAME_IDENT
+}
+
 fn switch_service(stop: bool) -> String {
     // SECURITY: Use trusted home directory lookup via getpwuid instead of $HOME env var
     // to prevent confused-deputy attacks where an attacker manipulates environment variables.
@@ -2717,17 +2726,62 @@ fn switch_service(stop: bool) -> String {
         .unwrap_or_default();
     Config::set_option("stop-service".into(), if stop { "Y" } else { "" }.into());
     if !home.is_empty() && home != "/root" && !Config::get().is_empty() {
-        let app_name_lower = crate::get_app_name().to_lowercase();
-        let app_name0 = crate::get_app_name();
-        let config_subdir = format!(".config/{}", app_name_lower);
+        // Derive the layout from `Config` itself instead of lowercasing the display
+        // name: `directories-next` turns `NERV Desk` into `nervdesk`, so the real
+        // directory is `~/.config/nervdesk`, while the file name keeps the
+        // human-readable name (`NERV Desk.toml`). Lowercasing produced
+        // `~/.config/nerv desk/...`, a path that never exists.
+        let config_file = Config::file();
+        // `Config` builds its paths from the (untrusted) home, keep only the
+        // relative part and join it with the trusted home below.
+        let trusted_home = Config::get_home();
+        let relative_config = match config_file.strip_prefix(&trusted_home) {
+            Ok(relative) => relative.to_path_buf(),
+            Err(_) => {
+                // The two layouts disagree (e.g. an adversarial `$HOME` while the
+                // real user is not root): fail closed and copy nothing instead of
+                // building a src path out of two unrelated roots.
+                log::warn!(
+                    "Skip config migration, {} is not under {}",
+                    config_file.display(),
+                    trusted_home.display()
+                );
+                return "".to_owned();
+            }
+        };
+        let relative_dir = relative_config.parent().unwrap_or(Path::new(""));
+        let config_name = relative_config
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let config_name2 = match config_name.rsplit_once('.') {
+            Some((stem, extension)) => format!("{stem}2.{extension}"),
+            None => format!("{config_name}2"),
+        };
 
         // SECURITY: Quote all paths to prevent shell injection from paths containing
         // spaces, semicolons, or other special characters.
-        let src1 = shell_quote(&format!("{}/{}/{}.toml", home, config_subdir, app_name0));
-        let src2 = shell_quote(&format!("{}/{}/{}2.toml", home, config_subdir, app_name0));
-        let dst = shell_quote(&format!("/root/{}/", config_subdir));
+        let src1 = shell_quote(&format!(
+            "{}/{}/{}",
+            home,
+            relative_dir.display(),
+            config_name
+        ));
+        let src2 = shell_quote(&format!(
+            "{}/{}/{}",
+            home,
+            relative_dir.display(),
+            config_name2
+        ));
+        let dst = shell_quote(&format!("/root/{}/", relative_dir.display()));
 
-        format!("cp -f {} {}; cp -f {} {};", src1, dst, src2, dst)
+        // On a fresh install `/root/.config/nervdesk/` does not exist yet, and
+        // `cp` into a missing directory fails silently (the `;` chain hides it),
+        // so the service would start without the user's configuration.
+        format!(
+            "mkdir -p {}; cp -f {} {}; cp -f {} {};",
+            dst, src1, dst, src2, dst
+        )
     } else {
         "".to_owned()
     }
@@ -2740,10 +2794,10 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     }
     log::info!("Uninstalling service...");
     let cp = switch_service(true);
-    let app_name = crate::get_app_name().to_lowercase();
+    let unit_name = app_ident();
     // systemctl kill rustdesk --tray, execute cp first
     if !run_cmds_privileged(&format!(
-        "{cp} systemctl disable {app_name}; systemctl stop {app_name};"
+        "{cp} systemctl disable {unit_name}; systemctl stop {unit_name};"
     )) {
         Config::set_option("stop-service".into(), "".into());
         return true;
@@ -2762,9 +2816,9 @@ pub fn install_service() -> bool {
     }
     log::info!("Installing service...");
     let cp = switch_service(false);
-    let app_name = crate::get_app_name().to_lowercase();
+    let unit_name = app_ident();
     if !run_cmds_privileged(&format!(
-        "{cp} systemctl enable {app_name}; systemctl start {app_name};"
+        "{cp} systemctl enable {unit_name}; systemctl start {unit_name};"
     )) {
         Config::set_option("stop-service".into(), "Y".into());
     }
@@ -2773,9 +2827,9 @@ pub fn install_service() -> bool {
 
 fn check_if_stop_service() {
     if Config::get_option("stop-service".into()) == "Y" {
-        let app_name = crate::get_app_name().to_lowercase();
+        let unit_name = app_ident();
         allow_err!(run_cmds(&format!(
-            "systemctl disable {app_name}; systemctl stop {app_name}"
+            "systemctl disable {unit_name}; systemctl stop {unit_name}"
         )));
     }
 }
@@ -2790,7 +2844,7 @@ pub fn check_autostart_config() -> ResultType<()> {
             return Ok(());
         }
     };
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = app_ident();
     let path = format!("{home}/.config/autostart");
     let file = format!("{path}/{app_name}.desktop");
     // https://github.com/rustdesk/rustdesk/issues/4863
@@ -2885,6 +2939,13 @@ pub fn is_selinux_enforcing() -> bool {
     }
 }
 
+/// Flatpak application id. Must stay **identical** to the `"id"` value in
+/// `flatpak/rustdesk.json` (line 2); if the two ever drift apart, the Flatpak
+/// fallback path below silently produces an app id that can never match the
+/// installed `.desktop` file. Used only by the Flatpak branch, so it does not
+/// affect Windows/macOS builds.
+const FLATPAK_APP_ID: &str = "com.nervdesk.NERVDesk";
+
 /// Get the app ID for shortcuts inhibitor permission.
 /// Returns different ID based on whether running in Flatpak or native.
 /// The ID must match the installed .desktop filename, as GNOME Shell's
@@ -2892,17 +2953,17 @@ pub fn is_selinux_enforcing() -> bool {
 fn get_shortcuts_inhibitor_app_id() -> String {
     if is_flatpak() {
         // In Flatpak, FLATPAK_ID is set automatically by the runtime to the app ID
-        // (e.g., "com.rustdesk.RustDesk"). This is the most reliable source.
-        // Fall back to constructing from app name if not available.
+        // (e.g., "com.nervdesk.NERVDesk"). This is the most reliable source.
+        // Fall back to the constant above if the runtime did not provide it.
         match std::env::var("FLATPAK_ID") {
             Ok(id) if !id.is_empty() => format!("{}.desktop", id),
-            _ => {
-                let app_name = crate::get_app_name();
-                format!("com.{}.{}.desktop", app_name.to_lowercase(), app_name)
-            }
+            _ => format!("{}.desktop", FLATPAK_APP_ID),
         }
     } else {
-        format!("{}.desktop", crate::get_app_name().to_lowercase())
+        // The GNOME app id must match the installed .desktop file name, which is
+        // the machine identifier (`nervdesk.desktop`); lowercasing the display
+        // name produced `nerv desk.desktop`, which can never match.
+        format!("{}.desktop", app_ident())
     }
 }
 

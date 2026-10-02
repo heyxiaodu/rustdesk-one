@@ -1507,6 +1507,219 @@ mod tests {
         Ok(())
     }
 
+    /// R1（task-73）：**产品入口** `quic_direct_attempt` / `quic_accept_attempt` 在同进程
+    /// loopback 上完成一次真实握手 + 双向字节交换。
+    ///
+    /// 与既有 loopback 测试的区别（这是本测试存在的唯一理由）：`quic_c1_rpk_handshake_loopback`
+    /// 与 `quic_dial_quinn_loopback` 走的都是 quinn 自带的 `Endpoint::server` /
+    /// `Endpoint::client` —— 由 **quinn-udp** 自己建 socket、自己跑 `UdpSocketState`。
+    /// 本测试驱动的是**产品入口**：它把调用方传入的 `Arc<tokio UdpSocket>` 包成
+    /// `TokioAsyncUdpSocket`（`quic_transport.rs:167`），也就是被控端/主控端在真实
+    /// `client.rs:udp_nat_connect` / `rendezvous_mediator.rs:udp_nat_loop` 里传进来的那个
+    /// **已 `connect()` 的打洞 socket**。因此本测试真实覆盖：
+    /// - `quic_direct_attempt` `:318` → `:357`（含 `socket.peer_addr()` 取对端、
+    ///   `TokioAsyncUdpSocket::try_send` / `poll_recv`、`open_bi`）；
+    /// - `quic_accept_attempt` `:370` → `:404`（含 `endpoint.accept()` → `incoming` →
+    ///   `accept_bi`，即 `:404` 那条「QUIC 入站连接已建立…」路径）。
+    ///
+    /// 两侧 socket 都 `connect()` 对方，刻意复刻产品里「同一个 4 元组」的形态；
+    /// 主控侧必须已连接，否则 `quic_direct_attempt` 的 `socket.peer_addr()?` 会返回
+    /// ENOTCONN —— 这也是本测试对生产前置条件的钉死。
+    #[tokio::test]
+    async fn quic_product_entry_loopback_success()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        install_ring_provider();
+        use tokio::net::UdpSocket;
+
+        // C1 配对身份（与既有 loopback 测试同款：同一 seed ⇒ 同一 32B pk）。
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (pk, server_cfg) = test_identity_and_server_cfg(&seed)?;
+
+        // 两张 loopback UDP socket，各自 connect 到对方。
+        let server_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let client_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let server_addr = server_sock.local_addr()?;
+        let client_addr = client_sock.local_addr()?;
+        client_sock.connect(server_addr).await?;
+        server_sock.connect(client_addr).await?;
+
+        const T: u64 = 5_000;
+
+        // 被控端：产品入口 accept（覆盖 :404）。
+        let server_task = tokio::spawn(async move {
+            let mut s = match super::quic_accept_attempt(server_sock, client_addr, T, server_cfg).await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[prod-loopback] 被控端 quic_accept_attempt 失败: {e}");
+                    return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                        format!("被控端 accept_attempt: {e}").into(),
+                    );
+                }
+            };
+            eprintln!("[prod-loopback] 被控端 accept_attempt 成功");
+            let got = match s.next().await {
+                Some(Ok(g)) => g,
+                other => {
+                    eprintln!("[prod-loopback] 被控端 next() 失败: {other:?}");
+                    return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                        format!("被控端 next(): {other:?}").into(),
+                    );
+                }
+            };
+            eprintln!("[prod-loopback] 被控端收到 {} 字节", got.len());
+            if got[..] != b"hello"[..] {
+                return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                    format!("被控端收到意外载荷：{:?}", &got[..]).into(),
+                );
+            }
+            if let Err(e) = s.send_raw(b"ok".to_vec()).await {
+                eprintln!("[prod-loopback] 被控端 send_raw 失败: {e}");
+                return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                    format!("被控端 send_raw: {e}").into(),
+                );
+            }
+            eprintln!("[prod-loopback] 被控端已回 ok");
+            // **必须让 `s` 活到这一行之后**：本测试第一次跑就踩到了这个坑 —— 服务端任务
+            // 一返回、`s`（最后一个持有该 QUIC connection 的句柄）被 drop，quinn 立刻以
+            // `ApplicationClose { error_code: 0, reason: b"" }` 关闭连接，主控端的
+            // `next()` 于是拿到 ConnectionLost 而不是刚发出去的 "ok"。
+            // 所以这里再收一帧 "bye" 作为「主控端已读到 ok」的确认，用它把两端的存活
+            // 顺序钉成确定性（不依赖 sleep）。
+            let bye = match s.next().await {
+                Some(Ok(b)) => b,
+                other => {
+                    eprintln!("[prod-loopback] 被控端第二帧失败: {other:?}");
+                    return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                        format!("被控端第二帧: {other:?}").into(),
+                    );
+                }
+            };
+            if bye[..] != b"bye"[..] {
+                return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                    format!("被控端第二帧载荷意外：{:?}", &bye[..]).into(),
+                );
+            }
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+
+        // 主控端：产品入口 dial（覆盖 :318 → :357）。
+        let mut c = match super::quic_direct_attempt(client_sock, &pk, T).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[prod-loopback] 主控端 quic_direct_attempt 失败: {e}");
+                return Err(format!("主控端 direct_attempt: {e}").into());
+            }
+        };
+        eprintln!("[prod-loopback] 主控端 direct_attempt 成功（握手完成）");
+        if let Err(e) = c.send_raw(b"hello".to_vec()).await {
+            eprintln!("[prod-loopback] 主控端 send_raw 失败: {e}");
+            return Err(format!("主控端 send_raw: {e}").into());
+        }
+        let ack = match c.next().await {
+            Some(Ok(a)) => a,
+            other => {
+                eprintln!("[prod-loopback] 主控端 next() 失败: {other:?}");
+                return Err(format!("主控端 next(): {other:?}").into());
+            }
+        };
+        eprintln!("[prod-loopback] 主控端收到 {:?}", &ack[..]);
+        assert_eq!(&ack[..], b"ok", "主控端应收到被控端的 2B ok");
+        // 回一帧确认，让被控端可以安全地结束任务；此后主控端**仍持有 c**，因此连接不会
+        // 在断言完成前被关闭（与上面那段注释对称）。
+        c.send_raw(b"bye".to_vec()).await?;
+        server_task.await??;
+        drop(c);
+        Ok(())
+    }
+
+    /// R1（task-73）负路：产品入口在**对端静默**（socket 已 bind 但无人响应 QUIC）时
+    /// 必须**如实报超时**，而不是挂死或伪造成功。
+    ///
+    /// 对端故意选一张**只 bind、不 connect、不读**的 socket：UDP 无 ICMP 端口不可达，
+    /// 因此 quinn 只能靠自身 PTO 重传，最终由 `quic_direct_attempt` 的
+    /// `connect_timeout_ms` 兜底（`quic_transport.rs:345-352`）。
+    #[tokio::test]
+    async fn quic_product_entry_dial_timeout_is_reported()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        install_ring_provider();
+        use tokio::net::UdpSocket;
+
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (pk, _server_cfg) = test_identity_and_server_cfg(&seed)?;
+
+        // 静默对端：只占住一个 127.0.0.1 端口，不读、不应答。
+        let _silent = UdpSocket::bind("127.0.0.1:0").await?;
+        let silent_addr = _silent.local_addr()?;
+
+        let client_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        client_sock.connect(silent_addr).await?;
+
+        const T_SHORT: u64 = 700;
+        let err = super::quic_direct_attempt(client_sock, &pk, T_SHORT)
+            .await
+            .err()
+            .ok_or("静默对端下 quic_direct_attempt 竟然返回 Ok —— 这是伪成功")?;
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("timeout"),
+            "负路应如实报超时，实际错误：{msg}"
+        );
+        Ok(())
+    }
+
+    /// R1（task-73）负路：**产品入口**的 RPK 信任锚必须 fail-closed。
+    ///
+    /// 客户端 `NervRpkVerifier` 配错 pk（`[1u8; 32]`）⇒ 服务端证书验签失败 ⇒
+    /// `quic_direct_attempt` 必须返回 `Err`（而不是握手成功或挂到超时）。
+    /// `quic_c1_rpk_handshake_loopback` 只在 quinn 自带 Endpoint 上验过这一点，
+    /// 本测试把它钉到产品入口 + `TokioAsyncUdpSocket` 这条真实路径上。
+    #[tokio::test]
+    async fn quic_product_entry_wrong_pk_fails_closed()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        install_ring_provider();
+        use tokio::net::UdpSocket;
+
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (_pk, server_cfg) = test_identity_and_server_cfg(&seed)?;
+
+        let server_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let client_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let server_addr = server_sock.local_addr()?;
+        let client_addr = client_sock.local_addr()?;
+        client_sock.connect(server_addr).await?;
+        server_sock.connect(client_addr).await?;
+
+        const T: u64 = 5_000;
+
+        // 被控端照常提供 RPK 服务端；它自己的握手会随之失败，这里不关心其结果。
+        let server_task = tokio::spawn(async move {
+            let _ = super::quic_accept_attempt(server_sock, client_addr, 1_500, server_cfg).await;
+        });
+
+        let wrong_pk: [u8; 32] = [1u8; 32];
+        let res = super::quic_direct_attempt(client_sock, &wrong_pk, T).await;
+        assert!(
+            res.is_err(),
+            "错 pk 下产品入口必须 fail-closed，实际却握手成功"
+        );
+        let _ = server_task.await;
+        Ok(())
+    }
+
+    /// 由 32B seed 导出配对的 32B raw pk，并用产品入口 `make_quic_server_config`
+    /// 构造服务端 RPK 配置（`quic_c1_rpk_handshake_loopback:1400-1409` 的提取版）。
+    fn test_identity_and_server_cfg(
+        seed: &[u8; 32],
+    ) -> Result<([u8; 32], ServerConfig), Box<dyn std::error::Error + Send + Sync>> {
+        let keypair = Ed25519KeyPair::from_seed_unchecked(seed)
+            .map_err(|e| format!("Ed25519KeyPair::from_seed_unchecked: {e:?}"))?;
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(keypair.public_key().as_ref());
+        let cfg = super::make_quic_server_config(&pk, seed)?;
+        Ok((pk, cfg))
+    }
+
     /// R4-3（task-15）F-R1：监听侧判别器必须对 KCP SYN 零假阳性。
     ///
     /// 旧判据（`bit7 != 0 && len > 8 && datagram[1..5] != [0;4]`）对 KCP SYN 有约 50% 假阳性，
