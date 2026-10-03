@@ -484,6 +484,28 @@ def prepare_resources():
         return False
 
 
+def stage_license_files():
+    """Copy the AGPLv3 text and the fork's NOTICE into Package/Resources.
+
+    Licenses.wxs installs both files into INSTALLFOLDER_INNER, and WiX resolves a
+    relative File/@Source against the directory of the .wxs file that contains
+    it, so the copies have to sit next to Resources\\icon.ico -- the same place
+    prepare_resources() stages the icon into. Package/Resources is git-ignored,
+    so staging rewrites nothing that is tracked.
+    """
+    msi_dir = Path(sys.argv[0]).parent
+    repo_root = msi_dir.joinpath("../..").resolve()
+    resources_dir = msi_dir.joinpath("Package/Resources")
+    for src_name, dst_name in (("LICENCE", "LICENSE-AGPLv3.txt"), ("NOTICE", "NOTICE.txt")):
+        src = repo_root.joinpath(src_name)
+        if not src.exists():
+            print(f"Error: {src_name} not found in {repo_root}; the license text and the notice must ship with the package")
+            return False
+        resources_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, resources_dir.joinpath(dst_name))
+    return True
+
+
 def init_global_vars(dist_dir, app_name, args):
     dist_app = dist_dir.joinpath(g_exe_name + ".exe")
 
@@ -521,15 +543,62 @@ def init_global_vars(dist_dir, app_name, args):
     return True
 
 
+def license_reference_paragraph():
+    """The AGPLv3 statement that the installer shows on its license page."""
+    return (
+        "\\par\\par{\\b This program is a modified version of RustDesk and is "
+        "released under the GNU Affero General Public License, version 3 "
+        "(AGPLv3).}\\par The full text ships with this program as "
+        "LICENSE-AGPLv3.txt; see NOTICE for the copyright and the modification "
+        "notices.\\par"
+    )
+
+
+def remove_license_reference_from_rtf(content):
+    """Drop the paragraph that add_license_reference_to_rtf() appends, if present.
+
+    update_license_file() replaces the app name all over the file, and this
+    attribution has to keep the upstream name, so it is taken out before the
+    substitutions and appended again afterwards. Doing it this way also makes a
+    repeated run over the same tree byte-identical.
+    """
+    return content.replace(license_reference_paragraph(), "", 1)
+
+
+def add_license_reference_to_rtf(content):
+    """Append the license statement to the installer text (Package/License.rtf).
+
+    WixUI shows that file on its license agreement page (WixUILicenseRtf in
+    Package.wxs): it is the only text a user can read before the program is
+    installed, and it currently holds a privacy notice with no license statement
+    at all. The statement is appended as a new paragraph at the end of the
+    document body, i.e. just before the closing brace of the outer group, and
+    only when it is not already there, so that running preprocess.py twice does
+    not duplicate it. It is deliberately appended after the app name
+    substitutions in update_license_file(), so that this attribution keeps the
+    upstream name.
+    """
+    paragraph = license_reference_paragraph()
+    if paragraph in content:
+        return content
+    end = content.rfind("}")
+    if end < 0:
+        print("Error: Package/License.rtf has no closing brace; the license reference was not added")
+        return content
+    return content[:end] + paragraph + content[end:]
+
+
 def update_license_file(app_name):
     if app_name == "RustDesk":
         return
     license_file = Path(sys.argv[0]).parent.joinpath("Package/License.rtf")
     with open(license_file, "r", encoding="utf-8") as f:
         license_content = f.read()
+    license_content = remove_license_reference_from_rtf(license_content)
     license_content = license_content.replace("website rustdesk.com and other ", "")
     license_content = license_content.replace("RustDesk", app_name)
     license_content = re.sub(r"Purslane(?: Tech Pte\.)? Ltd", LEGAL_ENTITY, license_content, flags=re.IGNORECASE)
+    license_content = add_license_reference_to_rtf(license_content)
     with open(license_file, "w", encoding="utf-8") as f:
         f.write(license_content)
 
@@ -559,6 +628,9 @@ if __name__ == "__main__":
     dist_dir = Path(sys.argv[0]).parent.joinpath(args.dist_dir).resolve()
 
     if not prepare_resources():
+        sys.exit(-1)
+
+    if not stage_license_files():
         sys.exit(-1)
 
     if not init_global_vars(dist_dir, app_name, args):

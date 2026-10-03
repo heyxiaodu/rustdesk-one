@@ -459,6 +459,22 @@ jobs:
         run: |
           BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput
 
+      - name: Ship the license and the notice with the flutter build
+        # The AGPLv3 requires the license to travel with the program it covers,
+        # and the notice has to state the copyright and the modifications; see
+        # analysis/build-env/round8-license-p0.md. The MSI installs both files
+        # into the install directory (res/msi/Package/Licenses.wxs); these copies
+        # cover the portable exe and any other way of taking this build from the
+        # release. Copied after signing on purpose, so that sign_files only ever
+        # sees executables. The names carry the version and the arch because the
+        # sciter job publishes into the same release.
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: bash
+        run: |
+          cp -v ./LICENCE "./SignOutput/LICENSE-AGPLv3-${{ env.VERSION }}-${{ matrix.job.arch }}.txt"
+          cp -v ./NOTICE "./SignOutput/NOTICE-${{ env.VERSION }}-${{ matrix.job.arch }}.txt"
+          sha256sum ./SignOutput/LICENSE-AGPLv3-*.txt ./SignOutput/NOTICE-*.txt
+
       - name: Publish Release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -468,6 +484,8 @@ jobs:
           files: |
             ./SignOutput/nervdesk-*.msi
             ./SignOutput/rustdesk-*.exe
+            ./SignOutput/LICENSE-AGPLv3-*.txt
+            ./SignOutput/NOTICE-*.txt
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
@@ -621,6 +639,17 @@ jobs:
         run: |
           BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput/
 
+      - name: Ship the license and the notice with the sciter build
+        # Same as in the flutter job above: the AGPLv3 text and this fork's NOTICE
+        # have to be delivered with the binary. The sciter build produces no MSI,
+        # so the release assets are the only carrier here.
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: bash
+        run: |
+          cp -v ./LICENCE "./SignOutput/LICENSE-AGPLv3-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.txt"
+          cp -v ./NOTICE "./SignOutput/NOTICE-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.txt"
+          sha256sum ./SignOutput/LICENSE-AGPLv3-*.txt ./SignOutput/NOTICE-*.txt
+
       - name: Publish Release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -629,6 +658,8 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           files: |
             ./SignOutput/rustdesk-*.exe
+            ./SignOutput/LICENSE-AGPLv3-*.txt
+            ./SignOutput/NOTICE-*.txt
 
   build-rustdesk-ios:
     if: ${{ inputs.upload-artifact }}

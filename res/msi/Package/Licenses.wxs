@@ -1,0 +1,39 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<Fragment>
+
+		<!-- The AGPLv3 requires every recipient of the program to also receive a
+		     copy of the license (section 4 and section 6), and it requires the
+		     notices that state the license and the modifications to be kept. The
+		     installer therefore ships two text files next to the application
+		     files (INSTALLFOLDER_INNER):
+
+		       * LICENSE-AGPLv3.txt : the full text of the license, copied from
+		         the LICENCE file at the repository root
+		       * NOTICE.txt         : the fork's NOTICE, holding the copyright
+		         attribution, the statement that this is a modified version
+		         released under the AGPLv3, and where the corresponding source
+		         can be obtained
+
+		     Both source files are staged into Package\Resources by
+		     preprocess.py (stage_license_files), i.e. into the same directory
+		     that Package.wxs already resolves Resources\icon.ico against; a
+		     relative File/@Source is resolved relative to the directory of the
+		     .wxs file that contains it, which is why this file lives directly in
+		     Package\ and not in Package\Components. Package\Resources is
+		     git-ignored (see res/msi/.gitignore), so staging rewrites nothing
+		     that is tracked.
+
+		     The Guids below are placeholders only: preprocess.py rewrites every
+		     Component Guid in Package\**\*.wxs for a rebranded package
+		     (replace_component_guids_in_wxs). -->
+		<DirectoryRef Id="INSTALLFOLDER_INNER">
+			<Component Id="App.License.AGPLv3" Guid="3E1B4C7A-9D25-4F80-B6A3-5C4E8D1F27B9">
+				<File Id="App.License.AGPLv3.txt" Name="LICENSE-AGPLv3.txt" Source="Resources\LICENSE-AGPLv3.txt" KeyPath="yes" />
+			</Component>
+			<Component Id="App.License.Notice" Guid="A7F2C0D8-4B63-4E19-8D57-2F9A6C3E5B14">
+				<File Id="App.License.Notice.txt" Name="NOTICE.txt" Source="Resources\NOTICE.txt" KeyPath="yes" />
+			</Component>
+		</DirectoryRef>
+
+	</Fragment>
+</Wix>

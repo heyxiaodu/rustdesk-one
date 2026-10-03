@@ -8,6 +8,10 @@
   <ItemGroup>
     <Content Include="Includes.wxi" />
     <Content Include="Resources\icon.ico" />
+    <!-- Staged by preprocess.py (stage_license_files) from the repository root;
+         both are installed next to the application by Licenses.wxs. -->
+    <Content Include="Resources\LICENSE-AGPLv3.txt" />
+    <Content Include="Resources\NOTICE.txt" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.Firewall.wixext" Version="4.0.5" />

@@ -72,6 +72,11 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 #define VERSION_AS_STRING "1.0.0"
 #endif
 
+// The LegalCopyright value below keeps the upstream rightsholder visible in the
+// shipped binary and does not claim "all rights reserved." on a work published
+// under the AGPLv3. Keep it in sync with Cargo.toml
+// ([package.metadata.winres]) and libs/portable/Cargo.toml; see NOTICE at the
+// repository root for the attribution and the modification notice.
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION VERSION_AS_NUMBER
  PRODUCTVERSION VERSION_AS_NUMBER
@@ -93,7 +98,7 @@ BEGIN
             VALUE "FileDescription", "NERV Desk" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "nervdesk" "\0"
-            VALUE "LegalCopyright", "Copyright © 2026 NERVDESK. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 NERVDESK and contributors. Based on RustDesk, Copyright (C) Purslane Tech Pte. Ltd. and contributors. Licensed under AGPLv3." "\0"
             VALUE "OriginalFilename", "nervdesk.exe" "\0"
             VALUE "ProductName", "NERV Desk" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

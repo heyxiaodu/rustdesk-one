@@ -172,6 +172,9 @@
 			<ComponentRef Id="App.StartMenu.Shortcut" />
 			<ComponentRef Id="App.StartMenu.ShortcutUninstall" />
 			<ComponentRef Id="App.StartupFolder.ShortcutTray" />
+			<!-- The license text and the fork's notice, see Package/Licenses.wxs. -->
+			<ComponentRef Id="App.License.AGPLv3" />
+			<ComponentRef Id="App.License.Notice" />
 
 			<!--$AutoComonentStart$-->
 			<!--$AutoComponentEnd$-->

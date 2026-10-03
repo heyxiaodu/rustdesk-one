@@ -26,7 +26,11 @@ windows = { version = "0.61", features = [
 native-windows-gui = {version = "1.0", default-features = false, features = ["animation-timer", "image-decoder"]}
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2026 NERVDESK. All rights reserved."
+# Keep the upstream rightsholder visible in the shipped self-extracting
+# executable, and do not claim "all rights reserved." on a work published under
+# the AGPLv3. See NOTICE at the repository root. Keep this string in sync with
+# Cargo.toml and flutter/windows/runner/Runner.rc.
+LegalCopyright = "Copyright (C) 2026 NERVDESK and contributors. Based on RustDesk, Copyright (C) Purslane Tech Pte. Ltd. and contributors. Licensed under AGPLv3."
 ProductName = "RustDesk"
 OriginalFilename = "rustdesk.exe"
 FileDescription = "RustDesk Remote Desktop"

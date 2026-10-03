@@ -1,0 +1,71 @@
+NERV Desk
+=========
+
+This program is a modified version of RustDesk. It is released under the
+GNU Affero General Public License, version 3 (AGPLv3). The full text of
+that license ships with this program as LICENCE -- in the Windows installer
+it is installed next to this file as LICENSE-AGPLv3.txt.
+
+Upstream project and copyright
+------------------------------
+  Project:    RustDesk
+  Source:     https://github.com/rustdesk/rustdesk
+  Copyright:  Copyright (C) Purslane Tech Pte. Ltd. and contributors
+  License:    GNU Affero General Public License v3.0 (see LICENCE)
+
+This distribution
+-----------------
+  Product:      NERV Desk
+  Machine name: nervdesk -- executable nervdesk.exe, Windows service name
+                nervdesk (upstream, and this fork before b516db1d3, used the
+                service name RustDesk)
+  Maintainer:   NERVDESK
+  Copyright:    Copyright (C) 2026 NERVDESK and contributors
+
+  Copyright (C) 2026 NERVDESK and contributors.
+  Licensed under the GNU Affero General Public License, version 3.
+
+Modifications
+-------------
+This program has been modified. The modifications include, non-exhaustively:
+
+  * rebranding: the product is called "NERV Desk", the executable is
+    nervdesk.exe and the machine identifier is "nervdesk" (the SCM service
+    name). Part of the payload deliberately keeps its upstream file name,
+    for example librustdesk.dll and the RustDeskPrinterDriver driver files;
+  * an own Windows installer (res/msi, WiX v4) with native custom actions,
+    including taking over the legacy "RustDesk" service name and stopping or
+    deleting only services whose binary path is one of ours;
+  * Windows platform changes: the legacy service takeover and its log,
+    ISO-8601 timestamps in that log, and literal substring matching in the
+    service path probes;
+  * an own MSVC cross-compilation path and replacement of several vendored
+    native dependencies;
+  * the privacy statement shown by the installer was rewritten for this fork
+    (res/msi/Package/License.rtf);
+  * product names and identifiers in the installer, in the tray and in the
+    desktop application.
+
+Dates of modification: the modifications were made in 2026; the rebranding
+change is commit 92e3f19fb of 2026-10-01. Every distributed binary also
+embeds the date of the build it came from. This NOTICE was last updated on
+2026-10-03.
+
+Corresponding Source
+--------------------
+The Corresponding Source of this modified version is the source tree of the
+fork it is built from:
+
+    https://github.com/heyxiaodu/rustdesk-one
+
+Each build corresponds to the revision or tag it was built from. If you
+received a binary of this program and cannot obtain its corresponding source
+from that location, the distributor (NERVDESK) will provide it on request
+through the channel you obtained the program from.
+
+No warranty
+-----------
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+for more details.

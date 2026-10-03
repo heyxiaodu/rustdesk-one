@@ -293,7 +293,12 @@ webrtc-util = { git = "https://github.com/rustdesk-org/webrtc", rev = "49c89bd8d
 webrtc-sctp = { git = "https://github.com/rustdesk-org/webrtc", rev = "49c89bd8d30e6e62e4c1a96cee38fdc11f79ef63" }
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2026 NERVDESK. All rights reserved."
+# Keep the upstream rightsholder visible in every distributed binary, and do not
+# claim "all rights reserved." on a work published under the AGPLv3. See NOTICE
+# at the repository root for the attribution and the modification notice. Keep
+# this string in sync with flutter/windows/runner/Runner.rc and
+# libs/portable/Cargo.toml.
+LegalCopyright = "Copyright (C) 2026 NERVDESK and contributors. Based on RustDesk, Copyright (C) Purslane Tech Pte. Ltd. and contributors. Licensed under AGPLv3."
 ProductName = "NERV Desk"
 FileDescription = "NERV Desk Remote Desktop"
 OriginalFilename = "nervdesk.exe"
