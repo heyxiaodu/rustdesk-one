@@ -91,7 +91,7 @@ class CursorShape {
   });
 }
 
-class RustdeskImpl {
+class NervdeskImpl {
   // The core answers through the callback, before callMethod returns.
   Future<CursorShape?> sessionGetCursorShape(
       {required UuidValue sessionId, required String id, dynamic hint}) {
