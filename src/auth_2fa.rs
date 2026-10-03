@@ -14,7 +14,13 @@ lazy_static::lazy_static! {
     static ref CURRENT_2FA: Mutex<Option<(TOTPInfo, TOTP)>> = Mutex::new(None);
 }
 
-const ISSUER: &str = "RustDesk";
+fn issuer() -> String {
+    // 剥掉 ':'：APP_NAME 运行期可被 custom-client 配置改写（src/common.rs:2551-2554），
+    // 而 totp-rs 5.5.1 的 TOTP::new 对含 ':' 的 issuer 直接返回 Err
+    //（totp-rs-5.5.1/src/lib.rs:285-287，doc 见同文件 :271），届时 new_totp() 失败、
+    // 2FA 二维码取不到 otpauth:// URL；剥离后该 URL 始终可生成。
+    crate::get_app_name().replace(':', "")
+}
 const TAG_LOGIN: &str = "Connection";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -33,7 +39,7 @@ impl TOTPInfo {
             1,
             30,
             self.secret.clone(),
-            Some(format!("{} {}", ISSUER, TAG_LOGIN)),
+            Some(format!("{} {}", issuer(), TAG_LOGIN)),
             self.name.clone(),
         )?;
         Ok(totp)
