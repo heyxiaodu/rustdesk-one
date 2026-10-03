@@ -23,6 +23,12 @@
 		     custom action takes it as the second field and appends " Service". -->
 		<CustomAction Id="CreateStartService.SetParam" Return="check" Property="CreateStartService" Value="$(var.ProductExeName);$(var.Product);&quot;[INSTALLFOLDER_INNER]$(var.ProductExeName).exe&quot; --service" />
 		<CustomAction Id="TryStopDeleteService.SetParam" Return="check" Property="TryStopDeleteService" Value="$(var.ProductExeName)" />
+		<!-- The legacy RustDesk service name is an SCM name, not a path: upstream
+		     registered its service as "RustDesk", and this fork used that name until
+		     b516db1d3. The SCM compares names case-insensitively, so the action probes the
+		     lowercase spelling too. Past that first name, only the executable base name is
+		     passed in, so one build serves every custom client. -->
+		<CustomAction Id="TryTakeoverLegacyService.SetParam" Return="check" Property="TryTakeoverLegacyService" Value="$(var.ProductExeName)" />
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
 		<CustomAction Id="LaunchAppTray" ExeCommand=" --tray" Return="asyncNoWait" FileRef="App.exe" />
@@ -54,6 +60,14 @@
 			<Custom Action="SetPropertyServiceStop.SetParam.ConfigFile" Before="SetPropertyServiceStop" Condition="NOT Installed" />
 			<Custom Action="SetPropertyServiceStop.SetParam.ConfigKey" Before="SetPropertyServiceStop" Condition="NOT Installed" />
 			<Custom Action="SetPropertyServiceStop.SetParam.PropertyName" Before="SetPropertyServiceStop" Condition="NOT Installed" />
+
+			<!-- Take over the legacy RustDesk service name before creating ours, so an older
+			     service cannot keep holding ports 21116-21119 and the IPC pipe. This runs only in
+			     the cases below, so neither an uninstall nor an outgoing-only client touches
+			     another installation. The action stops and deletes the legacy service solely
+			     when it is registered and its binary path is one of our own executables. -->
+			<Custom Action="TryTakeoverLegacyService.SetParam" Before="TryTakeoverLegacyService" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
+			<Custom Action="TryTakeoverLegacyService" Before="CreateStartService" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
 
 			<!-- Do not call CreateStartService if is uninstalling. -->
 			<!-- (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) means uninstalling. -->

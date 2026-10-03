@@ -1853,9 +1853,13 @@ fn get_before_uninstall(kill_self: bool) -> String {
     reg delete HKEY_CLASSES_ROOT\\.{file_ext} /f
     reg delete HKEY_CLASSES_ROOT\\{scheme} /f
     netsh advfirewall firewall delete rule name=\"{app_name} Service\"
+    {legacy_service}
     ",
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
         service_name = service_name(),
+        // Also reachable from `get_uninstall`, which is a full removal: report
+        // the legacy service instead of removing it.
+        legacy_service = legacy_service_commands("uninstall", false),
     )
 }
 
@@ -3346,11 +3350,15 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {exe_name}.exe{filter}
+    {legacy_service}
     ",
         app_name = crate::get_app_name(),
         exe_name = hbb_common::config::APP_NAME_IDENT,
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
         service_name = service_name(),
+        // Uninstalling the service must not remove a service that an upstream
+        // RustDesk installation still uses, so this path only reports.
+        legacy_service = legacy_service_commands("uninstall_service", false),
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
         Config::set_option("stop-service".into(), "".into());
@@ -4021,13 +4029,174 @@ if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{ap
 ", app_name = crate::get_app_name())
     } else {
         let exe = escape_nested_cmd_ampersands(exe);
+        // Take the legacy `RustDesk` service name over before creating ours, so
+        // the machine keeps one background service under one name. The named pipe
+        // is not a reason for this: `ipc_path` builds the pipe name from
+        // `APP_NAME` (`libs/hbb_common/src/config.rs:856-866`), so ours is
+        // `\\.\pipe\NERV Desk\query*` and upstream's is
+        // `\\.\pipe\RustDesk\query*` - different names, no clash. The port is a
+        // conditional reason: `direct_server()` listens on the direct-access port
+        // only while `OPTION_DIRECT_SERVER` is enabled
+        // (`src/rendezvous_mediator.rs:1354-1364`; the port is `RENDEZVOUS_PORT + 2`
+        // = 21118, `libs/hbb_common/src/config.rs:134`), and a failed bind is
+        // logged and retried rather than treated as fatal
+        // (`src/rendezvous_mediator.rs:1372-1385`).
         format!("
+{legacy_service}
 sc create \"{service_name}\" binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
 sc start \"{service_name}\"
 ",
+    legacy_service = legacy_service_commands("install", true),
     app_name = crate::get_app_name(),
     service_name = service_name())
     }
+}
+
+/// SCM name that upstream RustDesk used when it registered its background
+/// service, and that every build of this fork kept using until `b516db1d3`
+/// switched the service name to `APP_NAME_IDENT` (`nervdesk`).
+///
+/// Evidence: `analysis/build-env/round8-legacy-service-recon.md` §9 - the
+/// upstream app-side template (`sc create {app_name}` with `APP_NAME` set to
+/// `RustDesk`) and upstream's MSI, which keys the service name on the product
+/// name in every generation of the package. See that file for the git history.
+///
+/// The window in which `APP_NAME` was already `NERV Desk` (submodule pin
+/// `860ee4f5`, 2026-10-01 07:51) left no residue either: those builds ran
+/// `validate_install_app_name(&crate::get_app_name())` as the first statement of
+/// `installer_handoff::run_cmds`, which rejects anything outside
+/// `[a-zA-Z0-9-]+` (`src/platform/windows.rs:143-152`), so the handoff returned
+/// an error before running a single command and no service of theirs was ever
+/// registered. That last step is UNVERIFIED (F10 in the report): it can only be
+/// confirmed on a real machine. Taking the name `RustDesk` over stays correct.
+const LEGACY_SERVICE_NAME: &str = "RustDesk";
+
+/// Executable name patterns that a service registered under
+/// [`LEGACY_SERVICE_NAME`] must contain in its `BINARY_PATH_NAME` before we treat
+/// it as ours. Upstream installs `RustDesk.exe`; this fork installs
+/// `nervdesk.exe`. The leading backslash anchors the match, so an unrelated
+/// `RuntimeBroker_rustdesk.exe` or `notrustdesk.exe` is not matched.
+///
+/// Historical names - extend, never derive/replace: this list is hard-coded on
+/// purpose, because deriving it from the current identifier would silently drop
+/// the names of the builds that are already installed.
+const LEGACY_SERVICE_EXES: [&str; 2] = [r"\rustdesk.exe", r"\nervdesk.exe"];
+
+/// Log file that [`legacy_service_commands`] appends its evidence to.
+///
+/// The handoff script runs hidden on the install path and on the service
+/// uninstall path (`installer_shell::run_elevated_and_wait` passes `SW_HIDE`
+/// when `show == false`), so `echo` alone would leave no trace there. `%TEMP%`
+/// is inherited by the elevated `cmd.exe` and needs no `md`.
+const LEGACY_SERVICE_LOG: &str = r"%TEMP%\nervdesk_legacy_service.log";
+
+/// Commands that take over a service registered under the legacy SCM name by an
+/// older build of this fork or by upstream RustDesk.
+///
+/// The takeover is deliberately conservative: the legacy service is stopped and
+/// deleted only when **both** the SCM name and its `BINARY_PATH_NAME` point at
+/// one of our own executables ([`LEGACY_SERVICE_EXES`]). A service that only
+/// reuses the name but runs another image - a user-created service, or another
+/// product - is logged and left alone.
+///
+/// `take_over == false` (both uninstall paths) reports the same three branches
+/// but never stops or deletes anything: uninstalling NERV Desk must not remove a
+/// service that an upstream RustDesk installation still uses.
+///
+/// Shape of the generated commands, and why:
+/// - the handoff script runs with `setlocal EnableExtensions
+///   DisableDelayedExpansion`, so `!var!` is never used and every variable is
+///   read on a line of its own, after the line that assigned it;
+/// - every decision is a single command per line (`||`, `&&`, `if errorlevel`),
+///   so no parenthesised group reads a variable that it also assigned, and
+///   `goto` labels carry `tag` so two copies in one script stay correct;
+/// - the `findstr` probes always pass `/l`, so a pattern such as `\rustdesk.exe`
+///   is matched literally: as a regular expression its `.` would also accept
+///   `\rustdeskXexe`, which would send a foreign service down the takeover path;
+/// - the script ends with `exit /b 0`, which swallows the exit code of every
+///   command above it, so each branch reports itself into the log instead of
+///   relying on an error level.
+fn legacy_service_commands(tag: &str, take_over: bool) -> String {
+    // Stamp every line of one call with the same local timestamp, in the same
+    // `%Y-%m-%d %H:%M:%S` form that the MSI custom action writes with
+    // `GetLocalTime`. The batch `echo` date/time variables expand per locale,
+    // which would make the two records of one takeover event impossible to
+    // compare or order. The text contains only digits, `-`, `:`, a space and the
+    // surrounding brackets, so it stays safe inside `echo` under
+    // `DisableDelayedExpansion`.
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let owned = if take_over {
+        format!(
+            "
+    echo [NERV Desk] legacy service \"{name}\" runs our executable: stopping and deleting it.
+    for /f \"delims=\" %%i in ('sc qc \"{name}\" 2^>^&1 ^| findstr /i /l /c:\"BINARY_PATH_NAME\"') do >> \"{log}\" echo [{stamp}] service={name} imagepath=%%i action=owned rc=n/a
+    sc stop \"{name}\" >nul 2>&1
+    if errorlevel 1 (set \"ND_LSVC_RC=nonzero\") else (set \"ND_LSVC_RC=0\")
+    >> \"{log}\" echo [{stamp}] service={name} action=sc_stop rc=%ND_LSVC_RC%
+    sc delete \"{name}\" >nul 2>&1
+    if errorlevel 1 (set \"ND_LSVC_RC=nonzero\") else (set \"ND_LSVC_RC=0\")
+    >> \"{log}\" echo [{stamp}] service={name} action=sc_delete rc=%ND_LSVC_RC%
+    sc query \"{name}\" >nul 2>&1
+    if errorlevel 1 goto :nd_legacy_{tag}_gone
+    echo [NERV Desk] WARNING: legacy service \"{name}\" is still registered after sc delete.
+    >> \"{log}\" echo [{stamp}] service={name} legacy_action=stopped_deleted_with_residue
+    goto :nd_legacy_{tag}_done
+:nd_legacy_{tag}_gone
+    >> \"{log}\" echo [{stamp}] service={name} legacy_action=stopped_deleted
+    goto :nd_legacy_{tag}_done",
+            name = LEGACY_SERVICE_NAME,
+            log = LEGACY_SERVICE_LOG,
+            tag = tag,
+            stamp = stamp,
+        )
+    } else {
+        format!(
+            "
+    echo [NERV Desk] legacy service \"{name}\" runs our executable; uninstall reports it and keeps it.
+    for /f \"delims=\" %%i in ('sc qc \"{name}\" 2^>^&1 ^| findstr /i /l /c:\"BINARY_PATH_NAME\"') do >> \"{log}\" echo [{stamp}] service={name} imagepath=%%i action=kept rc=n/a
+    >> \"{log}\" echo [{stamp}] service={name} legacy_action=skipped:uninstall_reports_only
+    goto :nd_legacy_{tag}_done",
+            name = LEGACY_SERVICE_NAME,
+            log = LEGACY_SERVICE_LOG,
+            tag = tag,
+            stamp = stamp,
+        )
+    };
+    format!(
+        "
+    rem Take over the SCM name that upstream RustDesk and this fork's builds up to
+    rem b516db1d3 registered for their service ({decided} mode). The service is
+    rem stopped and deleted only when its BINARY_PATH_NAME is one of our own
+    rem executables; anything else is reported and left untouched.
+    set \"ND_LSVC_NAME={name}\"
+    set \"ND_LSVC_LOG={log}\"
+    sc query \"%ND_LSVC_NAME%\" >nul 2>&1
+    if errorlevel 1 goto :nd_legacy_{tag}_absent
+    sc qc \"%ND_LSVC_NAME%\" 2>&1 | findstr /i /l /c:\"{exe_upstream}\" >nul 2>&1
+    if not errorlevel 1 goto :nd_legacy_{tag}_owned
+    sc qc \"%ND_LSVC_NAME%\" 2>&1 | findstr /i /l /c:\"{exe_this_fork}\" >nul 2>&1
+    if not errorlevel 1 goto :nd_legacy_{tag}_owned
+    echo [NERV Desk] legacy service \"%ND_LSVC_NAME%\" exists but runs a foreign image: kept untouched.
+    for /f \"delims=\" %%i in ('sc qc \"%ND_LSVC_NAME%\" 2^>^&1 ^| findstr /i /l /c:\"BINARY_PATH_NAME\"') do >> \"%ND_LSVC_LOG%\" echo [{stamp}] service=%ND_LSVC_NAME% imagepath=%%i action=kept rc=n/a
+    >> \"%ND_LSVC_LOG%\" echo [{stamp}] service=%ND_LSVC_NAME% legacy_action=skipped:foreign_image
+    goto :nd_legacy_{tag}_done
+:nd_legacy_{tag}_absent
+    echo [NERV Desk] no legacy service \"%ND_LSVC_NAME%\" is registered.
+    >> \"%ND_LSVC_LOG%\" echo [{stamp}] service=%ND_LSVC_NAME% legacy_action=none
+    goto :nd_legacy_{tag}_done
+:nd_legacy_{tag}_owned
+    {owned}
+:nd_legacy_{tag}_done
+    ",
+        decided = if take_over { "take over" } else { "report" },
+        owned = owned,
+        name = LEGACY_SERVICE_NAME,
+        log = LEGACY_SERVICE_LOG,
+        exe_upstream = LEGACY_SERVICE_EXES[0],
+        exe_this_fork = LEGACY_SERVICE_EXES[1],
+        tag = tag,
+        stamp = stamp,
+    )
 }
 
 fn run_after_run_cmds(silent: bool) {
@@ -4957,6 +5126,17 @@ mod tests {
                 "unsafe display name was accepted: {display_name}"
             );
         }
+    }
+
+    #[test]
+    fn legacy_service_exes_list_the_current_identifier() {
+        // The list may only be extended (see its doc comment): its newest entry
+        // has to stay the identifier this build installs, otherwise a rename
+        // would silently stop matching the service the previous build created.
+        assert_eq!(
+            LEGACY_SERVICE_EXES[1],
+            format!(r"\{}", hbb_common::config::APP_NAME_IDENT) + ".exe"
+        );
     }
 
     #[test]

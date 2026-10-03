@@ -1113,3 +1113,270 @@ LExit:
     er = SUCCEEDED(hr) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
     return WcaFinalize(er);
 }
+
+// ---------------------------------------------------------------------------
+// Legacy service takeover (the upstream RustDesk service name).
+//
+// Upstream RustDesk - and every build of this fork up to b516db1d3 - registered
+// its background service under the SCM name "RustDesk": the application used
+// `crate::get_app_name()` (which was "RustDesk") in its `sc create` template, and
+// every generation of the upstream MSI keyed the service name on the product
+// name. An MSI that only created "nervdesk" would leave that service running,
+// holding ports 21116-21119 and the IPC pipe, so the takeover runs before
+// CreateStartService.
+//
+// It is deliberately conservative: the legacy service is stopped and deleted only
+// when its binary path is one of our own executables. A service that merely
+// reuses the name but runs a foreign image (a user-created service, another
+// product) is reported and left untouched.
+//
+// The application performs the same takeover from its handoff script; this action
+// covers the package path, where the MSI registers the service itself. It runs as
+// SYSTEM (`Impersonate="no"`), so the resolved "%TEMP%" below is the SYSTEM
+// account's temp directory and not the installing user's. Both writers end their
+// last line with `legacy_action=`, so a single grep covers this log and the app's.
+// See analysis/build-env/round8-legacy-service-recon.md.
+// ---------------------------------------------------------------------------
+static const wchar_t* LEGACY_SERVICE_NAME = L"RustDesk";
+static const wchar_t* LEGACY_SERVICE_LOG = L"%TEMP%\\nervdesk_legacy_service.log";
+
+static std::wstring LegacyServiceTimestamp()
+{
+    SYSTEMTIME st;
+    wchar_t buf[40] = { 0 };
+    GetLocalTime(&st);
+    StringCchPrintfW(buf, _countof(buf), L"[%04d-%02d-%02d %02d:%02d:%02d]",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return std::wstring(buf);
+}
+
+// Same field shape as the app-side log, written as UTF-8 without a BOM (cmd's
+// `echo` under `chcp 65001` writes UTF-8 as well).
+static void LogLegacyService(const wchar_t* action, const wchar_t* rc,
+    const std::wstring& imagePath, const wchar_t* legacyAction)
+{
+    std::wstring line = LegacyServiceTimestamp() + L" service=" + LEGACY_SERVICE_NAME;
+    if (!imagePath.empty()) {
+        line += L" imagepath=" + imagePath;
+    }
+    line += std::wstring(L" action=") + action + L" rc=" + rc;
+    if (legacyAction != NULL && legacyAction[0] != L'\0') {
+        line += std::wstring(L" legacy_action=") + legacyAction;
+    }
+    line += L" tool=msi_ca\r\n";
+
+    wchar_t szPath[500] = { 0 };
+    if (0 == ExpandEnvironmentStringsW(LEGACY_SERVICE_LOG, szPath, _countof(szPath))) {
+        WcaLog(LOGMSG_STANDARD, "Failed to expand the legacy service log path: 0x%02X.", GetLastError());
+        return;
+    }
+    HANDLE hFile = CreateFileW(szPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        WcaLog(LOGMSG_STANDARD, "Failed to open '%ls': 0x%02X.", szPath, GetLastError());
+        return;
+    }
+    int needed = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), NULL, 0, NULL, NULL);
+    if (needed > 0) {
+        std::string utf8((size_t)needed, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), &utf8[0], needed, NULL, NULL);
+        DWORD written = 0;
+        WriteFile(hFile, utf8.data(), (DWORD)utf8.size(), &written, NULL);
+    }
+    CloseHandle(hFile);
+}
+
+UINT __stdcall TryTakeoverLegacyService(
+    __in MSIHANDLE hInstall)
+{
+    HRESULT hr = S_OK;
+    DWORD er = ERROR_SUCCESS;
+
+    LPWSTR pwzData = NULL;
+    LPWSTR pwz = NULL;
+    LPWSTR exeName = NULL;
+    DWORD lastError = 0;
+    std::wstring ourExeSuffix;
+    std::wstring legacyName;
+    std::wstring imagePath;
+    SC_HANDLE schSCManager = NULL;
+    SC_HANDLE schService = NULL;
+    LPQUERY_SERVICE_CONFIGW pConfig = NULL;
+    DWORD cbNeeded = 0;
+    SERVICE_STATUS_PROCESS svcStatus = {};
+    const wchar_t* spellings[2] = { LEGACY_SERVICE_NAME, L"rustdesk" };
+
+    hr = WcaInitialize(hInstall, "TryTakeoverLegacyService");
+    ExitOnFailure(hr, "Failed to initialize");
+
+    hr = WcaGetProperty(L"CustomActionData", &pwzData);
+    ExitOnFailure(hr, "failed to get CustomActionData");
+
+    if (pwzData == NULL || pwzData[0] == L'\0') {
+        WcaLog(LOGMSG_STANDARD, "No executable base name was passed in; skipping the legacy service takeover.");
+        LogLegacyService(L"none", L"n/a", L"", L"skipped:no_data");
+        goto LExit;
+    }
+
+    pwz = pwzData;
+    hr = WcaReadStringFromCaData(&pwz, &exeName);
+    ExitOnFailure(hr, "failed to read the executable base name from custom action data: %ls", pwz);
+
+    ourExeSuffix = std::wstring(L"\\") + exeName + L".exe";
+    WcaLog(LOGMSG_STANDARD, "Looking for a legacy service \"%ls\" running \"%ls\".", LEGACY_SERVICE_NAME, ourExeSuffix.c_str());
+
+    schSCManager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    if (schSCManager == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to open the service control manager: 0x%02X.", GetLastError());
+        LogLegacyService(L"open_scm_failed", L"error", L"", L"skipped:scm_unavailable");
+        goto LExit;
+    }
+
+    // The SCM compares service names case-insensitively, so the second spelling is
+    // only an insurance probe: the loop stops at the first name that resolves, which
+    // keeps it from ever acting twice on the same service.
+    for (int i = 0; i < 2; i++) {
+        schService = OpenServiceW(schSCManager, spellings[i], SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG);
+        if (schService != NULL) {
+            legacyName = spellings[i];
+            break;
+        }
+        lastError = GetLastError();
+        if (lastError != ERROR_SERVICE_DOES_NOT_EXIST) {
+            wchar_t buf[32] = { 0 };
+            StringCchPrintfW(buf, _countof(buf), L"0x%08X", lastError);
+            WcaLog(LOGMSG_STANDARD, "Failed to open the legacy service \"%ls\": 0x%08X.", spellings[i], lastError);
+            LogLegacyService(L"open_failed", buf, L"", L"skipped:service_open_failed");
+            goto LExit;
+        }
+    }
+
+    if (schService == NULL) {
+        WcaLog(LOGMSG_STANDARD, "No legacy service \"%ls\" is registered.", LEGACY_SERVICE_NAME);
+        LogLegacyService(L"none", L"n/a", L"", L"none");
+        goto LExit;
+    }
+
+    QueryServiceConfigW(schService, NULL, 0, &cbNeeded);
+    if (cbNeeded < sizeof(QUERY_SERVICE_CONFIGW)) {
+        lastError = GetLastError();
+        wchar_t buf[32] = { 0 };
+        StringCchPrintfW(buf, _countof(buf), L"0x%08X", lastError);
+        WcaLog(LOGMSG_STANDARD, "Failed to size the configuration of service \"%ls\": 0x%08X.", legacyName.c_str(), lastError);
+        LogLegacyService(L"query_config_failed", buf, L"", L"skipped:query_config_failed");
+        goto LExit;
+    }
+
+    pConfig = (LPQUERY_SERVICE_CONFIGW)LocalAlloc(LPTR, cbNeeded);
+    if (pConfig == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to allocate %lu bytes.", cbNeeded);
+        LogLegacyService(L"alloc_failed", L"error", L"", L"skipped:out_of_memory");
+        goto LExit;
+    }
+
+    if (!QueryServiceConfigW(schService, pConfig, cbNeeded, &cbNeeded)) {
+        lastError = GetLastError();
+        wchar_t buf[32] = { 0 };
+        StringCchPrintfW(buf, _countof(buf), L"0x%08X", lastError);
+        WcaLog(LOGMSG_STANDARD, "Failed to query the configuration of service \"%ls\": 0x%08X.", legacyName.c_str(), lastError);
+        LogLegacyService(L"query_config_failed", buf, L"", L"skipped:query_config_failed");
+        goto LExit;
+    }
+    if (pConfig->lpBinaryPathName != NULL) {
+        imagePath = pConfig->lpBinaryPathName;
+    }
+    WcaLog(LOGMSG_STANDARD, "Legacy service \"%ls\" image path: \"%ls\".", legacyName.c_str(), imagePath.c_str());
+
+    // Only a binary path pointing at upstream's or at our own executable is ours to
+    // remove; the leading backslash keeps "\RuntimeBroker_rustdesk.exe" out.
+    if (NULL == StrStrIW(imagePath.c_str(), L"\\rustdesk.exe")
+        && NULL == StrStrIW(imagePath.c_str(), ourExeSuffix.c_str())) {
+        WcaLog(LOGMSG_STANDARD, "Legacy service \"%ls\" runs a foreign image; kept untouched.", legacyName.c_str());
+        LogLegacyService(L"kept", L"n/a", imagePath, L"skipped:foreign_image");
+        goto LExit;
+    }
+
+    if (MyStopServiceW(legacyName.c_str())) {
+        for (int i = 0; i < 10; i++) {
+            if (IsServiceRunningW(legacyName.c_str())) {
+                Sleep(100);
+            }
+            else {
+                break;
+            }
+        }
+    }
+    else {
+        WcaLog(LOGMSG_STANDARD, "Failed to stop service: \"%ls\", error: 0x%02X.", legacyName.c_str(), GetLastError());
+    }
+    LogLegacyService(L"sc_stop", IsServiceRunningW(legacyName.c_str()) ? L"nonzero" : L"0", imagePath, L"");
+
+    if (MyDeleteServiceW(legacyName.c_str())) {
+        LogLegacyService(L"sc_delete", L"0", L"", L"");
+    }
+    else {
+        lastError = GetLastError();
+        wchar_t buf[32] = { 0 };
+        StringCchPrintfW(buf, _countof(buf), L"0x%08X", lastError);
+        WcaLog(LOGMSG_STANDARD, "Failed to delete service: \"%ls\", error: 0x%02X.", legacyName.c_str(), lastError);
+        LogLegacyService(L"sc_delete", buf, L"", L"");
+    }
+
+    // Our own handle keeps the service object alive after `DeleteService` (the SCM
+    // removes the service once the last handle to it is closed), so close it before
+    // deciding whether the removal actually happened.
+    if (schService != NULL) {
+        CloseServiceHandle(schService);
+        schService = NULL;
+    }
+
+    // `QueryServiceStatusExW` cannot tell "the service is gone" from "the query
+    // itself failed", and a removal that cannot be verified must not be reported as
+    // a clean one: absence is claimed only when an explicit open, with the last
+    // handle already closed, reports `ERROR_SERVICE_DOES_NOT_EXIST`. A service that
+    // is merely marked for deletion answers `ERROR_SERVICE_MARKED_FOR_DELETE` for a
+    // moment, hence the bounded retry.
+    bool removed = false;
+    if (!QueryServiceStatusExW(legacyName.c_str(), &svcStatus)) {
+        for (int i = 0; i < 10; i++) {
+            SC_HANDLE schProbe = OpenServiceW(schSCManager, legacyName.c_str(), SERVICE_QUERY_STATUS);
+            if (schProbe == NULL) {
+                if (GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST) {
+                    removed = true;
+                }
+            }
+            else {
+                CloseServiceHandle(schProbe);
+            }
+            if (removed) {
+                break;
+            }
+            Sleep(100);
+        }
+    }
+    if (!removed) {
+        WcaLog(LOGMSG_STANDARD, "Could not verify that legacy service \"%ls\" is gone after sc delete (the query failed or the service is still registered); reporting residue.", legacyName.c_str());
+        LogLegacyService(L"none", L"n/a", L"", L"stopped_deleted_with_residue");
+    }
+    else {
+        WcaLog(LOGMSG_STANDARD, "Legacy service \"%ls\" is stopped and deleted.", legacyName.c_str());
+        LogLegacyService(L"none", L"n/a", L"", L"stopped_deleted");
+    }
+
+LExit:
+    if (pConfig) {
+        LocalFree(pConfig);
+    }
+    if (schService) {
+        CloseServiceHandle(schService);
+    }
+    if (schSCManager) {
+        CloseServiceHandle(schSCManager);
+    }
+    if (pwzData) {
+        ReleaseStr(pwzData);
+    }
+
+    er = SUCCEEDED(hr) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    return WcaFinalize(er);
+}

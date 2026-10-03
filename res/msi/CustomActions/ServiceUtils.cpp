@@ -169,7 +169,10 @@ bool QueryServiceStatusExW(LPCWSTR serviceName, SERVICE_STATUS_PROCESS* status)
 
 bool IsServiceRunningW(LPCWSTR serviceName)
 {
-    SERVICE_STATUS_PROCESS serviceStatus;
+    // Zero-initialised on purpose: a failed query must not leave `dwCurrentState`
+    // holding stack garbage, which could report a service as running - or as
+    // stopped - without any basis.
+    SERVICE_STATUS_PROCESS serviceStatus = {};
     QueryServiceStatusExW(serviceName, &serviceStatus);
     return (serviceStatus.dwCurrentState == SERVICE_RUNNING);
 }
