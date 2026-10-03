@@ -507,6 +507,10 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     LPWSTR svcName = NULL;
     LPWSTR svcDisplayName = NULL;
     LPWSTR svcBinary = NULL;
+    // Declared here rather than at the point of use: a `goto LExit` sits above
+    // that point, and jumping over an initialization is ill-formed C++ (MSVC
+    // reports C2362; observed in CI run 37093052194, step "Build msi").
+    LPWSTR pDisplaySeparator = NULL;
     wchar_t szSvcDisplayName[500] = { 0 };
     DWORD cchSvcDisplayName = sizeof(szSvcDisplayName) / sizeof(szSvcDisplayName[0]);
 
@@ -539,7 +543,7 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     // "<service name> Service" is kept, so older callers keep working. The binary
     // is the LAST field, so the display name is the field just before it and the
     // binary keeps the remainder.
-    LPWSTR pDisplaySeparator = wcschr(svcBinary, L';');
+    pDisplaySeparator = wcschr(svcBinary, L';');
     if (pDisplaySeparator != NULL) {
         pDisplaySeparator[0] = L'\0';
         svcDisplayName = svcBinary;
@@ -1204,6 +1208,9 @@ UINT __stdcall TryTakeoverLegacyService(
     LPQUERY_SERVICE_CONFIGW pConfig = NULL;
     DWORD cbNeeded = 0;
     SERVICE_STATUS_PROCESS svcStatus = {};
+    // Same C2362 reason as in CreateStartService: assigned further down, past
+    // several `goto LExit` statements.
+    bool removed = false;
     const wchar_t* spellings[2] = { LEGACY_SERVICE_NAME, L"rustdesk" };
 
     hr = WcaInitialize(hInstall, "TryTakeoverLegacyService");
@@ -1336,7 +1343,6 @@ UINT __stdcall TryTakeoverLegacyService(
     // handle already closed, reports `ERROR_SERVICE_DOES_NOT_EXIST`. A service that
     // is merely marked for deletion answers `ERROR_SERVICE_MARKED_FOR_DELETE` for a
     // moment, hence the bounded retry.
-    bool removed = false;
     if (!QueryServiceStatusExW(legacyName.c_str(), &svcStatus)) {
         for (int i = 0; i < 10; i++) {
             SC_HANDLE schProbe = OpenServiceW(schSCManager, legacyName.c_str(), SERVICE_QUERY_STATUS);
