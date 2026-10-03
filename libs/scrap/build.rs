@@ -11,11 +11,16 @@ use std::{
 // panics on non-macos-aarch64 hosts without VCPKG_ROOT. This breaks
 // `cargo check --target=x86_64-pc-windows-msvc` from a Linux host.
 //
-// When libs/scrap/generated/{name}_ffi.rs exists, we skip find_package +
-// bindgen + link_vcpkg and copy the pre-generated file to OUT_DIR. Link
-// directives are also skipped (the actual native libs will be linked at
-// runtime on Windows via vcpkg in production; for `cargo check`, no
-// linker is invoked).
+// When libs/scrap/generated/{name}_ffi.rs exists, we skip bindgen and copy the
+// pre-generated file to OUT_DIR. Link directives are NOT skipped; they are
+// emitted per target, so every build environment gets what it needs:
+//   * windows-msvc + NERV_LIB<NAME>_DIR  -> our cross build: search path only
+//     (the cross-built .lib is appended as a positional arg by link.sh);
+//   * windows-msvc without NERV_* but with VCPKG_ROOT -> a native Windows / CI
+//     build, which is handed over to the upstream vcpkg path (find_package ->
+//     link_vcpkg), emitting `rustc-link-lib=static=<lib>` + the
+//     `<VCPKG_ROOT>/installed/<triplet>-windows-static/lib` search path;
+//   * linux host -> link the system library by name.
 //
 // To re-generate the bindings on a different host:
 //   bindgen --rust-target 1.75 --rustified-enum "^.*" \
@@ -72,6 +77,23 @@ fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>
         println!("cargo:rerun-if-env-changed={}", env_var);
         if let Ok(lib_dir) = env::var(&env_var) {
             println!("cargo:rustc-link-search={}", lib_dir);
+        } else if nervdesk_delegate_to_vcpkg() {
+            // nervdesk: not our cross build (no NERV_LIB<NAME>_DIR), but a
+            // native Windows / CI build where vcpkg is available. Hand the
+            // package over to the upstream vcpkg path, which emits both the
+            // `rustc-link-lib=static=` directive and the
+            // `<VCPKG_ROOT>/installed/<triplet>-windows-static/lib` search
+            // path. Bailing out here instead leaves a native Windows build with
+            // no link directive at all.
+            return Some(find_package(name));
+        } else {
+            // nervdesk: keep the previous behaviour (no link directive) rather
+            // than risk find_package's link_homebrew_m1 panic, which fires on
+            // every non-macos-aarch64 host without VCPKG_ROOT.
+            println!(
+                "cargo:warning=nervdesk scrap stub: neither {} nor VCPKG_ROOT is set; emitting no link directive for {}",
+                env_var, name
+            );
         }
     } else if target_os == "linux" {
         // nervdesk: on a Linux host this pre-generated branch short-circuits
@@ -86,10 +108,22 @@ fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>
         let short = name.trim_start_matches("lib");
         println!("cargo:rustc-link-lib={}", short);
     }
-    // Return empty include paths; bindgen is skipped. For real Windows hosts
-    // with VCPKG_ROOT set the proper vcpkg-based link path is used (these
-    // crates' build.rs will run with VCPKG_ROOT set and call find_package).
+    // bindgen is skipped, so include paths are only needed by the native-vcpkg
+    // hand-over above, which returns find_package()'s paths directly.
     Some(Vec::new())
+}
+
+// nervdesk: delegate to the upstream vcpkg path only when a windows-msvc build
+// is driven WITHOUT our cross-build environment variables and vcpkg is present.
+// Both extra conditions matter:
+//   * without VCPKG_ROOT, find_package() falls through to link_homebrew_m1(),
+//     which panics on every non-macos-aarch64 host;
+//   * with the `linux-pkg-config` feature enabled, find_package() takes the
+//     pkg_config branch (host probing) and would emit host directives for an
+//     msvc target.
+// In both cases the previous behaviour (warning + no link directive) is kept.
+fn nervdesk_delegate_to_vcpkg() -> bool {
+    env::var("VCPKG_ROOT").is_ok() && !cfg!(all(target_os = "linux", feature = "linux-pkg-config"))
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-pkg-config"))]
@@ -333,11 +367,13 @@ fn main() {
     env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
 
     // NERV Desk: when the corresponding libs/scrap/generated/{name}_ffi.rs
-    // exists (committed for cross-build from non-Windows hosts), use it
-    // instead of running bindgen + vcpkg. The pre-generated file is
-    // type-checked by rustc during `cargo check`; link directives are
-    // intentionally omitted (cargo check does not link, and a real Windows
-    // build will use VCPKG_ROOT to find the actual .lib files).
+    // exists (committed for cross-build from non-Windows hosts), bindgen is
+    // skipped and the pre-generated, rustc-type-checked file is copied to
+    // OUT_DIR. Link directives are NOT omitted: nervdesk_try_pregenerated
+    // emits them for our windows-msvc cross build (search path only), hands a
+    // native Windows build over to the upstream vcpkg path
+    // (find_package -> link_vcpkg) when VCPKG_ROOT is set, and links the system
+    // library by name on a Linux host.
     fn nervdesk_handle_package(package: &str, ffi_header: &str, generated: &str, regex: &str) {
         if nervdesk_try_pregenerated(package, generated).is_some() {
             return;

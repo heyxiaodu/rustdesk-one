@@ -37,11 +37,22 @@ fn link_vcpkg(mut path: PathBuf, name: &str) -> PathBuf {
     println!("cargo:info={}", target);
     path.push("installed");
     path.push(target);
-    // nervdesk: emit ONLY the search path. Do NOT emit `rustc-link-lib=static=opus`
-    // because rustc would then decompose opus.lib and embed its .o files into this
-    // crate's rlib. When that rlib is later `--extern`'d by scrap / hbb_common /
-    // rustdesk, the embedded .o files would conflict with the same symbols in
-    // opus.lib (which our cross-built link.sh appends at the final link step).
+    // nervdesk: this function is only reachable from find_package(), i.e. from a
+    // NATIVE build (Windows/CI with VCPKG_ROOT, or the macOS homebrew fallback).
+    // The pregen branch of gen_opus() returns before find_package() is ever
+    // called, so our cross path never gets here and keeps emitting the search
+    // path only: there rustc must not decompose opus.lib and embed its .o files
+    // into this crate's rlib, because link.sh appends the cross-built opus.lib
+    // as a positional arg at the final link step. Emitting the static link
+    // directive here is therefore safe and required for native builds, where
+    // nothing else appends opus.lib.
+    println!(
+        "{}",
+        format!(
+            "cargo:rustc-link-lib=static={}",
+            name.trim_start_matches("lib")
+        )
+    );
     println!(
         "{}",
         format!(
@@ -83,7 +94,10 @@ fn link_homebrew_m1(name: &str) -> PathBuf {
         );
     }
     path.push(directories.pop().unwrap());
-    // nervdesk: emit ONLY the search path (see link_vcpkg comment above).
+    // nervdesk: homebrew fallback is not part of our cross-build path (that one
+    // sets NERV_LIBOPUS_DIR), so only the search path is emitted here; see the
+    // link_vcpkg comment above for why the cross path must not carry a static
+    // link directive.
     // Add the library path.
     println!(
         "{}",
@@ -111,6 +125,17 @@ fn find_package(name: &str) -> Vec<PathBuf> {
         // Try using homebrew
         vec![link_homebrew_m1(name)]
     }
+}
+
+// nervdesk: delegate to the upstream vcpkg path only when a windows-msvc build
+// is driven WITHOUT NERV_LIBOPUS_DIR and vcpkg is present. Without VCPKG_ROOT,
+// find_package() falls through to link_homebrew_m1(), which panics on every
+// non-macos-aarch64 host; with the `linux-pkg-config` feature enabled it would
+// instead probe the host with pkg-config and emit host directives for an msvc
+// target. In both cases the previous behaviour (no link directive) is kept.
+fn nervdesk_delegate_to_vcpkg() -> bool {
+    std::env::var("VCPKG_ROOT").is_ok()
+        && !cfg!(all(target_os = "linux", feature = "linux-pkg-config"))
 }
 
 fn generate_bindings(ffi_header: &Path, include_paths: &[PathBuf], ffi_rs: &Path) {
@@ -173,15 +198,17 @@ fn gen_opus() {
 
         // NERV Desk: emit explicit link directives so the Windows-msvc
         // cross-link can find opus.lib. Without this, the link fails with
-        // "undefined symbol: opus_*" because find_package was skipped.
+        // "undefined symbol: opus_*" because find_package is skipped on the
+        // cross path.
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         if target_os == "windows" {
-            // nervdesk: emit ONLY the search path (no `native=` prefix, which on
-            // cross-compile adds the path to HOST library search instead of TARGET
-            // library search). Do NOT emit `rustc-link-lib=dylib=opus` because
-            // rustc converts `dylib=opus` to `-l opus`, and lld-link then looks for
-            // `opus.lib` in the LIBPATH entries — but on cross-compile to msvc,
-            // rustc's LIBPATH injection may not reach lld-link correctly.
+            // nervdesk: the cross path emits ONLY the search path (no `native=`
+            // prefix, which on cross-compile adds the path to HOST library
+            // search instead of TARGET library search). Do NOT emit
+            // `rustc-link-lib=dylib=opus` because rustc converts `dylib=opus`
+            // to `-l opus`, and lld-link then looks for `opus.lib` in the
+            // LIBPATH entries — but on cross-compile to msvc, rustc's LIBPATH
+            // injection may not reach lld-link correctly.
             //
             // The cross-built opus.lib is appended as a positional arg by link.sh,
             // so the final rustdesk link resolves all opus_* symbols. magnum_opus
@@ -189,15 +216,37 @@ fn gen_opus() {
             if let Ok(p) = env::var("NERV_LIBOPUS_DIR") {
                 println!("cargo:rustc-link-search={}", p);
             } else if let Ok(vcpkg_root) = env::var("VCPKG_INSTALLED_ROOT") {
+                // nervdesk: fork-only arm (upstream magnum-opus has no
+                // VCPKG_INSTALLED_ROOT at all). Emit the static link directive
+                // that belongs with this search path: a prefix directory
+                // without `-l static=opus` fails at link time with
+                // "undefined symbol: opus_*" and no hint pointing here.
+                // The hard-coded dynamic triplet below stays as-is on purpose
+                // (registered as U4 in the task-90 report).
+                println!("cargo:rustc-link-lib=static=opus");
                 println!(
                     "cargo:rustc-link-search={}/x64-windows/lib",
                     vcpkg_root
                 );
-            } else if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
-                println!(
-                    "cargo:rustc-link-search={}/installed/x64-windows/lib",
-                    vcpkg_root
-                );
+            } else if nervdesk_delegate_to_vcpkg() {
+                // nervdesk: a native Windows / CI build (no NERV_LIBOPUS_DIR)
+                // with vcpkg available — hand opus over to the upstream vcpkg
+                // path, which emits both `rustc-link-lib=static=opus` and the
+                // `<VCPKG_ROOT>/installed/<triplet>-windows-static/lib` search
+                // path (triplet derived from CARGO_CFG_TARGET_ARCH, matching
+                // CI's x64-windows-static). This branch previously hard-coded
+                // the dynamic `installed/x64-windows/lib` triplet and emitted
+                // no link directive at all.
+                let _ = find_package("opus");
+            } else {
+                // nervdesk: neither our cross-build variable nor vcpkg is
+                // available. Stay silent rather than warn here: this branch is
+                // also taken by our cross build (cross-msvc.env sets
+                // NERV_LIBAOM_DIR / NERV_LIBVPX_DIR / NERV_LIBYUV_DIR but NOT
+                // NERV_LIBOPUS_DIR — the cross-built opus.lib is appended as a
+                // positional arg by link.sh), so a warning would change the
+                // cross-build build-script output. The card requires the cross
+                // path to stay byte-identical.
             }
         } else if target_os == "linux" || target_os == "macos" || target_os == "freebsd" {
             // nervdesk (m09940): the same early-`return` trap as the other two
