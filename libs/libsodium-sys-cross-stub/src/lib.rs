@@ -17,11 +17,20 @@
 //!
 //! ## Link contract
 //!
-//! build.rs (sibling) reads NERV_SODIUM_LIB_DIR (preferred) or SODIUM_LIB_DIR,
-//! emits `-L native=<dir>/lib -l static=sodium`. The vendored sodium_bindings
-//! declares FFI symbols but does NOT carry `#[link]` attributes, so the
-//! build.rs-emitted link directives are the only path linking against the
-//! prebuilt sodium.lib.
+//! build.rs (sibling) emits `-L native=<dir>`, and the archive it points at is
+//! named `sodium.lib` to match the `#[link(name = "sodium", kind = "static")]`
+//! attributes this fork adds to every extern block in `sodium_bindings.rs`
+//! (605 of them, gated `#[cfg_attr(target_env = "msvc", ...)]`). build.rs
+//! deliberately does *not* emit `-l static=sodium`: that would make rustc
+//! decompose the archive into this crate's rlib, and the same objects appended
+//! again by the cross-build linker wrapper (`scripts/msvc-shim/link.sh`) would
+//! then collide as duplicate symbols. On a non-MSVC target no `#[link]`
+//! attribute remains, so build.rs emits `-l sodium` for the host instead.
+//!
+//! The archive comes from `NERV_SODIUM_LIB_DIR` (preferred) or
+//! `SODIUM_LIB_DIR`. When neither yields one — the native Windows case, where
+//! nothing exports those variables — build.rs falls back to the upstream
+//! prebuilt libsodium shipped in `msvc/` (see `msvc/PROVENANCE.md`).
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
