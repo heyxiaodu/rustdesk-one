@@ -29,7 +29,7 @@
     <application
         android:name=".MainApplication"
         android:icon="@mipmap/ic_launcher"
-        android:label="RustDesk"
+        android:label="NERV Desk"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true">
 
