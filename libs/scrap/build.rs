@@ -107,6 +107,30 @@ fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>
         // there) and keeps using the cross-built .lib search path.
         let short = name.trim_start_matches("lib");
         println!("cargo:rustc-link-lib={}", short);
+    } else if target_os == "macos" || target_os == "ios" {
+        // nervdesk: the same early-`return` trap as the Linux arm above, but for
+        // the Apple targets. Because the pre-generated snapshots
+        // (`generated/{vpx,aom,yuv}_ffi.rs`) make `nervdesk_handle_package()`
+        // return before it can reach `find_package()`, NOTHING emitted
+        // `-lvpx/-laom/-lyuv` and the final link (cdylib + the drm lib test)
+        // failed with:
+        //   Undefined symbols for architecture x86_64/arm64:
+        //     _ABGRToARGB / _ARGBToI420 / _ARGBToI444 / _ARGBToNV12
+        //     _I420ToABGR / _I420ToARGB / _I420ToRAW / _I444ToABGR
+        //     vpx_codec_vp8_dx / aom_codec_av1_dx / FixedDiv_X86 ...
+        // CI installs these through vcpkg (`lukka/run-vcpkg`, triplets
+        // x64-osx / arm64-osx / arm64-ios), so hand the package over to the
+        // upstream vcpkg path — exactly what the non-pre-generated path does.
+        // Without VCPKG_ROOT we keep the previous behaviour (warning, no
+        // directive): find_package() would fall through to link_homebrew_m1(),
+        // which panics on any host that is not macos-aarch64.
+        if nervdesk_delegate_to_vcpkg() {
+            return Some(find_package(name));
+        }
+        println!(
+            "cargo:warning=nervdesk scrap stub: VCPKG_ROOT is not set; emitting no link directive for {} (target_os={})",
+            name, target_os
+        );
     }
     // bindgen is skipped, so include paths are only needed by the native-vcpkg
     // hand-over above, which returns find_package()'s paths directly.

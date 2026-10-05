@@ -160,7 +160,9 @@ impl CapturerGDI {
                 stride,
                 self.width,
                 self.height,
-                180,
+                // NERV Desk: `RotationMode` is the rustified enum again (see
+                // libs/scrap/generated/yuv_ffi.rs); upstream form restored.
+                crate::RotationMode::kRotate180,
             );
             Ok(())
         }

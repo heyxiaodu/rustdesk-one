@@ -248,6 +248,28 @@ fn gen_opus() {
                 // cross-build build-script output. The card requires the cross
                 // path to stay byte-identical.
             }
+        } else if target_os == "ios" {
+            // nervdesk: the Linux/macOS/FreeBSD arm below links the host's
+            // libopus by name, but iOS has no system libopus and this arm was
+            // missing entirely, so the pre-generated branch emitted NO link
+            // directive at all. The iOS link then failed with:
+            //   Undefined symbols for architecture arm64:
+            //     _opus_decode_float / _opus_decoder_create / _opus_decoder_destroy
+            //     _opus_encode_float / _opus_encoder_create / _opus_encoder_destroy
+            //     _opus_strerror
+            // (referenced by libmagnum_opus-*.rlib). CI installs opus through
+            // vcpkg (`lukka/run-vcpkg`, triplet arm64-ios), so use the same
+            // upstream vcpkg hand-over as the windows arm above; without
+            // VCPKG_ROOT, find_package() would fall through to
+            // link_homebrew_m1() (panics on non-macos-aarch64 hosts), so we
+            // warn instead of trying.
+            if nervdesk_delegate_to_vcpkg() {
+                let _ = find_package("opus");
+            } else {
+                println!(
+                    "cargo:warning=nervdesk magnum-opus stub: VCPKG_ROOT is not set; emitting no link directive for opus (target_os=ios)"
+                );
+            }
         } else if target_os == "linux" || target_os == "macos" || target_os == "freebsd" {
             // nervdesk (m09940): the same early-`return` trap as the other two
             // cross-stubs (scrap, libsodium-sys). Because we skip
