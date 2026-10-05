@@ -102,9 +102,26 @@ fn nervdesk_try_pregenerated(name: &str, generated: &str) -> Option<Vec<PathBuf>
         // rustdesk link fails with:
         //   rust-lld: undefined symbol: vpx_codec_vp8_dx / vpx_codec_vp9_dx
         //             aom_codec_av1_dx / aom_codec_av1_cx / FixedDiv_X86 ...
-        // The distro ships libvpx.so / libaom.so / libyuv.so, so link them by
-        // name. The msvc arm above is unaffected (target_os is "windows"
+        // Two environments need two different directives:
+        //   * a distro host (our dev boxes) ships libvpx.so / libaom.so /
+        //     libyuv.so / libopus.so in the default search path, so the bare
+        //     name is enough;
+        //   * the CI `build rustdesk linux drm x86_64` job builds inside a
+        //     bionic run-on-arch container that deliberately installs NO
+        //     libvpx-dev / libaom-dev / libyuv-dev and even removes
+        //     libopus-dev ("we have libopus compiled by us"), so the bare name
+        //     finds nothing and the link dies with
+        //       rust-lld: error: unable to find library -lopus / -lvpx /
+        //                 -laom / -lyuv
+        // There the four libraries exist only in vcpkg
+        // (`VCPKG_ROOT=/opt/artifacts/vcpkg`, `--triplet x64-linux`, whose
+        // pinned triplet sets VCPKG_LIBRARY_LINKAGE static), so hand the
+        // package over to the upstream vcpkg path exactly like the Apple arm
+        // below. The msvc arm above is unaffected (target_os is "windows"
         // there) and keeps using the cross-built .lib search path.
+        if nervdesk_delegate_to_vcpkg() {
+            return Some(find_package(name));
+        }
         let short = name.trim_start_matches("lib");
         println!("cargo:rustc-link-lib={}", short);
     } else if target_os == "macos" || target_os == "ios" {
