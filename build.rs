@@ -87,6 +87,84 @@ fn install_android_deps() {
     println!("cargo:rustc-link-lib=OpenSLES");
 }
 
+// NERV Desk: locate compiler-rt for the iOS link.
+//
+// `-lclang_rt.ios` alone is not enough: rustc drives the Apple link with
+// `-nodefaultlibs`, so clang's driver adds neither compiler-rt nor its
+// resource-dir lib path (observed cc argv: `-lclang_rt.ios` present, no
+// `-L…/usr/lib/clang/<ver>/lib/darwin`, then `ld: library 'clang_rt.ios' not
+// found`). Ask the toolchain instead of guessing, and never emit a search path
+// we cannot confirm:
+//   * if `xcrun` is missing or unusable, do NOT fall back to a bare `clang`
+//     taken from PATH: on a host without Xcode that resolves to a non-Apple
+//     clang (measured here: /usr/bin/clang is llvm-14 and its reported
+//     resource dir /usr/lib/llvm-14/lib/clang/14.0.6/lib/darwin does not
+//     exist), i.e. the link would get a wrong, nonexistent `-L` and no warning.
+//   * if the resolved clang is not an Apple toolchain, or its resource dir has
+//     no `lib/darwin`, warn and emit no search path, so a broken toolchain
+//     fails loudly instead of silently pointing at the wrong directory.
+//
+// Every guard failure prints one stable marker so CI can grep for it:
+// `no compiler-rt search path`.
+fn nervdesk_ios_compiler_rt_dir() -> Option<String> {
+    let clang = match std::process::Command::new("xcrun")
+        .args(["--find", "clang"])
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => {
+            println!(
+                "cargo:warning=nervdesk ios: no compiler-rt search path \
+                 (`xcrun --find clang` is unavailable); the iOS link may fail on ___chkstk_darwin"
+            );
+            return None;
+        }
+    };
+    if clang.is_empty() {
+        println!(
+            "cargo:warning=nervdesk ios: no compiler-rt search path \
+             (`xcrun --find clang` returned an empty path)"
+        );
+        return None;
+    }
+    if !clang.contains("Xcode.app") && !clang.contains("/Developer/Toolchains") {
+        println!(
+            "cargo:warning=nervdesk ios: no compiler-rt search path \
+             (`xcrun` resolved a non-Apple clang at {})",
+            clang
+        );
+        return None;
+    }
+    let resource_dir = match std::process::Command::new(&clang)
+        .arg("--print-resource-dir")
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => {
+            println!(
+                "cargo:warning=nervdesk ios: no compiler-rt search path \
+                 (`{} --print-resource-dir` failed)",
+                clang
+            );
+            return None;
+        }
+    };
+    let dir = std::path::Path::new(&resource_dir)
+        .join("lib")
+        .join("darwin");
+    if resource_dir.is_empty() || !dir.is_dir() {
+        println!(
+            "cargo:warning=nervdesk ios: no compiler-rt search path \
+             (reported resource dir `{}` has no lib/darwin directory)",
+            resource_dir
+        );
+        return None;
+    }
+    Some(dir.to_string_lossy().into_owned())
+}
+
 fn main() {
     hbb_common::gen_version();
     install_android_deps();
@@ -113,27 +191,8 @@ fn main() {
         // `___chkstk_darwin`, which only compiler-rt provides for such an
         // old deployment target, so ask the toolchain where its builtins
         // live and link them. macOS is deliberately untouched (green today).
-        let clang = std::process::Command::new("xcrun")
-            .args(["--find", "clang"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "clang".to_owned());
-        let resource_dir = std::process::Command::new(&clang)
-            .arg("--print-resource-dir")
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty());
-        match resource_dir {
-            Some(dir) => println!("cargo:rustc-link-search=native={}/lib/darwin", dir),
-            None => println!(
-                "cargo:warning=nervdesk: cannot locate the clang resource dir; \
-                 the iOS link may fail on ___chkstk_darwin"
-            ),
+        if let Some(dir) = nervdesk_ios_compiler_rt_dir() {
+            println!("cargo:rustc-link-search=native={}", dir);
         }
         println!("cargo:rustc-link-lib=clang_rt.ios");
     }

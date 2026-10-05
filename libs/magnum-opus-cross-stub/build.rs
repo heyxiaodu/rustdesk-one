@@ -287,7 +287,27 @@ fn gen_opus() {
             // host) plus the .pc file; emit the equivalent directive so the host
             // toolchain finds it. `cargo check` never caught this because check
             // does not link.
-            println!("cargo:rustc-link-lib=opus");
+            //
+            // Two environments need two different directives, exactly like the
+            // `libs/scrap/build.rs` linux arm:
+            //   * a distro host (our dev boxes) ships libopus.so in the default
+            //     search path, so the bare name is enough;
+            //   * the CI `build rustdesk linux drm x86_64` job runs inside a
+            //     bionic container that removes libopus-dev ("we have libopus
+            //     compiled by us") and installs opus through vcpkg instead
+            //     (`VCPKG_ROOT=/opt/artifacts/vcpkg`, `--triplet x64-linux`,
+            //     whose pinned triplet sets VCPKG_LIBRARY_LINKAGE static). There
+            //     the bare name only resolved because `scrap` happened to emit
+            //     the vcpkg `-L` for its own four libraries - a coupling we
+            //     should not rely on. Hand the package over to the upstream
+            //     vcpkg path when it is available, and keep the bare name
+            //     otherwise. macOS/FreeBSD keep the bare name: their system
+            //     libopus works today and is not what the container job links.
+            if target_os == "linux" && nervdesk_delegate_to_vcpkg() {
+                let _ = find_package("opus");
+            } else {
+                println!("cargo:rustc-link-lib=opus");
+            }
         }
         return;
     }
