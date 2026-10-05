@@ -7,6 +7,10 @@
 > 拷进 rlib，而 cargo 的 fingerprint 不追踪该外部 `.lib`；换掉磁盘上的
 > `sodium.lib` 后必须手动删除 rlib/fingerprint/最终产物**以及 `deps/` 下的同名产物**，
 > 否则构建会「成功」但二进制根本没变。详见下文 *The rlib bundle trap*。
+> （**round-9 起**：`libsodium-sys` 不再由 `Cargo.toml` 永久 patch —— patch 只在交叉
+> 构建里生效，由 `scripts/cross-msvc-patch.toml` + `--config` 注入；原生 Windows MSVC
+> 作业与非 Windows CI 作业都用 registry 版 crate。见下文 *Where `libsodium-sys` comes
+> from*。）
 
 These two scripts rebuild the two hand-made native inputs of the
 `x86_64-pc-windows-msvc` cross-build. Both outputs live **outside** the
@@ -224,6 +228,32 @@ lld-link would report duplicate symbols.
 ## The rlib bundle trap
 
 Read this before trusting any rebuild of `sodium.lib`.
+
+### Where `libsodium-sys` comes from
+
+`Cargo.toml` no longer patches the crate. `[patch.crates-io]` there carries only
+`libxdo-sys`; the libsodium patch was moved out in round 9 because a manifest
+patch also applied to every other build, where the stub cannot work (on
+non-MSVC targets it emits a bare `-l sodium`, and those CI images ship no system
+libsodium — that broke nine jobs). Today:
+
+| Build | `libsodium-sys` | libsodium archive |
+| --- | --- | --- |
+| `./scripts/cross-build-msvc.sh …` | `libs/libsodium-sys-cross-stub` (injected with `--config scripts/cross-msvc-patch.toml`) | `NERV_SODIUM_LIB_DIR`, else the stub's vendored `msvc/<arch>/…` copy |
+| native Windows MSVC jobs (CI) | registry crate `libsodium-sys 0.2.7` | the crate's vendored `msvc/x64/{Release,Debug}/v142/libsodium.lib`, or `SODIUM_LIB_DIR` for arm64 |
+| non-Windows CI jobs | registry crate `libsodium-sys 0.2.7` | built by the crate itself (libsodium sources ship inside it, `bundle` → no `-l sodium` on the final link) |
+
+The stub keeps whatever triggers the trap: `sodium_bindings.rs` has 605
+`extern "C"` blocks, each with
+`#[cfg_attr(target_env = "msvc", link(name = "sodium", kind = "static"))]`, so
+on an MSVC target rustc still bundles the archive into
+`liblibsodium_sys-*.rlib`. What the stub emits for that target is only the
+search path and a watch, `cargo:rustc-link-search=native=<dir>` +
+`cargo:rerun-if-changed=<archive>` (`libs/libsodium-sys-cross-stub/build.rs:335-338`);
+it deliberately emits no `-l static=sodium`, because `scripts/msvc-shim/link.sh`
+appends the archive as a positional argument and the same objects twice would
+collide as duplicate symbols. **The trap below is therefore unchanged by the
+move**, and the remedy still applies to cross builds.
 
 `libsodium-sys` declares `#[link(name = "sodium", kind = "static")]`. `bundle`
 defaults to `true`, so rustc **copies `sodium.lib` into
