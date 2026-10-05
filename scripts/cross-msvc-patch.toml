@@ -1,0 +1,12 @@
+# NERV Desk - cross-build-only libsodium-sys patch.
+#
+# Applied by scripts/cross-build-msvc.sh as `--config scripts/cross-msvc-patch.toml`,
+# never through Cargo.toml: as a manifest `[patch.crates-io]` entry it also applied to
+# the native Windows and the non-Windows CI jobs, where the stub cannot help (it emits a
+# bare `-lsodium` for non-MSVC targets and those images ship no system libsodium).
+#
+# The path below is relative to the working directory, which the driver script sets to
+# the repository root; this file must stay inside the repository (a config file outside
+# the repo cannot resolve a repository-relative patch path).
+[patch.crates-io]
+libsodium-sys = { path = "libs/libsodium-sys-cross-stub" }

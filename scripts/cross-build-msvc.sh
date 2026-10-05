@@ -35,5 +35,28 @@ if [ ! -x "${NERV_SHIM}/link.sh" ]; then
     exit 1
 fi
 
+# libsodium-sys is replaced for cross builds only (see Cargo.toml and
+# scripts/cross-msvc-patch.toml); the relative path inside that config is
+# resolved against the working directory, so cd first.
+NERV_SODIUM_PATCH="${NERV_REPO_ROOT}/scripts/cross-msvc-patch.toml"
+if [ ! -f "${NERV_SODIUM_PATCH}" ]; then
+    echo "FATAL: ${NERV_SODIUM_PATCH} missing; cannot cross-build libsodium-sys." >&2
+    exit 1
+fi
+
 cd "${NERV_REPO_ROOT}"
-exec cargo build --target=x86_64-pc-windows-msvc "$@"
+
+# Patching libsodium-sys changes its source, so cargo rewrites Cargo.lock between
+# its registry form (upstream crate, with a checksum) and a path form (our stub,
+# no source). The committed lock must stay in registry form, otherwise the native
+# and non-Windows CI jobs fail with `--locked`. Restore it on every exit path -
+# hence no `exec` for the cargo call below.
+NERV_LOCK_BAK="$(mktemp)"
+cp Cargo.lock "${NERV_LOCK_BAK}"
+restore_lock() {
+    cp "${NERV_LOCK_BAK}" Cargo.lock
+    rm -f "${NERV_LOCK_BAK}"
+}
+trap restore_lock EXIT
+
+cargo build --target=x86_64-pc-windows-msvc --config "${NERV_SODIUM_PATCH}" "$@"
