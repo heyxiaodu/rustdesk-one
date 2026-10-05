@@ -102,18 +102,39 @@ fn main() {
     }
     if target_os == "ios" {
         // NERV Desk: rustc drives the Apple link with `-nodefaultlibs`, so
-        // clang's driver never adds compiler-rt and the arm64 stack-probe
-        // helper `___chkstk_darwin` is left undefined. The vcpkg arm64-ios
-        // objects we link through libs/scrap (aom_convolve.c.o,
-        // aom_scaled_convolve8_neon.c.o, intrapred_neon.c.o,
-        // subpel_variance_neon.c.o — built for iOS 26.5 while we link for
-        // 10.0) reference it, so `cargo build --target aarch64-apple-ios
-        // --lib` dies with:
-        //   Undefined symbols for architecture arm64: "___chkstk_darwin"
-        // Ask for the builtins explicitly; clang's driver keeps its resource
-        // directory (…/usr/lib/clang/<ver>/lib/darwin) on the library search
-        // path, so the bare name resolves. macOS is deliberately untouched
-        // (its link is green today).
+        // clang's driver neither adds compiler-rt nor even its resource-dir
+        // lib path (observed cc argv: `-lclang_rt.ios` present, no
+        // `-L…/usr/lib/clang/<ver>/lib/darwin`, then
+        //   ld: library 'clang_rt.ios' not found).
+        // The vcpkg arm64-ios objects linked through libs/scrap
+        // (aom_convolve.c.o, aom_scaled_convolve8_neon.c.o,
+        // intrapred_neon.c.o, subpel_variance_neon.c.o — built for iOS 26.5
+        // while we link for 10.0) call the arm64 stack-probe helper
+        // `___chkstk_darwin`, which only compiler-rt provides for such an
+        // old deployment target, so ask the toolchain where its builtins
+        // live and link them. macOS is deliberately untouched (green today).
+        let clang = std::process::Command::new("xcrun")
+            .args(["--find", "clang"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "clang".to_owned());
+        let resource_dir = std::process::Command::new(&clang)
+            .arg("--print-resource-dir")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty());
+        match resource_dir {
+            Some(dir) => println!("cargo:rustc-link-search=native={}/lib/darwin", dir),
+            None => println!(
+                "cargo:warning=nervdesk: cannot locate the clang resource dir; \
+                 the iOS link may fail on ___chkstk_darwin"
+            ),
+        }
         println!("cargo:rustc-link-lib=clang_rt.ios");
     }
     if target_os == "android" {
