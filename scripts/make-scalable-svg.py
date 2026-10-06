@@ -37,11 +37,14 @@ SNIFF_BYTES = 256
 
 XML_DECL = b'<?xml version="1.0" encoding="UTF-8"?>\n'
 
-# Byte for byte the comment this icon always carried; only its position moved
-# (it used to sit above <svg>, which pushed the root element to byte 575). Its
-# "Regenerate with" line still names the historical, untracked generator
-# analysis/oem/assets/make-scalable-svg.py and is left untouched so this change
-# stays a pure move.
+# The comment this icon has always carried; only two things changed it. The
+# position moved (above <svg> it pushed the root element to byte 575, past the
+# window gdk_pixbuf sniffs, so flatpak called the file an invalid icon), and the
+# "Regenerate with" line below now names this tracked script instead of the
+# historical, untracked analysis/oem/assets/make-scalable-svg.py that the
+# previous revision kept so its own change stayed a pure move. That path is
+# 12 bytes shorter, which is why res/scalable.svg changes size here rather than
+# being a pure move again.
 COMMENT = (
     b'<!-- NERV Desk Linux menu icon.\n'
     b'     Source: repos/rustdesk/res/128x128@2x.png (byte-identical to flutter/assets/icon.png).\n'
@@ -49,7 +52,7 @@ COMMENT = (
     b'     size(source)   = 43823 bytes, 256x256, sRGBA (transparent background)\n'
     b'     Embedded so a single self-contained file serves every icon size referenced by the\n'
     b'     Linux packaging (res/PKGBUILD, res/rpm*.spec, res/nervdesk.desktop, appimage yml).\n'
-    b'     Regenerate with: python3 analysis/oem/assets/make-scalable-svg.py\n'
+    b'     Regenerate with: python3 scripts/make-scalable-svg.py\n'
     b'-->\n'
 )
 
