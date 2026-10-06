@@ -161,7 +161,8 @@ pub fn quic_failure_disposition(mode: crate::common::QuicMode) -> QuicFailure {
 // 已知代价（诚实声明）：`punch_udp` 的监听侧在"对端第一个真实数据包"上返回并**消费**该包
 // （`src/common.rs:2810-2818` 的设计），而 quinn 0.11.9 的 `Endpoint` **没有**把数据报注回
 // 协议栈的公有 API（`endpoint.rs` 无 `pub fn handle`）。所以那第一个 QUIC Initial 会被丢弃，
-// 由客户端按 PTO 重传（默认初值约 1s）才能开始握手。这是本设计的固定成本，缓解方案见文档。
+// 由客户端按 PTO 重传才能开始握手；重传时刻由下面的 `QUIC_INITIAL_RTT` 钉住，
+// 不再取 quinn 默认的 999ms（那已经吃满 `client.rs` 给这条路径的全部预算）。
 #[cfg(feature = "quic")]
 #[derive(Debug)]
 struct TokioAsyncUdpSocket {
@@ -777,6 +778,26 @@ impl ServerCertVerifier for NervRpkVerifier {
     }
 }
 
+/// 握手初始 RTT 假设：quinn 默认 `initial_rtt = 333ms`
+/// （`quinn-proto-0.11.14/src/config/transport.rs:373`）⇒ 首次 PTO =
+/// `333 + max(4*166.5, 1) = 999ms`（`connection/paths.rs:326`）。而接受侧 `punch_udp`
+/// 会消费掉第一个 Initial（见本文件开头「已知代价」），发起侧因此**必须**等一次 PTO 重传，
+/// 999ms 已经吃满 `client.rs` 给这条路径的全部预算（局域网路径的 `connect_timeout`
+/// 就是 `const MIN` = 1000ms），必然后续超时。
+///
+/// 取 50ms ⇒ 首次 PTO = `50 + max(4*25, 1) = 150ms`，余下约 850ms 覆盖 `PTO + 2×RTT`，
+/// 即真实 RTT 直到约 400ms 仍能在 1000ms 内握手完成。代价：首次 PTO 提前到 150ms，
+/// 在 RTT > 150ms 的链路上会多发一个 Initial —— QUIC 对重复 Initial 幂等，无害。
+const QUIC_INITIAL_RTT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// 见 `QUIC_INITIAL_RTT`。两端都挂：客户端 PTO 决定「被吃掉的 Initial」何时重传，
+/// 服务端 PTO 决定它自己的握手 flight 丢失时何时重传，两者都落在同一个 1000ms 预算内。
+fn quic_transport_config() -> quinn::TransportConfig {
+    let mut transport = quinn::TransportConfig::default();
+    transport.initial_rtt(QUIC_INITIAL_RTT);
+    transport
+}
+
 /// 构造 QUIC 服务端 rustls 配置（C1 RPK 版）。
 ///
 /// `raw_pubkey`：本端 ID 公钥（32 字节）；用作 RPK 证书。
@@ -802,7 +823,9 @@ pub fn make_quic_server_config(
 
     let quic_cfg = QuicServerConfig::try_from(Arc::new(rustls_cfg))
         .map_err(|e| hbb_common::anyhow::anyhow!("QuicServerConfig::try_from: {e:?}"))?;
-    Ok(QuinnServerConfig::with_crypto(Arc::new(quic_cfg)))
+    let mut server_cfg = QuinnServerConfig::with_crypto(Arc::new(quic_cfg));
+    server_cfg.transport_config(Arc::new(quic_transport_config()));
+    Ok(server_cfg)
 }
 
 /// 构造 QUIC 客户端 rustls 配置（C1 RPK 版）。
@@ -825,7 +848,9 @@ pub fn make_quic_client_config(
 
     let quic_cfg = QuicClientConfig::try_from(Arc::new(rustls_cfg))
         .map_err(|e| hbb_common::anyhow::anyhow!("QuicClientConfig::try_from: {e:?}"))?;
-    Ok(QuinnClientConfig::new(Arc::new(quic_cfg)))
+    let mut client_cfg = QuinnClientConfig::new(Arc::new(quic_cfg));
+    client_cfg.transport_config(Arc::new(quic_transport_config()));
+    Ok(client_cfg)
 }
 
 #[cfg(all(test, feature = "quic"))]
@@ -1718,6 +1743,198 @@ mod tests {
         pk.copy_from_slice(keypair.public_key().as_ref());
         let cfg = super::make_quic_server_config(&pk, seed)?;
         Ok((pk, cfg))
+    }
+
+    /// 两张互为对端的 loopback UDP socket。返回 `(发起端, 接受端)`。
+    async fn loopback_pair() -> Result<
+        (
+            Arc<tokio::net::UdpSocket>,
+            Arc<tokio::net::UdpSocket>,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        let client_sock = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await?);
+        let server_sock = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await?);
+        client_sock.connect(server_sock.local_addr()?).await?;
+        server_sock.connect(client_sock.local_addr()?).await?;
+        Ok((client_sock, server_sock))
+    }
+
+    /// 复现接受侧 `punch_udp`：先**消费掉对端的第一个数据报**（并断言它确实是 QUIC 长首部
+    /// Initial），再把**同一张** socket 交给产品 accept 入口 —— 顺序与
+    /// `rendezvous_mediator.rs:1487` 一致（`punch_udp` 返回后 `quic_accept_attempt` 才建 endpoint）。
+    /// 因此被消费的那个 Initial 永远不会到达 quinn，只能靠发起侧 PTO 重传。
+    fn spawn_punch_eats_first_initial(
+        server_sock: Arc<tokio::net::UdpSocket>,
+        client_addr: std::net::SocketAddr,
+        server_cfg: ServerConfig,
+    ) -> tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> {
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            let n = server_sock.recv(&mut buf).await?;
+            if !super::looks_like_quic_long_header(&buf[..n]) {
+                return Err(format!("被消费的首包不是 QUIC 长首部：{n} 字节").into());
+            }
+            // 接受侧握手本身是否成功与本测试无关（发起侧可能已按预算超时），只要它不挂死。
+            let _ = super::quic_accept_attempt(server_sock, client_addr, 3_000, server_cfg).await;
+            Ok(())
+        })
+    }
+
+    /// 产品 client 配置，但把 `initial_rtt` 换成给定值 —— 用于在同一套 socket/endpoint 栈上
+    /// 对比 quinn 默认值与修复值。
+    fn client_config_with_initial_rtt(
+        pk: &[u8; 32],
+        initial_rtt: std::time::Duration,
+    ) -> Result<ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
+        let mut cfg = super::make_quic_client_config(pk)?;
+        let mut transport = quinn::TransportConfig::default();
+        transport.initial_rtt(initial_rtt);
+        cfg.transport_config(Arc::new(transport));
+        Ok(cfg)
+    }
+
+    /// 复刻 `quic_direct_attempt:327-358` 的拨号序列，唯一差别是允许注入 client 配置。
+    async fn dial_with_config(
+        socket: Arc<tokio::net::UdpSocket>,
+        client_cfg: ClientConfig,
+        budget_ms: u64,
+    ) -> Result<hbb_common::tcp::FramedStream, String> {
+        let peer = socket.peer_addr().map_err(|e| format!("peer_addr: {e}"))?;
+        let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            None,
+            Arc::new(super::TokioAsyncUdpSocket {
+                socket: socket.clone(),
+            }),
+            quinn::default_runtime().ok_or("no async runtime available for QUIC")?,
+        )
+        .map_err(|e| format!("Endpoint::new_with_abstract_socket: {e}"))?;
+        endpoint.set_default_client_config(client_cfg);
+        let sn = quinn::rustls::pki_types::ServerName::IpAddress(peer.ip().into());
+        let connecting = endpoint
+            .connect(peer, &sn.to_str())
+            .map_err(|e| format!("Endpoint::connect: {e}"))?;
+        let conn = tokio::time::timeout(std::time::Duration::from_millis(budget_ms), connecting)
+            .await
+            .map_err(|_| format!("dial timeout after {budget_ms}ms"))?
+            .map_err(|e| format!("handshake: {e}"))?;
+        let (send, recv) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
+        Ok(super::quic_into_framed_stream(recv, send, peer))
+    }
+
+    /// 跑一整轮「接受侧第一个 Initial 被吃掉」的场景，返回 `(是否在预算内握手成功, 实测毫秒)`。
+    async fn eaten_initial_arm(
+        pk: &[u8; 32],
+        initial_rtt: std::time::Duration,
+        budget_ms: u64,
+    ) -> Result<(bool, u128), Box<dyn std::error::Error + Send + Sync>> {
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (_, server_cfg) = test_identity_and_server_cfg(&seed)?;
+        let (client_sock, server_sock) = loopback_pair().await?;
+        let client_addr = client_sock.local_addr()?;
+        let server_task = spawn_punch_eats_first_initial(server_sock, client_addr, server_cfg);
+
+        let cfg = client_config_with_initial_rtt(pk, initial_rtt)?;
+        let t0 = std::time::Instant::now();
+        let res = dial_with_config(client_sock, cfg, budget_ms).await;
+        let elapsed_ms = t0.elapsed().as_millis();
+        let ok = res.is_ok();
+        drop(res);
+        server_task.await??;
+        Ok((ok, elapsed_ms))
+    }
+
+    /// task-6：接受侧第一个 QUIC Initial 被 `punch_udp` 消费后，发起侧必须等一次 PTO 重传。
+    /// quinn 默认 `initial_rtt = 333ms` ⇒ 首次 PTO = 999ms，已经吃满 `client.rs` 给局域网
+    /// 路径的全部预算（`connect_timeout` = `const MIN` = 1000ms）。两条断言中的数字都是实测：
+    /// 默认值在 1000ms 预算内必须失败、在放宽到 5000ms 后必须成功（其耗时就是被 PTO 推后的量），
+    /// 修复值 `QUIC_INITIAL_RTT` 在 1000ms 预算内必须成功。
+    #[tokio::test]
+    async fn quic_eaten_first_initial_rtt_budget() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        install_ring_provider();
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (pk, _) = test_identity_and_server_cfg(&seed)?;
+
+        /// `client.rs` 的 `const MIN`：局域网 / 双 SYMMETRIC 路径给 QUIC 的全部预算。
+        const PRODUCT_MIN_MS: u64 = 1_000;
+        /// quinn 的默认 `initial_rtt`（`quinn-proto-0.11.14/src/config/transport.rs:373`）。
+        const QUINN_DEFAULT_INITIAL_RTT_MS: u64 = 333;
+
+        let quinn_default = std::time::Duration::from_millis(QUINN_DEFAULT_INITIAL_RTT_MS);
+
+        let (ok_default, ms_default) =
+            eaten_initial_arm(&pk, quinn_default, PRODUCT_MIN_MS).await?;
+        assert!(
+            !ok_default,
+            "默认 initial_rtt={QUINN_DEFAULT_INITIAL_RTT_MS}ms 竟在 {PRODUCT_MIN_MS}ms 预算内握手成功（耗时 {ms_default}ms）——本测试复现缺陷的前提不成立"
+        );
+
+        let (ok_default_generous, ms_default_generous) =
+            eaten_initial_arm(&pk, quinn_default, 5_000).await?;
+        assert!(
+            ok_default_generous,
+            "默认 initial_rtt 在 5000ms 预算内仍未握手成功，缺陷模型不成立"
+        );
+
+        let (ok_fixed, ms_fixed) =
+            eaten_initial_arm(&pk, super::QUIC_INITIAL_RTT, PRODUCT_MIN_MS).await?;
+        assert!(
+            ok_fixed,
+            "修复值 initial_rtt={:?} 在 {PRODUCT_MIN_MS}ms 预算内仍未握手成功（耗时 {ms_fixed}ms）",
+            super::QUIC_INITIAL_RTT
+        );
+
+        eprintln!(
+            "[rtt-fix] initial_rtt={QUINN_DEFAULT_INITIAL_RTT_MS}ms 预算={PRODUCT_MIN_MS}ms: 结果={} 耗时={ms_default}ms",
+            if ok_default { "成功" } else { "超时" }
+        );
+        eprintln!(
+            "[rtt-fix] initial_rtt={QUINN_DEFAULT_INITIAL_RTT_MS}ms 预算=5000ms: 结果={} 耗时={ms_default_generous}ms（被首个 PTO 推后）",
+            if ok_default_generous { "成功" } else { "超时" }
+        );
+        eprintln!(
+            "[rtt-fix] initial_rtt={:?} 预算={PRODUCT_MIN_MS}ms: 结果={} 耗时={ms_fixed}ms",
+            super::QUIC_INITIAL_RTT,
+            if ok_fixed { "成功" } else { "超时" }
+        );
+        assert!(
+            ms_fixed < ms_default_generous,
+            "修复后的握手耗时（{ms_fixed}ms）必须小于修复前（{ms_default_generous}ms）"
+        );
+        Ok(())
+    }
+
+    /// task-6 产品入口回归：`quic_direct_attempt(..., 1000)`（= `client.rs` 的 `const MIN`）
+    /// 在接受侧吃掉第一个 Initial 后仍必须**真实成功**（含 `open_bi`）。字节层对账由既有的
+    /// `quic_product_entry_loopback_success` 覆盖，这里只钉「预算内能否拿到可用连接」。
+    #[tokio::test]
+    async fn quic_product_entry_survives_eaten_first_initial()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        install_ring_provider();
+        let seed: [u8; 32] = [0x42u8; 32];
+        let (pk, server_cfg) = test_identity_and_server_cfg(&seed)?;
+
+        let (client_sock, server_sock) = loopback_pair().await?;
+        let client_addr = client_sock.local_addr()?;
+        let server_task = spawn_punch_eats_first_initial(server_sock, client_addr, server_cfg);
+
+        let t0 = std::time::Instant::now();
+        let stream = super::quic_direct_attempt(client_sock, &pk, 1_000)
+            .await
+            .map_err(|e| {
+                format!(
+                    "修复后产品入口仍在 1000ms 预算内失败（耗时 {}ms）：{e}",
+                    t0.elapsed().as_millis()
+                )
+            })?;
+        let ms = t0.elapsed().as_millis();
+        eprintln!("[rtt-fix] 产品入口 quic_direct_attempt(1000ms) 握手成功，实测耗时={ms}ms");
+        assert!(ms < 1_000);
+        drop(stream);
+        server_task.await??;
+        Ok(())
     }
 
     /// R4-3（task-15）F-R1：监听侧判别器必须对 KCP SYN 零假阳性。
