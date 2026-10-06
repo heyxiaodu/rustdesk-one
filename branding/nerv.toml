@@ -1,0 +1,18 @@
+# NERV Desk 构建期品牌清单（唯一事实来源 / single source of truth）
+#
+# 这个文件决定"一个全新的 NERV Desk 客户端默认连哪台服务器、用哪把公钥校验服务器身份"。
+# 改这里 -> 跑 scripts/gen-branding.py -> 重新构建。
+#
+# 安全说明：public_key 是 ID 服务器的 **公开** ed25519 公钥，设计上就要分发给每个客户端，
+# 与上游 RustDesk 仓库里逐字存在的 RS_PUB_KEY 同一性质。私钥不在本仓库、不在本机。
+# 任何真实密码/PIN/token/私钥一律不得写进本文件。
+
+[server]
+# ID / 会合服务器（Rendevous）。不写端口时按 21116 处理。
+id_server = "id.nervcode.eu.org"
+# 中继服务器（Relay）。不写端口时按 21117 处理。
+relay_server = "relay.nervcode.eu.org"
+# API 服务器（RustDesk-API，用于登录/地址簿/审计等）。
+api_server = "https://api.nervcode.eu.org"
+# ID 服务器公钥，客户端用它验证服务器签名。
+public_key = "HJtH5YUqy6Dz8FHfypUKPJSGoxbBeSgtDsahkT6MBo4="
