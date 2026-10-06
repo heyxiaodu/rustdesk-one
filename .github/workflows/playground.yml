@@ -190,12 +190,31 @@ jobs:
         run: |
           ./build.py --flutter ${{ matrix.job.extra-build-args }}
 
+      - name: Resolve macOS bundle path
+        run: |
+          # PRODUCT_NAME in the runner's xcconfig is the single source of truth for the bundle
+          # name: Xcode names the built .app after it. Never hardcode the name here again.
+          APP_NAME="$(sed -n 's/^[[:space:]]*PRODUCT_NAME[[:space:]]*=[[:space:]]*//p' flutter/macos/Runner/Configs/AppInfo.xcconfig | tail -n 1 | sed -e 's/[[:space:]]*$//')"
+          if [ -z "$APP_NAME" ]; then
+            echo "PRODUCT_NAME not found in flutter/macos/Runner/Configs/AppInfo.xcconfig" >&2
+            exit 1
+          fi
+          # Fail early: a renamed bundle used to surface much later as a create-dmg/codesign error.
+          APP_PATH="flutter/build/macos/Build/Products/Release/$APP_NAME.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "macOS bundle not found at '$APP_PATH'; is PRODUCT_NAME in flutter/macos/Runner/Configs/AppInfo.xcconfig in sync with the Flutter build output?" >&2
+            exit 1
+          fi
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "macOS bundle: $APP_PATH"
+
       - name: create unsigned dmg
         run: |
           CREATE_DMG="$(command -v create-dmg)"
           CREATE_DMG="$(readlink -f "$CREATE_DMG")"
           sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          create-dmg --icon "$APP_NAME.app" 200 190 --hide-extension "$APP_NAME.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg "$APP_PATH"
 
       - name: Codesign app and create signed dmg
         if: env.MACOS_P12_BASE64 != null
@@ -207,10 +226,10 @@ jobs:
           # Unlock keychain
           security default-keychain -s rustdesk.keychain
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
-          # start sign the rustdesk.app and dmg
+          # start sign the app and dmg
           rm -rf *.dmg || true
-          codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict ./flutter/build/macos/Build/Products/Release/RustDesk.app -vvv
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict "$APP_PATH" -vvv
+          create-dmg --icon "$APP_NAME.app" 200 190 --hide-extension "$APP_NAME.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}.dmg "$APP_PATH"
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict rustdesk-${{ env.VERSION }}.dmg -vvv
           # notarize the rustdesk-${{ env.VERSION }}.dmg
           rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json  --staple rustdesk-${{ env.VERSION }}.dmg

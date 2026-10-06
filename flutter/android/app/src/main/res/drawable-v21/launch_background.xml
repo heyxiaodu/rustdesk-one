@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+    <!-- Brand colour, reused from res/values/colors.xml. This drawable is the
+         window background of `LaunchTheme`, which is picked from values/ or
+         values-night/ depending on the OS setting, so the splash colour is
+         deliberately independent of the light/dark theme. The Flutter window
+         that follows still uses `NormalTheme` (`?android:colorBackground`). -->
+    <item android:drawable="@color/primary" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>

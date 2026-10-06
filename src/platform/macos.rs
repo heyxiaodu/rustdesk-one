@@ -187,8 +187,11 @@ pub fn install_service() -> bool {
 // No need to merge the existing dup code, because the code in these two functions are too critical.
 // New code should be written in a common function.
 pub fn is_installed_daemon(prompt: bool) -> bool {
-    let daemon = format!("{}_service.plist", crate::get_full_name());
-    let agent = format!("{}_server.plist", crate::get_full_name());
+    // Same identifier stem `write_plists()` writes, otherwise the check looks
+    // for a file that can never exist.
+    let ident_full = app_ident_full();
+    let daemon = format!("{}_service.plist", ident_full);
+    let agent = format!("{}_server.plist", ident_full);
     let agent_plist_file = format!("/Library/LaunchAgents/{}", agent);
     if !prompt {
         // in macos 13, there is new way to check if they are running or enabled, https://developer.apple.com/documentation/servicemanagement/updating-helper-executables-from-earlier-versions-of-macos#Respond-to-changes-in-System-Settings
@@ -302,12 +305,79 @@ fn update_daemon_agent(agent_plist_file: String, update_source_dir: String, sync
     }
 }
 
+/// Lowercase, separator-free form of `s`: every run of characters outside
+/// `[A-Za-z0-9]` collapses into a single `-`, and leading/trailing `-` are
+/// dropped.
+fn ident_slug(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Identifier used for launchd labels, plist file names and the service/agent
+/// names derived from them.
+///
+/// `APP_NAME` is a display name (`NERV Desk`) and contains a space: a space is
+/// not legal inside a launchd label, and a plist whose file name contains one
+/// cannot be addressed by `launchctl`. Reuse the identifier the rest of the
+/// product already publishes (URL scheme, Windows service name, Linux service
+/// unit) instead of deriving a second one from the display name.
+fn app_ident() -> String {
+    ident_slug(hbb_common::config::APP_NAME_IDENT)
+}
+
+/// Reverse-DNS stem shared by the launchd labels and the plist file names:
+/// `com.nervdesk.nervdesk`.
+fn app_ident_full() -> String {
+    let org = hbb_common::config::ORG.read().unwrap();
+    format!("{}.{}", *org, app_ident())
+}
+
+/// Directory component of the per-user config path.
+///
+/// `directories-next` builds it from `ORG` + `APP_NAME` and replaces the spaces
+/// in `APP_NAME` with `-` while keeping the case, so the installer script has to
+/// spell it `com.nervdesk.NERV-Desk` to find the directory the app really uses.
+fn config_dir_component() -> String {
+    let org = hbb_common::config::ORG.read().unwrap();
+    format!("{}.{}", *org, crate::get_app_name().replace(' ', "-"))
+}
+
 fn correct_app_name(s: &str) -> String {
     let mut s = s.to_owned();
-    if let Some(bundleid) = get_bundle_id() {
-        s = s.replace("com.carriez.rustdesk", &bundleid);
-    }
-    s = s.replace("rustdesk", &crate::get_app_name().to_lowercase());
+    // Order matters: the specific tokens have to go before the generic
+    // `rustdesk` / `RustDesk` fallbacks at the end.
+    let ident = app_ident();
+    // Bundle identifier of the running app; the identifier stem keeps
+    // `AssociatedBundleIdentifiers` legal when the bundle id cannot be read.
+    s = s.replace(
+        "com.carriez.rustdesk",
+        &get_bundle_id().unwrap_or_else(app_ident_full),
+    );
+    // Per-user config directory, e.g. `.../Library/Preferences/com.nervdesk.NERV-Desk/`.
+    s = s.replace(
+        "com.carriez.RustDesk/",
+        &format!("{}/", config_dir_component()),
+    );
+    // launchd labels, plist file names and the `launchctl bootout`/`bootstrap`
+    // targets built from them.
+    s = s.replace("com.carriez.RustDesk", &app_ident_full());
+    s = s.replace("rustdesk_service", &format!("{}_service", ident));
+    s = s.replace("rustdesk_server", &format!("{}_server", ident));
+    // What is left in lowercase is an identifier too (log file names, paths),
+    // so it must never become the display name, which contains a space.
+    s = s.replace("rustdesk", &ident);
+    // Display name last: the app bundle path, `NERV Desk.toml` and the
+    // osascript prompts keep the spaced spelling.
     s = s.replace("RustDesk", &crate::get_app_name());
     s
 }
@@ -335,14 +405,11 @@ fn write_plist_atomically(path: &str, body: &str) -> ResultType<()> {
 }
 
 pub fn write_plists() -> ResultType<()> {
-    let daemon_plist_path = format!(
-        "/Library/LaunchDaemons/com.carriez.{}_service.plist",
-        crate::get_app_name()
-    );
-    let agent_plist_path = format!(
-        "/Library/LaunchAgents/com.carriez.{}_server.plist",
-        crate::get_app_name()
-    );
+    // Identifiers, not the display name: launchd rejects a label containing a
+    // space, and the file name has to match the `Label` inside the plist.
+    let ident_full = app_ident_full();
+    let daemon_plist_path = format!("/Library/LaunchDaemons/{}_service.plist", ident_full);
+    let agent_plist_path = format!("/Library/LaunchAgents/{}_server.plist", ident_full);
     let Some(daemon_plist) = PRIVILEGES_SCRIPTS_DIR.get_file("daemon.plist") else {
         bail!("daemon.plist not found in embedded resources");
     };
@@ -384,7 +451,7 @@ pub fn uninstall_service(show_new_window: bool, sync: bool) -> bool {
                 log::error!("run osascript failed: {}", e);
             }
             _ => {
-                let agent = format!("{}_server.plist", crate::get_full_name());
+                let agent = format!("{}_server.plist", app_ident_full());
                 let agent_plist_file = format!("/Library/LaunchAgents/{}", agent);
                 let uninstalled = !std::path::Path::new(&agent_plist_file).exists();
                 log::info!(
@@ -400,7 +467,7 @@ pub fn uninstall_service(show_new_window: bool, sync: bool) -> bool {
                     }
                     crate::ipc::set_option("stop-service", "Y");
                     std::process::Command::new("launchctl")
-                        .args(&["remove", &format!("{}_server", crate::get_full_name())])
+                        .args(&["remove", &format!("{}_server", app_ident_full())])
                         .status()
                         .ok();
                     if show_new_window {
@@ -912,7 +979,7 @@ pub fn update_me() -> ResultType<()> {
 
     let app_name = crate::get_app_name();
     if is_installed_daemon && !is_service_stopped {
-        let agent = format!("{}_server.plist", crate::get_full_name());
+        let agent = format!("{}_server.plist", app_ident_full());
         let agent_plist_file = format!("/Library/LaunchAgents/{}", agent);
         update_daemon_agent(agent_plist_file, app_dir, true);
     } else {
@@ -1060,8 +1127,11 @@ pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> Result
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp_dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    let agent_plist = format!("/Library/LaunchAgents/com.carriez.{}_server.plist", app_name);
-    let daemon_plist = format!("/Library/LaunchDaemons/com.carriez.{}_service.plist", app_name);
+    // launchd identifiers. `app_name` above is the display name and must not be
+    // used here: it contains a space, which is illegal in a launchd label.
+    let ident_full = app_ident_full();
+    let agent_plist = format!("/Library/LaunchAgents/{}_server.plist", ident_full);
+    let daemon_plist = format!("/Library/LaunchDaemons/{}_service.plist", ident_full);
 
     log::info!("[root-update] Starting silent root update from {}", dmg_path);
     // Check sessions before extracting to avoid unnecessary work
@@ -1192,8 +1262,8 @@ pub fn update_from_dmg_as_root(dmg_path: &str, expected_version: &str) -> Result
     // Write a shell script that runs detached after this function returns.
     // We cannot directly replace /Applications/RustDesk.app while it is running,
     // so we spawn a script that waits, kills processes, copies, and restarts.
-    let daemon_label = format!("com.carriez.{}_service", app_name);
-    let agent_label = format!("com.carriez.{}_server", app_name);
+    let daemon_label = format!("{}_service", ident_full);
+    let agent_label = format!("{}_server", ident_full);
     let script_path = format!("{}/rustdesk_update.sh", tmp_dir);
     let script = format!(
         r#"#!/bin/sh
@@ -2071,5 +2141,119 @@ fn get_bundle_id() -> Option<String> {
             .to_string_lossy()
             .to_string();
         Some(bundle_id_str)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ident_slug_is_lowercase_and_separator_free() {
+        assert_eq!(ident_slug("NERV Desk"), "nerv-desk");
+        assert_eq!(ident_slug("nervdesk"), "nervdesk");
+        assert_eq!(ident_slug("  NERV   Desk  "), "nerv-desk");
+        assert_eq!(ident_slug("com.carriez.RustDesk"), "com-carriez-rustdesk");
+        assert_eq!(ident_slug(""), "");
+        assert_eq!(ident_slug("---"), "");
+        for input in ["NERV Desk", "nervdesk", "", "a b/c", "."] {
+            let slug = ident_slug(input);
+            assert!(
+                slug.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "slug of {input:?} kept a character launchd rejects: {slug:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn launchd_identifiers_contain_no_space() {
+        let ident = app_ident();
+        assert_eq!(ident, ident_slug(hbb_common::config::APP_NAME_IDENT));
+        assert!(!ident.is_empty());
+        assert!(
+            !ident.contains(char::is_whitespace),
+            "identifier has whitespace: {ident:?}"
+        );
+
+        let full = app_ident_full();
+        assert!(
+            !full.contains(char::is_whitespace),
+            "launchd label stem has whitespace: {full:?}"
+        );
+        assert!(
+            full.ends_with(&format!(".{}", ident)),
+            "label stem is not ORG-prefixed: {full:?}"
+        );
+
+        let config_dir = config_dir_component();
+        assert!(
+            !config_dir.contains(char::is_whitespace),
+            "config directory component has whitespace: {config_dir:?}"
+        );
+        assert!(
+            config_dir.ends_with(&crate::get_app_name().replace(' ', "-")),
+            "config directory component lost the display name: {config_dir:?}"
+        );
+    }
+
+    #[test]
+    fn correct_app_name_keeps_identifiers_free_of_spaces() {
+        let daemon_plist = concat!(
+            "<key>Label</key><string>com.carriez.RustDesk_service</string>\n",
+            "<key>AssociatedBundleIdentifiers</key><array><string>com.carriez.rustdesk</string></array>\n",
+            "<key>ProgramArguments</key><array><string>/Applications/RustDesk.app/Contents/MacOS/service</string></array>\n",
+            "<key>StandardErrorPath</key><string>/var/log/rustdesk_service.err</string>",
+        );
+        let fixed = correct_app_name(daemon_plist);
+        assert!(
+            !fixed.contains("com.carriez"),
+            "unbranded identifier left behind: {fixed}"
+        );
+        assert!(
+            !fixed.contains("rustdesk") && !fixed.contains("RustDesk"),
+            "unbranded name left behind in identifier slots: {fixed}"
+        );
+        let label = fixed
+            .split("<key>Label</key><string>")
+            .nth(1)
+            .and_then(|rest| rest.split("</string>").next())
+            .expect("daemon.plist label");
+        assert_eq!(label, format!("{}_service", app_ident_full()));
+        for line in fixed.lines() {
+            if line.contains("<key>Label</key>") {
+                assert!(!line.contains(' '), "launchd label contains a space: {line}");
+            }
+            if line.contains("/var/log/") {
+                assert!(!line.contains(' '), "log path contains a space: {line}");
+            }
+        }
+        // Display-name slots must keep the spaced spelling.
+        assert!(
+            fixed.contains(&format!("/Applications/{}.app", crate::get_app_name())),
+            "app bundle path lost the display name: {fixed}"
+        );
+    }
+
+    #[test]
+    fn correct_app_name_keeps_display_name_in_config_paths() {
+        let install_script = concat!(
+            "set prefs_dir to \"/Users/\" & user & \"/Library/Preferences/com.carriez.RustDesk/\"\n",
+            "set prefs_toml to quoted form of (prefs_dir & \"RustDesk.toml\")\n",
+            "set app_bundle to \"/Applications/RustDesk.app\"",
+        );
+        let fixed = correct_app_name(install_script);
+        assert!(
+            fixed.contains(&format!("/Library/Preferences/{}/", config_dir_component())),
+            "config directory does not match the path `directories-next` builds: {fixed}"
+        );
+        assert!(
+            fixed.contains(&format!("\"{}.toml\"", crate::get_app_name())),
+            "config file name lost the display name: {fixed}"
+        );
+        assert!(
+            fixed.contains(&format!("/Applications/{}.app", crate::get_app_name())),
+            "app bundle path lost the display name: {fixed}"
+        );
     }
 }

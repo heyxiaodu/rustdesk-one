@@ -5,36 +5,60 @@ pub const RELAY_SERVER: &str = "relay.nervcode.eu.org";
 pub const API_SERVER: &str = "https://api.nervcode.eu.org";
 pub const RS_PUB_KEY: &str = "HJtH5YUqy6Dz8FHfypUKPJSGoxbBeSgtDsahkT6MBo4=";
 
-/// Seed the client's config defaults with the branded servers and public key.
+/// Seed the client's config defaults with the branded servers, public key and
+/// the extra option defaults declared in branding/nerv.toml.
 ///
-/// `or_insert_with` rather than `insert`: a value already present (a signed custom
-/// client read first) must win over this compile-time manifest.
+/// Add or change a default with one line in that manifest's [defaults] table and
+/// re-run scripts/gen-branding.py, whose KEY_TARGETS entry maps the option to the
+/// settings map that actually reads it (the wrong map is silently ineffective).
+///
+/// `or_insert_with` rather than `insert`: a value already present (a saved user
+/// setting, or a signed custom client read first) must win over this compile-time
+/// manifest.
 pub fn apply_defaults() {
-    let mut defaults = hbb_common::config::DEFAULT_SETTINGS.write().unwrap();
-    defaults
-        .entry("custom-rendezvous-server".to_owned())
-        .or_insert_with(|| RENDEZVOUS_SERVER.to_owned());
-    defaults
-        .entry("relay-server".to_owned())
-        .or_insert_with(|| RELAY_SERVER.to_owned());
-    defaults
-        .entry("api-server".to_owned())
-        .or_insert_with(|| API_SERVER.to_owned());
-    defaults
-        .entry("key".to_owned())
-        .or_insert_with(|| RS_PUB_KEY.to_owned());
+    {
+        let mut settings = hbb_common::config::DEFAULT_SETTINGS.write().unwrap();
+        settings
+            .entry("custom-rendezvous-server".to_owned())
+            .or_insert_with(|| RENDEZVOUS_SERVER.to_owned());
+        settings
+            .entry("relay-server".to_owned())
+            .or_insert_with(|| RELAY_SERVER.to_owned());
+        settings
+            .entry("api-server".to_owned())
+            .or_insert_with(|| API_SERVER.to_owned());
+        settings
+            .entry("key".to_owned())
+            .or_insert_with(|| RS_PUB_KEY.to_owned());
+        settings
+            .entry("allow-hide-cm".to_owned())
+            .or_insert_with(|| "Y".to_owned());
+    }
+    {
+        let mut settings = hbb_common::config::BUILTIN_SETTINGS.write().unwrap();
+        settings
+            .entry("hide-tray".to_owned())
+            .or_insert_with(|| "Y".to_owned());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use hbb_common::{
         config::{Config, RELAY_PORT, RENDEZVOUS_PORT},
         socket_client::check_port,
     };
 
+    // The settings maps are process-global and cargo runs the tests in
+    // parallel, so these tests must not interleave (same idiom as
+    // CONFIG_STATE_TEST_LOCK in libs/hbb_common/src/config.rs).
+    static BRANDING_SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn apply_defaults_seeds_server_options() {
+        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();
         apply_defaults();
         assert_eq!(
             Config::get_option("custom-rendezvous-server"),
@@ -47,6 +71,7 @@ mod tests {
 
     #[test]
     fn manifest_hosts_resolve_to_the_standard_ports() {
+        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();
         apply_defaults();
         assert_eq!(
             Config::get_rendezvous_server(),
@@ -56,5 +81,79 @@ mod tests {
             check_port(RELAY_SERVER, RELAY_PORT),
             format!("{}:{}", RELAY_SERVER, RELAY_PORT),
         );
+    }
+
+    #[test]
+    fn apply_defaults_seeds_manifest_defaults() {
+        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();
+        apply_defaults();
+        {
+            let settings = hbb_common::config::DEFAULT_SETTINGS.read().unwrap();
+            assert_eq!(settings.get("allow-hide-cm").map(String::as_str), Some("Y"));
+        }
+        {
+            let settings = hbb_common::config::BUILTIN_SETTINGS.read().unwrap();
+            assert_eq!(settings.get("hide-tray").map(String::as_str), Some("Y"));
+        }
+    }
+
+    // A seeded default must stay a default: a signed custom client, or a value the
+    // user saved, has to keep winning over this compile-time manifest.
+    #[test]
+    fn seeded_defaults_stay_overridable() {
+        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();
+        apply_defaults();
+
+        // read_custom_client_advanced_settings writes BUILTIN_SETTINGS with a plain
+        // `insert` (src/common.rs:2478-2509), so re-applying must not clobber it.
+        let key = "hide-tray";
+        let previous = hbb_common::config::BUILTIN_SETTINGS
+            .write()
+            .unwrap()
+            .insert(key.to_owned(), "N".to_owned());
+        apply_defaults();
+        assert_eq!(
+            hbb_common::config::BUILTIN_SETTINGS
+                .read()
+                .unwrap()
+                .get(key)
+                .map(String::as_str),
+            Some("N")
+        );
+        {
+            let mut builtin = hbb_common::config::BUILTIN_SETTINGS.write().unwrap();
+            match previous {
+                Some(value) => {
+                    builtin.insert(key.to_owned(), value);
+                }
+                None => {
+                    builtin.remove(key);
+                }
+            }
+        }
+
+        // Config::get_option is OVERWRITE_SETTINGS > saved user config >
+        // DEFAULT_SETTINGS (libs/hbb_common/src/config.rs:2756-2768), so the seeded
+        // layer has to lose to the layers above it.
+        let key = "allow-hide-cm";
+        assert_eq!(Config::get_option(key), "Y");
+        let previous = hbb_common::config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .insert(key.to_owned(), "N".to_owned());
+        assert_eq!(Config::get_option(key), "N");
+        {
+            let mut overwrite = hbb_common::config::OVERWRITE_SETTINGS.write().unwrap();
+            match previous {
+                Some(value) => {
+                    overwrite.insert(key.to_owned(), value);
+                }
+                None => {
+                    overwrite.remove(key);
+                }
+            }
+        }
+        apply_defaults();
+        assert_eq!(Config::get_option(key), "Y");
     }
 }

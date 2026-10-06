@@ -5,7 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = RustDesk
+// Must stay in sync with `APP_NAME` (`libs/hbb_common/src/config.rs`): the
+// installer and update scripts address `/Applications/<APP_NAME>.app` and the
+// `Contents/MacOS/<APP_NAME>` executable by this name.
+PRODUCT_NAME = NERV Desk
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.carriez.flutterHbb

@@ -16,3 +16,19 @@ relay_server = "relay.nervcode.eu.org"
 api_server = "https://api.nervcode.eu.org"
 # ID 服务器公钥，客户端用它验证服务器签名。
 public_key = "HJtH5YUqy6Dz8FHfypUKPJSGoxbBeSgtDsahkT6MBo4="
+
+# 额外的 OEM 默认值（可选表）。键名 = 客户端内部的 option 名；每个键进哪一张设置表由
+# scripts/gen-branding.py 的 KEY_TARGETS 决定 —— 放错表在运行期是静默无效的。
+# 这里只写"与代码隐含默认值确实不同"的值：写上同样的值是 no-op，会让人误以为这里有 OEM 差异。
+[defaults]
+# 允许在本机隐藏"连接管理"窗口。隐含默认是空串（= 不允许）。
+# hide_cm() 另外还要求"仅审批模式 + 只用固定密码"，所以这不会降低安全性：
+# libs/hbb_common/src/password_security.rs:88。
+allow-hide-cm = "Y"
+
+# 默认不创建系统托盘图标。读取点 src/tray.rs:27（非 macOS 直接不启动托盘进程）与
+# src/tray.rs:189（macOS 不创建图标）。代价（有意接受）：本键属 BUILTIN_SETTINGS，
+# 没有 OVERWRITE 变体、也没有对应的用户设置项 ⇒ 用户无法在界面里改回来，只能用签名
+# custom.txt 覆盖或重新构建；非 macOS 上关掉主窗口后没有托盘入口，重新启动程序即可
+# 重新打开主窗口（hide-tray 只决定要不要创建托盘图标，不影响主进程与已建立的连接）。
+hide-tray = "Y"

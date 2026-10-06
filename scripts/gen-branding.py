@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Generate libs/base/src/branding.rs from branding/nerv.toml.
 
+[server] declares the branded servers and public key. The optional [defaults]
+table declares extra option defaults, keyed by the option name; KEY_TARGETS below
+says which settings map reads each option.
+
 Paths are resolved relative to this script, so it can be invoked from any CWD:
 
     python3 scripts/gen-branding.py           # write the generated file
@@ -28,17 +32,73 @@ BANNER = (
 
 REQUIRED_FIELDS = ("id_server", "relay_server", "api_server", "public_key")
 
+# The settings maps a default may be seeded into: the `pub static` names in
+# libs/hbb_common/src/config.rs. A key seeded into the wrong map is silently
+# ineffective at runtime, so which map reads an option is recorded here rather
+# than guessed from the manifest.
+DEFAULT_TABLES = ("DEFAULT_SETTINGS", "BUILTIN_SETTINGS", "DEFAULT_DISPLAY_SETTINGS")
+
+# option name -> settings map. Every key allowed in [defaults] must appear here;
+# anything else is a generation error naming this table, so a new default cannot
+# be added without stating where it is read.
+#
+# DEFAULT_SETTINGS: read by Config::get_option (config.rs:1256-1264).
+# BUILTIN_SETTINGS: read by get_builtin_option (src/common.rs:2622-2629).
+# DEFAULT_DISPLAY_SETTINGS: read through UserDefaultConfig::get -> get_after
+#   -> get_or(&OVERWRITE_DISPLAY_SETTINGS, &options, &DEFAULT_DISPLAY_SETTINGS, k).
+KEY_TARGETS = {
+    "custom-rendezvous-server": "DEFAULT_SETTINGS",
+    "relay-server": "DEFAULT_SETTINGS",
+    "api-server": "DEFAULT_SETTINGS",
+    "key": "DEFAULT_SETTINGS",
+    # Gate for hiding Connection Management. Read by get_option in
+    # libs/hbb_common/src/password_security.rs:91; hide_cm() itself still
+    # requires approve mode + permanent-password-only.
+    "allow-hide-cm": "DEFAULT_SETTINGS",
+    # Read by bind.mainGetBuildinOption in Flutter; "Y" hides, anything else
+    # (including unset) shows.
+    "hide-general-settings": "BUILTIN_SETTINGS",
+    "hide-security-settings": "BUILTIN_SETTINGS",
+    "hide-network-settings": "BUILTIN_SETTINGS",
+    "hide-server-settings": "BUILTIN_SETTINGS",
+    "hide-proxy-settings": "BUILTIN_SETTINGS",
+    "hide-remote-printer-settings": "BUILTIN_SETTINGS",
+    "hide-websocket-settings": "BUILTIN_SETTINGS",
+    "hide-stop-service": "BUILTIN_SETTINGS",
+    "hide-username-on-card": "BUILTIN_SETTINGS",
+    "hide-help-cards": "BUILTIN_SETTINGS",
+    "hide-tray": "BUILTIN_SETTINGS",
+    "hide-powered-by-me": "BUILTIN_SETTINGS",
+    "hide-elevate-button-in-accept-window": "BUILTIN_SETTINGS",
+    # Read through UserDefaultConfig::get; implicit defaults are the clamps in
+    # config.rs:2383-2390 (balanced / 50 / 30).
+    "image_quality": "DEFAULT_DISPLAY_SETTINGS",
+    "custom_image_quality": "DEFAULT_DISPLAY_SETTINGS",
+    "custom-fps": "DEFAULT_DISPLAY_SETTINGS",
+}
+
+# Option names [server] is seeded under in DEFAULT_SETTINGS; knowing them keeps a
+# manifest from declaring the same option twice, ambiguously.
+SERVER_OPTION_KEYS = {
+    "id_server": "custom-rendezvous-server",
+    "relay_server": "relay-server",
+    "api_server": "api-server",
+    "public_key": "key",
+}
+
 # Hostnames, host:port, URLs and base64 all fit this set. It deliberately rejects
 # quotes, backslashes and newlines so a manifest value can never break out of the
 # Rust string literal it is emitted into.
 SAFE_VALUE = re.compile(r"\A[A-Za-z0-9._:/+\-=\[\]%]+\Z")
+
+MAX_LINE_WIDTH = 100
 
 
 class ManifestError(Exception):
     pass
 
 
-def read_manifest() -> dict[str, str]:
+def read_manifest() -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
     try:
         with MANIFEST.open("rb") as fh:
             data = tomllib.load(fh)
@@ -85,7 +145,45 @@ def read_manifest() -> dict[str, str]:
     if not values["api_server"].startswith(("http://", "https://")):
         raise ManifestError("[server].api_server must start with http:// or https://")
 
-    return values
+    defaults = read_defaults(data)
+    seeded = set(SERVER_OPTION_KEYS.values())
+    for key, _ in defaults["DEFAULT_SETTINGS"]:
+        if key in seeded:
+            raise ManifestError(f"[defaults].{key} duplicates a [server] field")
+
+    return values, defaults
+
+
+def read_defaults(data: dict) -> dict[str, list[tuple[str, str]]]:
+    """Group [defaults] entries by the settings map that reads them."""
+    for target in KEY_TARGETS.values():
+        if target not in DEFAULT_TABLES:
+            raise ManifestError(f"KEY_TARGETS names an unknown settings map: {target}")
+
+    defaults: dict[str, list[tuple[str, str]]] = {table: [] for table in DEFAULT_TABLES}
+    raw = data.get("defaults")
+    if raw is None:
+        return defaults
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{MANIFEST} [defaults] must be a table of key = value")
+
+    for key, value in raw.items():
+        target = KEY_TARGETS.get(key)
+        if target is None:
+            raise ManifestError(
+                f"[defaults].{key} is not a known option; add it to KEY_TARGETS in "
+                "scripts/gen-branding.py together with the settings map that reads it"
+            )
+        if not isinstance(value, str) or not value.strip():
+            raise ManifestError(f"[defaults].{key} is missing, empty or not a string")
+        value = value.strip()
+        if not SAFE_VALUE.match(value):
+            raise ManifestError(
+                f"[defaults].{key} has characters that cannot be emitted into Rust source"
+            )
+        defaults[target].append((key, value))
+
+    return defaults
 
 
 def expected_with_port(value: str, expr: str, port_const: str) -> str:
@@ -100,78 +198,250 @@ def expected_with_port(value: str, expr: str, port_const: str) -> str:
     return f'format!("{{}}:{{}}", {expr}, {port_const})'
 
 
-def render(values: dict[str, str]) -> str:
+def seed_block(table: str, entries: list[tuple[str, str]]) -> list[str]:
+    """Rust lines seeding `table` with (option name, value expression) pairs."""
+    if not entries:
+        return []
+    lines = [
+        "    {",
+        f"        let mut settings = hbb_common::config::{table}.write().unwrap();",
+    ]
+    for key, expr in entries:
+        lines += [
+            "        settings",
+            f'            .entry("{key}".to_owned())',
+            f"            .or_insert_with(|| {expr}.to_owned());",
+        ]
+    lines.append("    }")
+    return lines
+
+
+def line_or_wrapped(single: str, wrapped: list[str]) -> list[str]:
+    """Keep generated Rust on one line unless it would exceed the width limit."""
+    return [single] if len(single) <= MAX_LINE_WIDTH else wrapped
+
+
+# The settings maps are process-global and cargo runs the tests in parallel, so
+# each generated test takes this lock first (same idiom as CONFIG_STATE_TEST_LOCK
+# in libs/hbb_common/src/config.rs). Without it a test that writes a key would
+# race the test that asserts that key's seeded value.
+TEST_LOCK_GUARD = '        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();'
+
+
+def seeded_defaults_test(defaults: dict[str, list[tuple[str, str]]]) -> list[str]:
+    """Assert every [defaults] entry landed in the settings map it names."""
+    if not any(defaults.values()):
+        return []
+    lines = [
+        "    #[test]",
+        "    fn apply_defaults_seeds_manifest_defaults() {",
+        TEST_LOCK_GUARD,
+        "        apply_defaults();",
+    ]
+    for table in DEFAULT_TABLES:
+        entries = defaults[table]
+        if not entries:
+            continue
+        lines += [
+            "        {",
+            f"            let settings = hbb_common::config::{table}.read().unwrap();",
+        ]
+        for key, value in entries:
+            access = f'settings.get("{key}").map(String::as_str)'
+            lines += line_or_wrapped(
+                f'            assert_eq!({access}, Some("{value}"));',
+                [
+                    "            assert_eq!(",
+                    f"                {access},",
+                    f'                Some("{value}")',
+                    "            );",
+                ],
+            )
+        lines.append("        }")
+    lines += ["    }"]
+    return lines
+
+
+def overridable_test(defaults: dict[str, list[tuple[str, str]]]) -> list[str]:
+    """Prove the seeded layer loses to a value written above it."""
+    builtin = defaults["BUILTIN_SETTINGS"]
+    settings = defaults["DEFAULT_SETTINGS"]
+    if not builtin and not settings:
+        return []
+    lines = [
+        "    // A seeded default must stay a default: a signed custom client, or a value the",
+        "    // user saved, has to keep winning over this compile-time manifest.",
+        "    #[test]",
+        "    fn seeded_defaults_stay_overridable() {",
+        TEST_LOCK_GUARD,
+        "        apply_defaults();",
+        "",
+    ]
+    if builtin:
+        key, value = builtin[0]
+        probe = "Y" if value != "Y" else "N"
+        lines += [
+            "        // read_custom_client_advanced_settings writes BUILTIN_SETTINGS with a plain",
+            "        // `insert` (src/common.rs:2478-2509), so re-applying must not clobber it.",
+            f'        let key = "{key}";',
+            "        let previous = hbb_common::config::BUILTIN_SETTINGS",
+            "            .write()",
+            "            .unwrap()",
+            f'            .insert(key.to_owned(), "{probe}".to_owned());',
+            "        apply_defaults();",
+            "        assert_eq!(",
+            "            hbb_common::config::BUILTIN_SETTINGS",
+            "                .read()",
+            "                .unwrap()",
+            "                .get(key)",
+            "                .map(String::as_str),",
+            f'            Some("{probe}")',
+            "        );",
+            "        {",
+            "            let mut builtin = hbb_common::config::BUILTIN_SETTINGS"
+            ".write().unwrap();",
+            "            match previous {",
+            "                Some(value) => {",
+            "                    builtin.insert(key.to_owned(), value);",
+            "                }",
+            "                None => {",
+            "                    builtin.remove(key);",
+            "                }",
+            "            }",
+            "        }",
+            "",
+        ]
+    if settings:
+        key, value = settings[0]
+        probe = "N" if value != "N" else "Y"
+        lines += [
+            "        // Config::get_option is OVERWRITE_SETTINGS > saved user config >",
+            "        // DEFAULT_SETTINGS (libs/hbb_common/src/config.rs:2756-2768), so the seeded",
+            "        // layer has to lose to the layers above it.",
+            f'        let key = "{key}";',
+            f'        assert_eq!(Config::get_option(key), "{value}");',
+            "        let previous = hbb_common::config::OVERWRITE_SETTINGS",
+            "            .write()",
+            "            .unwrap()",
+            f'            .insert(key.to_owned(), "{probe}".to_owned());',
+            f'        assert_eq!(Config::get_option(key), "{probe}");',
+            "        {",
+            "            let mut overwrite = hbb_common::config::OVERWRITE_SETTINGS"
+            ".write().unwrap();",
+            "            match previous {",
+            "                Some(value) => {",
+            "                    overwrite.insert(key.to_owned(), value);",
+            "                }",
+            "                None => {",
+            "                    overwrite.remove(key);",
+            "                }",
+            "            }",
+            "        }",
+            "        apply_defaults();",
+            f'        assert_eq!(Config::get_option(key), "{value}");',
+        ]
+    lines += ["    }"]
+    return lines
+
+
+def render(values: dict[str, str], defaults: dict[str, list[tuple[str, str]]]) -> str:
     rendezvous_expected = expected_with_port(
         values["id_server"], "RENDEZVOUS_SERVER", "RENDEZVOUS_PORT"
     )
     relay_expected = expected_with_port(
         values["relay_server"], "RELAY_SERVER", "RELAY_PORT"
     )
-    return "\n".join(
-        [
-            BANNER,
-            "",
-            f'pub const RENDEZVOUS_SERVER: &str = "{values["id_server"]}";',
-            f'pub const RELAY_SERVER: &str = "{values["relay_server"]}";',
-            f'pub const API_SERVER: &str = "{values["api_server"]}";',
-            f'pub const RS_PUB_KEY: &str = "{values["public_key"]}";',
-            "",
-            "/// Seed the client's config defaults with the branded servers and public key.",
-            "///",
-            "/// `or_insert_with` rather than `insert`: a value already present (a signed custom",
-            "/// client read first) must win over this compile-time manifest.",
-            "pub fn apply_defaults() {",
-            "    let mut defaults = hbb_common::config::DEFAULT_SETTINGS.write().unwrap();",
-            "    defaults",
-            '        .entry("custom-rendezvous-server".to_owned())',
-            "        .or_insert_with(|| RENDEZVOUS_SERVER.to_owned());",
-            "    defaults",
-            '        .entry("relay-server".to_owned())',
-            "        .or_insert_with(|| RELAY_SERVER.to_owned());",
-            "    defaults",
-            '        .entry("api-server".to_owned())',
-            "        .or_insert_with(|| API_SERVER.to_owned());",
-            "    defaults",
-            '        .entry("key".to_owned())',
-            "        .or_insert_with(|| RS_PUB_KEY.to_owned());",
-            "}",
-            "",
-            "#[cfg(test)]",
-            "mod tests {",
-            "    use super::*;",
-            "    use hbb_common::{",
-            "        config::{Config, RELAY_PORT, RENDEZVOUS_PORT},",
-            "        socket_client::check_port,",
-            "    };",
-            "",
-            "    #[test]",
-            "    fn apply_defaults_seeds_server_options() {",
-            "        apply_defaults();",
-            "        assert_eq!(",
-            '            Config::get_option("custom-rendezvous-server"),',
-            "            RENDEZVOUS_SERVER",
-            "        );",
-            '        assert_eq!(Config::get_option("relay-server"), RELAY_SERVER);',
-            '        assert_eq!(Config::get_option("api-server"), API_SERVER);',
-            '        assert_eq!(Config::get_option("key"), RS_PUB_KEY);',
-            "    }",
-            "",
-            "    #[test]",
-            "    fn manifest_hosts_resolve_to_the_standard_ports() {",
-            "        apply_defaults();",
-            "        assert_eq!(",
-            "            Config::get_rendezvous_server(),",
-            f"            {rendezvous_expected},",
-            "        );",
-            "        assert_eq!(",
-            "            check_port(RELAY_SERVER, RELAY_PORT),",
-            f"            {relay_expected},",
-            "        );",
-            "    }",
-            "}",
-            "",
-        ]
-    )
+
+    server_seeds = [
+        ("custom-rendezvous-server", "RENDEZVOUS_SERVER"),
+        ("relay-server", "RELAY_SERVER"),
+        ("api-server", "API_SERVER"),
+        ("key", "RS_PUB_KEY"),
+    ]
+    extra = {
+        table: [(key, f'"{value}"') for key, value in entries]
+        for table, entries in defaults.items()
+    }
+
+    lines = [
+        BANNER,
+        "",
+        f'pub const RENDEZVOUS_SERVER: &str = "{values["id_server"]}";',
+        f'pub const RELAY_SERVER: &str = "{values["relay_server"]}";',
+        f'pub const API_SERVER: &str = "{values["api_server"]}";',
+        f'pub const RS_PUB_KEY: &str = "{values["public_key"]}";',
+        "",
+        "/// Seed the client's config defaults with the branded servers, public key and",
+        "/// the extra option defaults declared in branding/nerv.toml.",
+        "///",
+        "/// Add or change a default with one line in that manifest's [defaults] table and",
+        "/// re-run scripts/gen-branding.py, whose KEY_TARGETS entry maps the option to the",
+        "/// settings map that actually reads it (the wrong map is silently ineffective).",
+        "///",
+        "/// `or_insert_with` rather than `insert`: a value already present (a saved user",
+        "/// setting, or a signed custom client read first) must win over this compile-time",
+        "/// manifest.",
+        "pub fn apply_defaults() {",
+    ]
+    lines += seed_block("DEFAULT_SETTINGS", server_seeds + extra["DEFAULT_SETTINGS"])
+    lines += seed_block("BUILTIN_SETTINGS", extra["BUILTIN_SETTINGS"])
+    lines += seed_block("DEFAULT_DISPLAY_SETTINGS", extra["DEFAULT_DISPLAY_SETTINGS"])
+    lines += [
+        "}",
+        "",
+        "#[cfg(test)]",
+        "mod tests {",
+        "    use super::*;",
+        "    use std::sync::Mutex;",
+        "    use hbb_common::{",
+        "        config::{Config, RELAY_PORT, RENDEZVOUS_PORT},",
+        "        socket_client::check_port,",
+        "    };",
+        "",
+        "    // The settings maps are process-global and cargo runs the tests in",
+        "    // parallel, so these tests must not interleave (same idiom as",
+        "    // CONFIG_STATE_TEST_LOCK in libs/hbb_common/src/config.rs).",
+        "    static BRANDING_SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());",
+        "",
+        "    #[test]",
+        "    fn apply_defaults_seeds_server_options() {",
+        TEST_LOCK_GUARD,
+        "        apply_defaults();",
+        "        assert_eq!(",
+        '            Config::get_option("custom-rendezvous-server"),',
+        "            RENDEZVOUS_SERVER",
+        "        );",
+        '        assert_eq!(Config::get_option("relay-server"), RELAY_SERVER);',
+        '        assert_eq!(Config::get_option("api-server"), API_SERVER);',
+        '        assert_eq!(Config::get_option("key"), RS_PUB_KEY);',
+        "    }",
+        "",
+        "    #[test]",
+        "    fn manifest_hosts_resolve_to_the_standard_ports() {",
+        TEST_LOCK_GUARD,
+        "        apply_defaults();",
+        "        assert_eq!(",
+        "            Config::get_rendezvous_server(),",
+        f"            {rendezvous_expected},",
+        "        );",
+        "        assert_eq!(",
+        "            check_port(RELAY_SERVER, RELAY_PORT),",
+        f"            {relay_expected},",
+        "        );",
+        "    }",
+        "",
+    ]
+    extra_tests = [
+        block
+        for block in (seeded_defaults_test(defaults), overridable_test(defaults))
+        if block
+    ]
+    for index, block in enumerate(extra_tests):
+        if index:
+            lines.append("")
+        lines += block
+    lines += ["}", ""]
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -184,12 +454,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        values = read_manifest()
+        values, defaults = read_manifest()
     except ManifestError as err:
         print(f"gen-branding: error: {err}", file=sys.stderr)
         return 1
 
-    generated = render(values)
+    generated = render(values, defaults)
     existing = OUTPUT.read_text(encoding="utf-8") if OUTPUT.is_file() else None
 
     if args.check:

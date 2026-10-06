@@ -63,6 +63,23 @@ def get_version():
     return ''
 
 
+def macos_app_name():
+    # Single source of truth for the macOS bundle name: Xcode names the built .app after
+    # PRODUCT_NAME, so read it back instead of hardcoding the name anywhere in this file.
+    # Absolute path via REPO_ROOT: callers may already have chdir'd into flutter/.
+    xcconfig = os.path.join(REPO_ROOT, 'flutter/macos/Runner/Configs/AppInfo.xcconfig')
+    name = ''
+    with open(xcconfig, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.split('//')[0].strip()
+            if line.startswith('PRODUCT_NAME'):
+                name = line.split('=', 1)[1].strip()
+    if not name:
+        sys.stderr.write(f"PRODUCT_NAME not found in {xcconfig}. Exiting.\n")
+        sys.exit(-1)
+    return name
+
+
 def parse_rc_features(feature):
     available_features = {}
     apply_features = {}
@@ -952,6 +969,7 @@ def build_deb_from_folder(version, binary_folder, want_drm=False):
 
 
 def build_flutter_dmg(version, features):
+    app_name = macos_app_name()
     if not skip_cargo:
         # set minimum osx build target, now is 10.14, which is the same as the flutter xcode project
         system2(
@@ -966,10 +984,17 @@ def build_flutter_dmg(version, features):
     mac_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x86_64'
     system2(
         f'FLUTTER_XCODE_ARCHS={mac_arch} FLUTTER_XCODE_ONLY_ACTIVE_ARCH=YES flutter build macos --release')
-    system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/')
-    '''
+    # Fail early: a renamed bundle used to surface much later as a create-dmg/codesign error.
+    app_path = f'./build/macos/Build/Products/Release/{app_name}.app'
+    if not os.path.isdir(app_path):
+        sys.stderr.write(
+            f"macOS bundle not found at '{app_path}'; is PRODUCT_NAME in "
+            "flutter/macos/Runner/Configs/AppInfo.xcconfig in sync with the Flutter build output? Exiting.\n")
+        sys.exit(-1)
+    system2(f'cp -rf ../target/release/service "{app_path}/Contents/MacOS/"')
+    f'''
     system2(
-        "create-dmg --volname \"RustDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon RustDesk.app 200 190 --hide-extension RustDesk.app rustdesk.dmg ./build/macos/Build/Products/Release/RustDesk.app")
+        "create-dmg --volname \"RustDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon {app_name}.app 200 190 --hide-extension {app_name}.app rustdesk.dmg ./build/macos/Build/Products/Release/{app_name}.app")
     os.rename("rustdesk.dmg", f"../rustdesk-{version}.dmg")
     '''
     os.chdir("..")
@@ -1128,10 +1153,12 @@ def main():
         else:
             system2('cargo --locked bundle --release --features ' + features)
             if osx:
+                app_name = macos_app_name()
+                bundle_app = f'target/release/bundle/osx/{app_name}.app'
                 system2(
-                    'strip target/release/bundle/osx/RustDesk.app/Contents/MacOS/rustdesk')
+                    f'strip "{bundle_app}/Contents/MacOS/rustdesk"')
                 system2(
-                    'cp libsciter.dylib target/release/bundle/osx/RustDesk.app/Contents/MacOS/')
+                    f'cp libsciter.dylib "{bundle_app}/Contents/MacOS/"')
                 # https://github.com/sindresorhus/create-dmg
                 system2('/bin/rm -rf *.dmg')
                 pa = os.environ.get('P')
@@ -1139,15 +1166,15 @@ def main():
                     system2('''
     # buggy: rcodesign sign ... path/*, have to sign one by one
     # install rcodesign via cargo install apple-codesign
-    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/RustDesk.app/Contents/MacOS/rustdesk
-    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/RustDesk.app/Contents/MacOS/libsciter.dylib
-    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/RustDesk.app
+    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime {1}/Contents/MacOS/rustdesk
+    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime {1}/Contents/MacOS/libsciter.dylib
+    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime {1}
     # goto "Keychain Access" -> "My Certificates" for below id which starts with "Developer ID Application:"
-    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/RustDesk.app/Contents/MacOS/*
-    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/RustDesk.app
-    '''.format(pa))
+    codesign -s "Developer ID Application: {0}" --force --options runtime  "{1}/Contents/MacOS/"*
+    codesign -s "Developer ID Application: {0}" --force --options runtime  "{1}"
+    '''.format(pa, bundle_app))
                 system2(
-                    'create-dmg "RustDesk %s.dmg" "target/release/bundle/osx/RustDesk.app"' % version)
+                    'create-dmg "RustDesk %s.dmg" "%s"' % (version, bundle_app))
                 os.rename('RustDesk %s.dmg' %
                           version, 'rustdesk-%s.dmg' % version)
                 if pa:
@@ -1162,8 +1189,8 @@ def main():
     # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_getting_started.html#apple-codesign-app-store-connect-api-key
     # p8 file is generated when you generate api key (can download only once)
     rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple rustdesk-{1}.dmg
-    # verify:  spctl -a -t exec -v /Applications/RustDesk.app
-    '''.format(pa, version))
+    # verify:  spctl -a -t exec -v /Applications/{2}.app
+    '''.format(pa, version, app_name))
                 else:
                     print('Not signed')
             else:
