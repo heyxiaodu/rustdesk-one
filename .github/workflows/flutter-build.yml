@@ -578,8 +578,16 @@ jobs:
           python3 res/inline-sciter.py
           # Patch sciter x86
           sed -i 's/branch = "dyn"/branch = "dyn_x86"/g' ./Cargo.toml
+          # This job pins nightly-2023-10-13 (sciter needs nightly), whose cargo is 1.75. It
+          # cannot parse the repo's v4 Cargo.lock, and it refuses to build the root package
+          # while Cargo.toml declares `rust-version = "1.91"`. Neither is a real constraint
+          # here, so relax both for this job only, in the throwaway CI checkout: rewrite the
+          # lock to v3 (1.75 parses v3 and writes v3 back) and pass --ignore-rust-version to
+          # the build. The committed Cargo.lock and Cargo.toml stay v4 / 1.91.
+          sed -i 's/^version = 4$/version = 3/' Cargo.lock
+          grep -q '^version = 3$' Cargo.lock || { echo "Cargo.lock is not v4 any more: revisit this workaround"; exit 1; }
           cargo update -p sciter-rs --precise 674e07d3066ca9a92ced3816203ab6b652629d1e
-          cargo build --locked --features inline,vram,hwcodec --release --bins
+          cargo build --locked --ignore-rust-version --features inline,vram,hwcodec --release --bins
           mkdir -p ./Release
           mv ./target/release/nervdesk.exe ./Release/nervdesk.exe
           curl -LJ -o ./Release/sciter.dll https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll
@@ -2482,6 +2490,14 @@ jobs:
             head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
             # build rustdesk
             python3 ./res/inline-sciter.py
+            # SCITER_RUST_VERSION above installs 1.75, which cannot parse the repo's v4
+            # Cargo.lock and refuses to build the root package while Cargo.toml declares
+            # `rust-version = "1.91"`. Neither is a real constraint here, so relax both for
+            # this job only, in the throwaway CI checkout: rewrite the lock to v3 (1.75
+            # parses v3 and writes v3 back) and pass --ignore-rust-version to the build.
+            # The committed Cargo.lock and Cargo.toml stay v4 / 1.91.
+            sed -i 's/^version = 4$/version = 3/' Cargo.lock
+            grep -q '^version = 3$' Cargo.lock || { echo "Cargo.lock is not v4 any more: revisit this workaround"; exit 1; }
             export CARGO_INCREMENTAL=0
             # armv7 is the only 32-bit target in this job that links the whole binary, and the
             # release profile uses fat LTO with codegen-units=1. LLVM then merges every module
@@ -2493,7 +2509,7 @@ jobs:
               export CARGO_PROFILE_RELEASE_LTO=thin
               export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
             fi
-            cargo build --locked --features inline${{ matrix.job.extra_features }} --release --bins --jobs 1
+            cargo build --locked --ignore-rust-version --features inline${{ matrix.job.extra_features }} --release --bins --jobs 1
             # make debian package
             mkdir -p ./Release
             # Ship the payload under the name everything downstream expects: the deb's control
