@@ -379,7 +379,7 @@ jobs:
           python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/nervdesk.exe
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
@@ -483,7 +483,7 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           files: |
             ./SignOutput/nervdesk-*.msi
-            ./SignOutput/rustdesk-*.exe
+            ./SignOutput/nervdesk-*.exe
             ./SignOutput/LICENSE-AGPLv3-*.txt
             ./SignOutput/NOTICE-*.txt
 
@@ -639,7 +639,7 @@ jobs:
           python3 ./generate.py -f ../../Release/ -o . -e ../../Release/nervdesk.exe
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/nervdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
 
       - name: Sign rustdesk self-extracted file
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
@@ -665,7 +665,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./SignOutput/rustdesk-*.exe
+            ./SignOutput/nervdesk-*.exe
             ./SignOutput/LICENSE-AGPLv3-*.txt
             ./SignOutput/NOTICE-*.txt
 
