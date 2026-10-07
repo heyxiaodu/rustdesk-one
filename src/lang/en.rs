@@ -261,6 +261,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("keep-awake-during-incoming-sessions-label", "Keep screen awake during incoming sessions"),
         ("password-hidden-tip", "Permanent password is set (hidden)."),
         ("preset-password-in-use-tip", "Preset password is currently in use."),
+        ("permanent-password-needs-admin", "Setting a permanent password requires the administrator channel; the current password method is unchanged."),
         ("allow-remote-toolbar-docking-any-edge", "Allow docking remote toolbar to any window edge"),
         ("server_requires_deployment_tip", "The server requires this device to be deployed explicitly. Deploy now?"),
         ("wayland-keyboard-input-disabled-tip", "Allow keyboard input?"),

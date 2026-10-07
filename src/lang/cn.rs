@@ -728,6 +728,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Display Name", "显示名称"),
         ("password-hidden-tip", "永久密码已设置（已隐藏）"),
         ("preset-password-in-use-tip", "当前使用预设密码"),
+        ("permanent-password-needs-admin", "固定密码需由管理员通过命令行预设，当前密码方式保持不变。"),
         ("Enable privacy mode", "允许隐私模式"),
         ("allow-remote-toolbar-docking-any-edge", "允许将远程工具栏停靠到任意窗口边缘"),
         ("API Token", "API 令牌"),

@@ -1271,7 +1271,13 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                                         key: "permanent-password-set")) !=
                                     "true") {
                               if (isChangePermanentPasswordDisabled()) {
-                                await callback();
+                                // A NERV Desk build factory-locks the permanent password,
+                                // so the customer cannot set one here. Switching to
+                                // "permanent password only" anyway would leave the machine
+                                // with no usable password at all - the daemon then accepts
+                                // neither the one-time nor the permanent password. Keep the
+                                // current method and say why instead of accepting it.
+                                showToast(translate('permanent-password-needs-admin'));
                                 return;
                               }
                               setPasswordDialog(notEmptyCallback: callback);

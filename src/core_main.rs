@@ -556,7 +556,7 @@ pub fn core_main() -> Option<Vec<String>> {
             return None;
         } else if args[0] == "--password" {
             if is_cli_setting_change_disabled() {
-                println!("Settings are disabled!");
+                crate::my_println!("Settings are disabled!");
                 return None;
             }
             let locked = config::Config::is_disable_change_permanent_password();
@@ -570,15 +570,22 @@ pub fn core_main() -> Option<Vec<String>> {
                     } else {
                         crate::ipc::set_permanent_password(args[1].to_owned())
                     };
+                    // `my_println!` exists precisely because a release Windows build is a
+                    // GUI-subsystem binary (`windows_subsystem = "windows"` in src/main.rs):
+                    // it has no console, so a bare `println!` writes nowhere and the operator
+                    // cannot tell "Done!" from a rejection. The macro shows a message box on
+                    // Windows and keeps printing to stdout everywhere else.
                     if let Err(err) = result {
-                        println!("{err}");
+                        crate::my_println!("{err}");
                     } else {
-                        println!("Done!");
+                        crate::my_println!("Done!");
                     }
-                } else if locked {
-                    println!("Changing permanent password is disabled!");
                 } else {
-                    println!("Installation and administrative privileges required!");
+                    // Also the factory-locked case: the lock is lifted for exactly one
+                    // invocation shape (installed build, launched from an elevated prompt),
+                    // so a missing privilege or a portable copy must not be reported as a
+                    // disabled feature.
+                    crate::my_println!("Installation and administrative privileges required!");
                 }
             }
             return None;
