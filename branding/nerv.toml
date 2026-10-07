@@ -32,3 +32,13 @@ allow-hide-cm = "Y"
 # custom.txt 覆盖或重新构建；非 macOS 上关掉主窗口后没有托盘入口，重新启动程序即可
 # 重新打开主窗口（hide-tray 只决定要不要创建托盘图标，不影响主进程与已建立的连接）。
 hide-tray = "Y"
+
+# 固定密码"出厂即锁死"：不允许在界面里修改或清除永久密码。读取点
+# libs/hbb_common/src/config.rs:1187（is_disable_change_permanent_password）
+# 与 :1305（set_permanent_password 的最内层拒绝）。
+# 有意保留的唯一例外：已安装 + 管理员身份在本机执行 `rustdesk --password <值>`
+# 仍可设置一次（见 src/core_main.rs 与 src/ipc.rs 的 permanent-password-admin）。
+# 代价：本键属 BUILTIN_SETTINGS，没有 OVERWRITE 变体、也没有对应的用户设置项
+# ⇒ 用户无法在界面里改回来；删掉配置文件也无效，apply_defaults() 每次启动都会
+# 重新播种。要解除只能改本文件后重新构建，或用签名 custom.txt 覆盖。
+disable-change-permanent-password = "Y"

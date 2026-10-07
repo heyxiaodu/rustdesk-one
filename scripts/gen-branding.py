@@ -70,11 +70,34 @@ KEY_TARGETS = {
     "hide-tray": "BUILTIN_SETTINGS",
     "hide-powered-by-me": "BUILTIN_SETTINGS",
     "hide-elevate-button-in-accept-window": "BUILTIN_SETTINGS",
+    # Permanent password cannot be changed or cleared from the UI. Read by
+    # Config::is_disable_change_permanent_password (config.rs:1187) and by the
+    # innermost guard of Config::set_permanent_password (config.rs:1305).
+    # src/ipc.rs still lets an installed, root/elevated caller set it once via
+    # the separate "permanent-password-admin" message.
+    "disable-change-permanent-password": "BUILTIN_SETTINGS",
     # Read through UserDefaultConfig::get; implicit defaults are the clamps in
     # config.rs:2383-2390 (balanced / 50 / 30).
     "image_quality": "DEFAULT_DISPLAY_SETTINGS",
     "custom_image_quality": "DEFAULT_DISPLAY_SETTINGS",
     "custom-fps": "DEFAULT_DISPLAY_SETTINGS",
+}
+
+# Options whose seeded value drives a predicate in the client. Listing one here
+# makes the generator emit a test that the seeded value really flips that
+# predicate; the manifest holds two plain strings, so a wrong option name would
+# otherwise pass every map assertion while the feature stays off at runtime.
+# Each entry is (value that makes the predicate true, the predicate, a call that
+# must then still refuse); the refusal is asserted first, while the lock holds and
+# before the test writes anything, so it can never fall through to a real write.
+KEY_PREDICATES = {
+    "disable-change-permanent-password": (
+        "Y",
+        "Config::is_disable_change_permanent_password()",
+        # The UI/FFI write path (src/ui_interface.rs:651, src/ipc.rs:1015) ends in
+        # this call; while the OEM lock holds it has to refuse, writing nothing.
+        'Config::set_permanent_password("test")',
+    ),
 }
 
 # Option names [server] is seeded under in DEFAULT_SETTINGS; knowing them keeps a
@@ -344,6 +367,68 @@ def overridable_test(defaults: dict[str, list[tuple[str, str]]]) -> list[str]:
     return lines
 
 
+def predicate_test(defaults: dict[str, list[tuple[str, str]]]) -> list[str]:
+    """Assert a seeded value flips the predicate the client actually reads."""
+    checks = [
+        (table, key, value)
+        for table in DEFAULT_TABLES
+        for key, value in defaults[table]
+        if key in KEY_PREDICATES and value == KEY_PREDICATES[key][0]
+    ]
+    if not checks:
+        return []
+    lines = [
+        "    // The [defaults] key and value have to reach the predicate the client reads;",
+        "    // the raw map assertion above would still pass if the option name were wrong.",
+        "    #[test]",
+        "    fn seeded_defaults_flip_known_predicates() {",
+        TEST_LOCK_GUARD,
+    ]
+    for table, key, value in checks:
+        predicate = KEY_PREDICATES[key][1]
+        refuse = KEY_PREDICATES[key][2]
+        probe = "N" if value != "N" else "Y"
+        lines += [
+            "        apply_defaults();",
+            f"        assert!({predicate});",
+            "        // The regular write path has to keep refusing while the lock holds.",
+            f"        assert!(!{refuse});",
+            f'        let key = "{key}";',
+            f"        let previous = hbb_common::config::{table}",
+            "            .write()",
+            "            .unwrap()",
+            f'            .insert(key.to_owned(), "{probe}".to_owned());',
+            f"        assert!(!{predicate});",
+            "        // Re-seeding a key that already has a value must not clobber it.",
+            "        apply_defaults();",
+            "        assert_eq!(",
+            f"            hbb_common::config::{table}",
+            "                .read()",
+            "                .unwrap()",
+            "                .get(key)",
+            "                .map(String::as_str),",
+            f'            Some("{probe}")',
+            "        );",
+            "        {",
+            f"            let mut settings = hbb_common::config::{table}",
+            "                .write()",
+            "                .unwrap();",
+            "            match previous {",
+            "                Some(value) => {",
+            "                    settings.insert(key.to_owned(), value);",
+            "                }",
+            "                None => {",
+            "                    settings.remove(key);",
+            "                }",
+            "            }",
+            "        }",
+            "        apply_defaults();",
+            f"        assert!({predicate});",
+        ]
+    lines.append("    }")
+    return lines
+
+
 def render(values: dict[str, str], defaults: dict[str, list[tuple[str, str]]]) -> str:
     rendezvous_expected = expected_with_port(
         values["id_server"], "RENDEZVOUS_SERVER", "RENDEZVOUS_PORT"
@@ -433,7 +518,11 @@ def render(values: dict[str, str], defaults: dict[str, list[tuple[str, str]]]) -
     ]
     extra_tests = [
         block
-        for block in (seeded_defaults_test(defaults), overridable_test(defaults))
+        for block in (
+            seeded_defaults_test(defaults),
+            overridable_test(defaults),
+            predicate_test(defaults),
+        )
         if block
     ]
     for index, block in enumerate(extra_tests):

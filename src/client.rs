@@ -174,6 +174,39 @@ lazy_static::lazy_static! {
 
 const PUBLIC_SERVER: &str = "public";
 
+/// Whether the `server` part of an `id@server` address-book entry may be used.
+///
+/// An empty server means "none given" and is allowed. Every other value must name
+/// one of our own ID/relay servers: `id@public` (or any third-party host) would
+/// otherwise pull in upstream's `RS_PUB_KEY` and upstream's rendezvous servers,
+/// which this build must not do.
+///
+/// Matching trims surrounding whitespace, ignores a trailing `:port` on either
+/// side and is case-insensitive; the host must be identical otherwise.
+fn is_our_server(server: &str, our_servers: &[String]) -> bool {
+    let server = server.trim();
+    if server.is_empty() {
+        return true;
+    }
+    let host = host_without_port(server);
+    our_servers
+        .iter()
+        .any(|s| host_without_port(s).eq_ignore_ascii_case(host))
+}
+
+/// The `host` part of `host[:port]`; an IPv6 literal keeps its brackets.
+fn host_without_port(addr: &str) -> &str {
+    let addr = addr.trim();
+    match addr.rfind(':') {
+        Some(i)
+            if !addr[i + 1..].is_empty() && addr[i + 1..].chars().all(|c| c.is_ascii_digit()) =>
+        {
+            &addr[..i]
+        }
+        _ => addr,
+    }
+}
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_key_state(key: enigo::Key) -> bool {
     use enigo::KeyboardControllable;
@@ -460,6 +493,16 @@ impl Client {
         } else {
             (peer, "", key, token)
         };
+        // A `@server` segment is only honored when it names our own ID server; the
+        // upstream `public` alias and every unknown host are refused here, before
+        // `other_server` selects the rendezvous server and the key below.
+        if !is_our_server(other_server, &Config::get_rendezvous_servers()) {
+            bail!(
+                "Refusing to connect \"{}\" via \"{}\": not our ID server",
+                peer,
+                other_server
+            );
+        }
         let (rendezvous_server, servers, contained) = if other_server.is_empty() {
             crate::get_rendezvous_server(1_000).await
         } else {
@@ -6072,5 +6115,54 @@ mod kx_tests {
         let (seen, decrypted) = handshake(KX_VERSION_LATEST, Some(0)).await;
         assert_eq!(seen.picked, 1);
         assert!(!seen.decrypted && !decrypted);
+    }
+}
+
+#[cfg(test)]
+mod other_server_guard_tests {
+    use super::*;
+
+    fn ours() -> Vec<String> {
+        vec!["nerv.example.com".to_owned(), "10.0.0.5:21116".to_owned()]
+    }
+
+    #[test]
+    fn public_is_not_our_server() {
+        assert!(!is_our_server("public", &ours()));
+        assert!(!is_our_server("PUBLIC", &ours()));
+        assert!(!is_our_server("public:21116", &ours()));
+    }
+
+    #[test]
+    fn empty_server_is_allowed() {
+        assert!(is_our_server("", &ours()));
+        assert!(is_our_server("   ", &ours()));
+    }
+
+    #[test]
+    fn our_servers_are_allowed_regardless_of_case_and_port() {
+        assert!(is_our_server("nerv.example.com", &ours()));
+        assert!(is_our_server("NERV.Example.COM", &ours()));
+        assert!(is_our_server(" nerv.example.com ", &ours()));
+        assert!(is_our_server("nerv.example.com:21116", &ours()));
+        assert!(is_our_server("10.0.0.5", &ours()));
+        assert!(is_our_server("10.0.0.5:21116", &ours()));
+    }
+
+    #[test]
+    fn unknown_hosts_are_not_our_server() {
+        assert!(!is_our_server("evil.example.net", &ours()));
+        assert!(!is_our_server("evil.example.net:21116", &ours()));
+        assert!(!is_our_server("rs-ny.rustdesk.com", &ours()));
+        assert!(!is_our_server("nerv.example.com.evil.net", &ours()));
+        assert!(!is_our_server("10.0.0.5.evil.net", &ours()));
+    }
+
+    #[test]
+    fn host_without_port_keeps_ipv6_literals() {
+        assert_eq!(host_without_port("host.example.com"), "host.example.com");
+        assert_eq!(host_without_port("host.example.com:21116"), "host.example.com");
+        assert_eq!(host_without_port("[::1]:21116"), "[::1]");
+        assert_eq!(host_without_port("[::1]"), "[::1]");
     }
 }

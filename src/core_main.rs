@@ -559,17 +559,24 @@ pub fn core_main() -> Option<Vec<String>> {
                 println!("Settings are disabled!");
                 return None;
             }
-            if config::Config::is_disable_change_permanent_password() {
-                println!("Changing permanent password is disabled!");
-                return None;
-            }
+            let locked = config::Config::is_disable_change_permanent_password();
             if args.len() == 2 {
                 if crate::platform::is_installed() && is_root() {
-                    if let Err(err) = crate::ipc::set_permanent_password(args[1].to_owned()) {
+                    // A NERV Desk build factory-locks the permanent password, but this
+                    // installed-administrator CLI is deliberately kept as the one way to
+                    // set it once, so it goes through the daemon's administrator channel.
+                    let result = if locked {
+                        crate::ipc::set_permanent_password_as_admin(args[1].to_owned())
+                    } else {
+                        crate::ipc::set_permanent_password(args[1].to_owned())
+                    };
+                    if let Err(err) = result {
                         println!("{err}");
                     } else {
                         println!("Done!");
                     }
+                } else if locked {
+                    println!("Changing permanent password is disabled!");
                 } else {
                     println!("Installation and administrative privileges required!");
                 }

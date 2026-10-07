@@ -39,6 +39,9 @@ pub fn apply_defaults() {
         settings
             .entry("hide-tray".to_owned())
             .or_insert_with(|| "Y".to_owned());
+        settings
+            .entry("disable-change-permanent-password".to_owned())
+            .or_insert_with(|| "Y".to_owned());
     }
 }
 
@@ -94,6 +97,10 @@ mod tests {
         {
             let settings = hbb_common::config::BUILTIN_SETTINGS.read().unwrap();
             assert_eq!(settings.get("hide-tray").map(String::as_str), Some("Y"));
+            assert_eq!(
+                settings.get("disable-change-permanent-password").map(String::as_str),
+                Some("Y")
+            );
         }
     }
 
@@ -155,5 +162,47 @@ mod tests {
         }
         apply_defaults();
         assert_eq!(Config::get_option(key), "Y");
+    }
+
+    // The [defaults] key and value have to reach the predicate the client reads;
+    // the raw map assertion above would still pass if the option name were wrong.
+    #[test]
+    fn seeded_defaults_flip_known_predicates() {
+        let _guard = BRANDING_SETTINGS_TEST_LOCK.lock().unwrap();
+        apply_defaults();
+        assert!(Config::is_disable_change_permanent_password());
+        // The regular write path has to keep refusing while the lock holds.
+        assert!(!Config::set_permanent_password("test"));
+        let key = "disable-change-permanent-password";
+        let previous = hbb_common::config::BUILTIN_SETTINGS
+            .write()
+            .unwrap()
+            .insert(key.to_owned(), "N".to_owned());
+        assert!(!Config::is_disable_change_permanent_password());
+        // Re-seeding a key that already has a value must not clobber it.
+        apply_defaults();
+        assert_eq!(
+            hbb_common::config::BUILTIN_SETTINGS
+                .read()
+                .unwrap()
+                .get(key)
+                .map(String::as_str),
+            Some("N")
+        );
+        {
+            let mut settings = hbb_common::config::BUILTIN_SETTINGS
+                .write()
+                .unwrap();
+            match previous {
+                Some(value) => {
+                    settings.insert(key.to_owned(), value);
+                }
+                None => {
+                    settings.remove(key);
+                }
+            }
+        }
+        apply_defaults();
+        assert!(Config::is_disable_change_permanent_password());
     }
 }

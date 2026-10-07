@@ -30,6 +30,9 @@ LEGAL_ENTITY = "NERVDESK"
 
 # Replace the following links with your own in the custom arp properties.
 # https://learn.microsoft.com/en-us/windows/win32/msi/property-reference
+# These three are the support links shown under Add/Remove Programs ("Click here
+# for support information"). They point at this distribution's own source
+# repository; --custom-arp still overrides any of them per customer.
 g_arpsystemcomponent = {
     "Comments": {
         "msi": "ARPCOMMENTS",
@@ -38,15 +41,15 @@ g_arpsystemcomponent = {
     },
     "Contact": {
         "msi": "ARPCONTACT",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/heyxiaodu/rustdesk-one",
     },
     "HelpLink": {
         "msi": "ARPHELPLINK",
-        "v": "https://github.com/rustdesk/rustdesk/issues/",
+        "v": "https://github.com/heyxiaodu/rustdesk-one/issues",
     },
     "ReadMe": {
         "msi": "ARPREADME",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/heyxiaodu/rustdesk-one",
     },
 }
 

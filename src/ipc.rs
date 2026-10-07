@@ -1019,6 +1019,18 @@ async fn handle(data: Data, stream: &mut Connection) {
                     // reading back any secret.
                     let ack = if updated { "Y" } else { "N" }.to_owned();
                     allow_err!(stream.send(&Data::Config((name.clone(), Some(ack)))).await);
+                } else if name == "permanent-password-admin" {
+                    // Administrator-only path for a factory-locked permanent password. The
+                    // daemon accepts it only from a SYSTEM or elevated peer, the same bar
+                    // `--password` itself sets (src/core_main.rs).
+                    if peer_is_local_admin(stream) {
+                        updated = apply_permanent_password_as_admin(&value);
+                    } else {
+                        log::warn!("Rejected unprivileged administrator password write");
+                        updated = false;
+                    }
+                    let ack = if updated { "Y" } else { "N" }.to_owned();
+                    allow_err!(stream.send(&Data::Config((name.clone(), Some(ack)))).await);
                 } else if name == "salt" {
                     Config::set_salt(&value);
                 } else if name == "voice-call-input" {
@@ -1776,6 +1788,104 @@ async fn set_permanent_password_with_ack_async(v: String) -> ResultType<bool> {
     Ok(false)
 }
 
+/// Administrator counterpart of `set_permanent_password`.
+///
+/// A NERV Desk build factory-locks the permanent password, so the plain path
+/// above always fails. An installed, privileged operator must still be able to
+/// set it once, which is what `--password` does (src/core_main.rs); the daemon
+/// accepts this message name only from a SYSTEM or elevated peer.
+#[tokio::main(flavor = "current_thread")]
+pub async fn set_permanent_password_as_admin(v: String) -> ResultType<()> {
+    // The daemon ACK/NACK is expected quickly since it applies the config in-process.
+    let ms_timeout = 1_000;
+    let mut c = connect(ms_timeout, "").await?;
+    c.send_config("permanent-password-admin", v).await?;
+    if let Some(Data::Config((name2, Some(v)))) = c.next_timeout(ms_timeout).await? {
+        if name2 == "permanent-password-admin" && v.trim() == "Y" {
+            // Ensure the hashed permanent password storage is written to the user config file.
+            // This sync must not affect the daemon ACK outcome.
+            if let Err(err) = sync_permanent_password_storage_from_daemon_async().await {
+                log::warn!("Failed to sync permanent password storage from daemon: {err}");
+            }
+            return Ok(());
+        }
+    }
+    bail!("Changing permanent password was rejected by daemon");
+}
+
+/// Puts the OEM permanent-password lock back when it goes out of scope.
+struct PermanentPasswordLockGuard(Option<String>);
+
+impl Drop for PermanentPasswordLockGuard {
+    fn drop(&mut self) {
+        let key = keys::OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD;
+        let mut builtin = hbb_common::config::BUILTIN_SETTINGS.write().unwrap();
+        match self.0.take() {
+            Some(previous) => {
+                builtin.insert(key.to_owned(), previous);
+            }
+            None => {
+                builtin.remove(key);
+            }
+        }
+    }
+}
+
+/// Runs `f` with the OEM permanent-password lock lifted.
+///
+/// `Config::set_permanent_password` returns `false` while the lock is on, and it
+/// reads that lock from the very map the lock itself lives in, so the flag has to
+/// be lifted for the duration of a write. The guard puts it back, even if `f`
+/// panics, so a failed administrator write cannot leave the client unlocked.
+fn with_permanent_password_lock_lifted<T>(f: impl FnOnce() -> T) -> T {
+    let key = keys::OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD;
+    let previous = hbb_common::config::BUILTIN_SETTINGS
+        .write()
+        .unwrap()
+        .insert(key.to_owned(), "N".to_owned());
+    let _restore = PermanentPasswordLockGuard(previous);
+    f()
+}
+
+/// Applies a permanent password write for the administrator channel.
+fn apply_permanent_password_as_admin(password: &str) -> bool {
+    with_permanent_password_lock_lifted(|| Config::set_permanent_password(password))
+}
+
+/// Whether the peer on `stream` is a local administrator.
+///
+/// The elevation predicate used by the main listener is private to `ipc_auth`
+/// (src/ipc/auth.rs:773-777), so it is repeated here rather than exposed.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn peer_is_local_admin(stream: &Connection) -> bool {
+    use std::os::unix::io::AsRawFd;
+    ipc_auth::peer_uid_from_fd(stream.inner.get_ref().as_raw_fd()) == Some(0)
+}
+
+#[cfg(windows)]
+fn peer_is_local_admin(stream: &Connection) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
+    let pipe_handle = stream.inner.get_ref().as_raw_handle();
+    if pipe_handle.is_null() {
+        return false;
+    }
+    let mut pid = 0u32;
+    let ok =
+        unsafe { GetNamedPipeClientProcessId(HANDLE(pipe_handle), &mut pid as *mut u32) }.is_ok();
+    if !ok || pid == 0 {
+        return false;
+    }
+    crate::platform::windows::is_process_running_as_system(pid).unwrap_or(false)
+        || crate::platform::windows::is_elevated(Some(pid)).unwrap_or(false)
+}
+
+/// No elevation check exists on this platform, so the channel stays closed.
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn peer_is_local_admin(_stream: &Connection) -> bool {
+    false
+}
+
 #[cfg(feature = "flutter")]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {
@@ -2275,6 +2385,34 @@ mod test {
     fn verify_ffi_enum_data_size() {
         println!("{}", std::mem::size_of::<Data>());
         assert!(std::mem::size_of::<Data>() <= 120);
+    }
+
+    // The factory lock has to hold for every caller but the administrator channel,
+    // which lifts it for one write only; a leak here would silently unlock every
+    // client that reached this path once.
+    #[test]
+    fn permanent_password_lock_lift_is_scoped_and_restored() {
+        let key = keys::OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD;
+        let previous = hbb_common::config::BUILTIN_SETTINGS
+            .write()
+            .unwrap()
+            .insert(key.to_owned(), "Y".to_owned());
+        assert!(Config::is_disable_change_permanent_password());
+        assert!(!with_permanent_password_lock_lifted(|| {
+            Config::is_disable_change_permanent_password()
+        }));
+        assert!(Config::is_disable_change_permanent_password());
+        {
+            let mut builtin = hbb_common::config::BUILTIN_SETTINGS.write().unwrap();
+            match previous {
+                Some(value) => {
+                    builtin.insert(key.to_owned(), value);
+                }
+                None => {
+                    builtin.remove(key);
+                }
+            }
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
