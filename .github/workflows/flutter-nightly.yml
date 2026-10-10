@@ -5,6 +5,18 @@ on:
     # schedule build every night
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      # Off by default. Turning it on adds `--quic` to the Windows build, i.e. the binary then
+      # contains the QUIC transport (cargo feature `quic`). The scheduled run passes nothing, so
+      # the `||` fallbacks below matter: `schedule` does not populate the `inputs` context.
+      quic:
+        description: "Build the Windows artifacts with the QUIC transport (--features quic)"
+        type: boolean
+        default: false
+      upload-tag:
+        description: "Release tag to publish the artifacts to (default: nightly)"
+        type: string
+        default: "nightly"
 
 jobs:
   run-flutter-nightly-build:
@@ -12,4 +24,5 @@ jobs:
     secrets: inherit
     with:
       upload-artifact: true
-      upload-tag: "nightly"
+      upload-tag: ${{ inputs.upload-tag || 'nightly' }}
+      quic: ${{ inputs.quic || false }}

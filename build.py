@@ -147,6 +147,13 @@ def make_parser():
         help='Enable feature vram, only available on windows now.'
     )
     parser.add_argument(
+        '--quic',
+        action='store_true',
+        help='Enable the experimental QUIC transport (cargo feature `quic`). Off by default: the '
+             'feature is deliberately absent from `default`, and enabling it only changes how a '
+             'new connection may be established once NERV_QUIC_MODE selects prefer/required.'
+    )
+    parser.add_argument(
         '--portable',
         action='store_true',
         help='Build windows portable'
@@ -339,6 +346,10 @@ def get_features(args):
         features.append('flutter')
     if args.unix_file_copy_paste:
         features.append('unix-file-copy-paste')
+    if args.quic:
+        # Opt-in only. `quic` pulls in quinn/rustls/ring, so a build with it is a different
+        # binary from the default one; nothing enables it implicitly.
+        features.append('quic')
     if args.drm:
         # Say so rather than quietly handing back a stock build: the backend is Linux-only, so on
         # any other host the flag cannot be honoured and the resulting binary would look like a

@@ -9,6 +9,11 @@ on:
       upload-tag:
         type: string
         default: "nightly"
+      quic:
+        # Opt-in. Off by default so every existing caller (the nightly schedule, any
+        # hand-run dispatch) keeps producing exactly the binary it produced before.
+        type: boolean
+        default: false
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -293,7 +298,9 @@ jobs:
         run: |
           # Windows: build RustDesk
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
-          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }}
+          # `quic` is a workflow input, default false: it expands to --quic or to nothing at all, so a
+          # run that does not ask for it runs the exact command line it ran before.
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }} ${{ inputs.quic && '--quic' || '' }}
           mv ./flutter/build/windows/${{ matrix.job.flutter-arch }}/runner/Release ./rustdesk
 
           # Download usbmmidd_v2.zip and extract it to ./rustdesk
