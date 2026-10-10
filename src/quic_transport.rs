@@ -48,6 +48,88 @@ use std::{
     task::{Context, Poll},
 };
 
+// ---------- P0-2：默认关闭的「最近一条连接句柄」诊断槽（plan.md §12）----------
+//
+// 为什么需要：`quinn::Connection` 是唯一能取到 RTT / 丢包 / cwnd / 字节数的句柄，而产品路径
+// 在返回 `FramedStream` 时立刻把它 drop（缺口 G1/G2）。但**多留一个句柄会推迟
+// CONNECTION_CLOSE**：quinn 只在最后一个句柄 drop 时才关闭连接，于是对端可能长时间看到半开
+// 连接，那条已打洞的 UDP socket 也会多占用一段空闲超时。所以默认**不保留**：
+//
+//   NERV_QUIC_KEEPALIVE 未设 / 非 "1" / 非 "true" ⇒ 与改动前逐字一致（句柄照旧立即 drop）
+//   NERV_QUIC_KEEPALIVE=1（或 true）            ⇒ 在返回前把句柄存进下面的槽
+//
+// 已知限界（同步登记在 `docs/NERV_DESK_STATUS.md`）：① 开启会延长连接存活；② 槽只保留**最近
+// 一条**，并发两条会话会互相覆盖；③ 仅供诊断，不得作为产品行为依赖。
+#[cfg(feature = "quic")]
+static LAST_CONN: std::sync::OnceLock<std::sync::Mutex<Option<quinn::Connection>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "quic")]
+fn keepalive_enabled() -> bool {
+    matches!(
+        std::env::var("NERV_QUIC_KEEPALIVE").map(|v| v.trim().to_ascii_lowercase()),
+        Ok(v) if v == "1" || v == "true"
+    )
+}
+
+#[cfg(feature = "quic")]
+fn last_conn_slot() -> &'static std::sync::Mutex<Option<quinn::Connection>> {
+    LAST_CONN.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 开关开启时保留最近一条连接句柄；默认关闭时是**空操作**（调用点不需要判断开关）。
+#[cfg(feature = "quic")]
+fn retain_conn_for_stats(conn: &quinn::Connection) {
+    if !keepalive_enabled() {
+        return;
+    }
+    if let Ok(mut slot) = last_conn_slot().lock() {
+        *slot = Some(conn.clone());
+    }
+}
+
+/// P1-stats 的取值函数：把最近一条被保留的连接的通路统计拼成**一行**（无连接时 `None`）。
+///
+/// 抽成独立函数是为了让 `--quic-pair-mode` 也能把它打到 **stdout**（无头脚本好抓），而产品
+/// 路径只走 `log_quic_stats`。
+#[cfg(feature = "quic")]
+pub fn quic_stats_line(role: &str) -> Option<String> {
+    let conn = last_conn_slot().lock().ok().and_then(|g| (*g).clone())?;
+    let s = conn.stats();
+    Some(format!(
+        "QUIC-STATS role={role} rtt_ms={} cwnd={} lost_pkts={} lost_bytes={} tx_bytes={} rx_bytes={} tx_dgrams={} rx_dgrams={} cong_events={}",
+        s.path.rtt.as_millis(),
+        s.path.cwnd,
+        s.path.lost_packets,
+        s.path.lost_bytes,
+        s.udp_tx.bytes,
+        s.udp_rx.bytes,
+        s.udp_tx.datagrams,
+        s.udp_rx.datagrams,
+        s.path.congestion_events,
+    ))
+}
+
+/// P1-stats：把上面那一行写进日志（每次会话调用一次）。
+///
+/// 开关关闭（槽为空）时**只在进程内首次**打印一行提醒，避免每次连接都刷日志。
+/// 这是「建立时刻的快照」，不是曲线；1Hz 轮询属后续可选增强。
+#[cfg(feature = "quic")]
+pub fn log_quic_stats(role: &str) {
+    match quic_stats_line(role) {
+        Some(line) => hbb_common::log::info!("{line}"),
+        None => {
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                hbb_common::log::info!(
+                    "QUIC-STATS unavailable (NERV_QUIC_KEEPALIVE off)：未保留连接句柄，取不到 RTT/丢包/cwnd"
+                );
+            }
+        }
+    }
+}
+
 /// QUIC 发送 + 接收两条单向流焊成的单一双工对象。
 ///
 /// `tokio::io::join(reader, writer)` 是最小融合：得到的 `Join<R, W>` 在 `R`
@@ -370,6 +452,8 @@ pub async fn quic_direct_attempt_with_conn(
         socket.local_addr(),
         peer
     );
+    // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
+    retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
 }
 
@@ -437,6 +521,8 @@ pub async fn quic_accept_attempt_with_conn(
         socket.local_addr(),
         peer
     );
+    // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
+    retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
 }
 
@@ -1252,6 +1338,12 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
             }
         };
         hs_ms = t.elapsed().as_millis();
+        // P0-2 + P1-stats 的**本地可验证**出口：`_with_conn` 在 `NERV_QUIC_KEEPALIVE` 开启时已把
+        // 句柄存进 `LAST_CONN`，这里取出来打到 **stdout**（无头脚本直接抓，不用翻日志文件）。
+        // 开关关闭 ⇒ `quic_stats_line` 返回 None ⇒ 一个字都不打印（默认行为与今天一致）。
+        if let Some(line) = quic_stats_line(if role_dial { "pair-dial" } else { "pair-listen" }) {
+            println!("{line}");
+        }
         // 握手成功 ≠ 数据能过：两端各发 8 字节、各读一次。
         let payload: Vec<u8> = if role_dial {
             b"qp:ping\n".to_vec()

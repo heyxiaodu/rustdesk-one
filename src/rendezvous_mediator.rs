@@ -1525,7 +1525,13 @@ async fn udp_nat_listen(
             )
             .await
             {
-                Ok(s) => s,
+                Ok(s) => {
+                    // P1-stats（plan.md §12）：被控端此前 QUIC 分支零日志，连「用了 QUIC」都看不出来。
+                    // 仅在 NERV_QUIC_KEEPALIVE 开启时能取到句柄；关闭时该函数只提醒一次。
+                    #[cfg(feature = "quic")]
+                    crate::quic_transport::log_quic_stats("responder");
+                    s
+                }
                 Err(e) => {
                     log::warn!("QUIC 接受失败（首字节 0x{first_byte:02x}）：{e:?}");
                     return Err(e);

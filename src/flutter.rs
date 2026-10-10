@@ -831,6 +831,21 @@ impl InvokeUiSession for FlutterHandler {
     }
 
     fn job_progress(&self, id: i32, file_num: i32, speed: f64, finished_size: f64) {
+        // P5（plan.md §12）：文件传输速度此前只进 UI、不进日志 ⇒ 无法做 A/B 对比。
+        // `speed` 的上游单位是**字节/秒**（`src/client/io_loop.rs:1252`：`bytes / (elapsed_ms/1000)`）；
+        // 这里同时给出 bps 与 MB/s（十进制），避免 plan 里 "mbps" 的单位歧义。节流 1s
+        // （该函数每次状态刷新都调用）；日志不含对端地址/设备 ID/IP（id 是本地任务号）。
+        #[cfg(feature = "quic")]
+        hbb_common::throttled_log!(
+            std::time::Duration::from_secs(1),
+            info,
+            "QUIC-FILE mode={} file_num={} speed_bps={:.0} speed_mb_s={:.2} finished_bytes={:.0}",
+            crate::common::get_quic_mode().as_str(),
+            file_num,
+            speed,
+            speed / 1_000_000.0,
+            finished_size
+        );
         self.push_event(
             "job_progress",
             &[

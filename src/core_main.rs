@@ -34,6 +34,13 @@ pub fn core_main() -> Option<Vec<String>> {
         return None;
     }
     crate::load_custom_client();
+    // P6（plan.md §12）：QUIC 档位在进程启动时确定，且只在这里打一行 —— 跨机排查时不必再猜
+    // 「这次到底跑的是哪个档位」。来源优先级：NERV_QUIC_MODE 环境变量 > 本地选项 quic-mode。
+    #[cfg(feature = "quic")]
+    log::info!(
+        "QUIC 档位={}（启动时确定，本次进程内不再变化）",
+        crate::common::get_quic_mode().as_str()
+    );
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
         // return None to terminate the process

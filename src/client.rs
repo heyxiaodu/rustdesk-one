@@ -1692,6 +1692,12 @@ impl Client {
             start.elapsed(),
             punch_type
         );
+        // P1-stats（plan.md §12）：仅在本次连接真的用上 QUIC、且 NERV_QUIC_KEEPALIVE 开启时，
+        // 打一行通路统计（rtt/cwnd/丢包/字节数）。开关关闭时该函数只提醒一次，不会刷日志。
+        #[cfg(feature = "quic")]
+        if typ == "QUIC" {
+            crate::quic_transport::log_quic_stats("origin");
+        }
         let res = Self::secure_connection(peer_id, signed_id_pk.clone(), key, &mut conn).await;
         let pk: Option<Vec<u8>> = match res {
             Ok(pk) => pk,
@@ -4330,7 +4336,20 @@ fn fps_calculate(
     *count += 1;
     let ms = duration.as_millis();
     if *count % 10 == 0 && ms > 0 {
-        *fps.write().unwrap() = Some((*count as usize) * 1000 / (ms as usize));
+        let fps_now = (*count as usize) * 1000 / (ms as usize);
+        *fps.write().unwrap() = Some(fps_now);
+        // P4（plan.md §12）：把瞬时 FPS 也写进日志，用于 A/B 对比（NERV_QUIC_MODE=disabled
+        // vs prefer）。刻意多带一个 mode= 字段：只写 "QUIC-FPS" 会让 disabled 组的日志也被
+        // 误读成 QUIC 数据。节流 1s 兜底；日志不含地址/ID/IP。
+        #[cfg(feature = "quic")]
+        hbb_common::throttled_log!(
+            std::time::Duration::from_secs(1),
+            info,
+            "QUIC-FPS mode={} fps={} frames={}",
+            crate::common::get_quic_mode().as_str(),
+            fps_now,
+            *count
+        );
     }
     // Clear to get real-time fps
     if *count >= 30 {
