@@ -405,6 +405,7 @@ class _GeneralState extends State<_General> {
       isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
   RxBool serviceBtnEnabled = true.obs;
   final GlobalKey _minToolbarOptionKey = GlobalKey();
+  bool locked = !isWeb && bind.mainIsInstalled();
 
   @override
   Widget build(BuildContext context) {
@@ -412,14 +413,23 @@ class _GeneralState extends State<_General> {
     return ListView(
       controller: scrollController,
       children: [
-        if (!isWeb) service(),
-        theme(),
-        _Card(title: 'Language', children: [language()]),
-        if (!isWeb) hwcodec(),
-        if (!isWeb) audio(context),
-        if (!isWeb) record(context),
-        if (!isWeb) WaylandCard(),
-        other()
+        _lock(locked, 'Unlock General Settings', () {
+          locked = false;
+          setState(() => {});
+        }),
+        preventMouseKeyBuilder(
+          block: locked,
+          child: Column(children: [
+            if (!isWeb) service(),
+            theme(),
+            _Card(title: 'Language', children: [language()]),
+            if (!isWeb) hwcodec(),
+            if (!isWeb) audio(context),
+            if (!isWeb) record(context),
+            if (!isWeb) WaylandCard(),
+            other()
+          ]),
+        ),
       ],
     ).marginOnly(bottom: _kListViewBottomMargin);
   }
@@ -669,6 +679,11 @@ class _GeneralState extends State<_General> {
           },
         ).marginOnly(left: _kCheckBoxLeftMargin * 3),
       ));
+    }
+    if (bind.mainGetBuildinOption(key: 'hide-tray') == 'Y') {
+      children.add(_SubNote(
+          'The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.',
+          leftMargin: _kCheckBoxLeftMargin));
     }
     return _Card(title: 'Other', children: children);
   }
@@ -1384,6 +1399,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                   enabled: tmpEnabled && !locked),
             if (usePassword) numericOneTimePassword,
             if (usePassword) radios[1],
+            if (usePassword && isChangePermanentPasswordDisabled())
+              _SubNote(
+                  'The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.'),
             if (usePassword && !isChangePermanentPasswordDisabled())
               _SubButton('Set permanent password', setPasswordDialog,
                   permEnabled && !locked),
@@ -1948,17 +1966,28 @@ class _Display extends StatefulWidget {
 }
 
 class _DisplayState extends State<_Display> {
+  bool locked = !isWeb && bind.mainIsInstalled();
+
   @override
   Widget build(BuildContext context) {
     final scrollController = ScrollController();
     return ListView(controller: scrollController, children: [
-      viewStyle(context),
-      scrollStyle(context),
-      imageQuality(context),
-      codec(context),
-      if (isDesktop) trackpadSpeed(context),
-      if (!isWeb) privacyModeImpl(context),
-      other(context),
+      _lock(locked, 'Unlock Display Settings', () {
+        locked = false;
+        setState(() => {});
+      }),
+      preventMouseKeyBuilder(
+        block: locked,
+        child: Column(children: [
+          viewStyle(context),
+          scrollStyle(context),
+          imageQuality(context),
+          codec(context),
+          if (isDesktop) trackpadSpeed(context),
+          if (!isWeb) privacyModeImpl(context),
+          other(context),
+        ]),
+      ),
     ]).marginOnly(bottom: _kListViewBottomMargin);
   }
 
@@ -2946,6 +2975,14 @@ Widget _SubButton(String label, Function() onPressed, [bool enabled = true]) {
       ),
     ],
   ).marginOnly(left: _kContentHSubMargin);
+}
+
+// ignore: non_constant_identifier_names
+Widget _SubNote(String label, {double leftMargin = _kContentHSubMargin}) {
+  return Text(
+    translate(label),
+    style: const TextStyle(fontSize: 13),
+  ).marginOnly(left: leftMargin);
 }
 
 // ignore: non_constant_identifier_names

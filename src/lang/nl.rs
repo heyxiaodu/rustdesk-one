@@ -780,6 +780,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("RustDesk could not load a GStreamer component needed for screen capture ({})", "RustDesk kon een GStreamer-component die nodig is voor schermopname niet laden ({})"),
         ("Relay fallback delay in seconds", "Vertraging voordat relay wordt gebruikt in seconden"),
         ("relay-fallback-delay-tip", "Hoe lang een al tot stand gekomen relayverbinding wacht op de directe WebRTC-verbinding voordat deze in plaats daarvan wordt gebruikt. Verhoog de waarde om een trage directe verbinding meer tijd te geven; verlaag deze om op netwerken waar een directe verbinding niet mogelijk is sneller op de relay terug te vallen. Laat leeg voor de standaardwaarde van 2.5 seconden."),
-        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Om een spraakgesprek te starten, schakel je \"Audio-opname\" in op de pagina \"Scherm delen\".")
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Om een spraakgesprek te starten, schakel je \"Audio-opname\" in op de pagina \"Scherm delen\"."),
+        ("This ID points to another ID server; it cannot be saved or connected to.", ""),
+        ("Edit the entry to remove the part after @, or delete it.", ""),
+        ("Error details", ""),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", ""),
+        ("Unlock General Settings", ""),
+        ("Unlock Display Settings", ""),
+        ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "")
     ].iter().cloned().collect();
 }

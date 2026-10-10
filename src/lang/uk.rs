@@ -781,5 +781,12 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Relay fallback delay in seconds", "Затримка перед переходом на ретранслятор у секундах"),
         ("relay-fallback-delay-tip", "Скільки часу вже встановлене з'єднання через ретранслятор чекає на пряме з'єднання WebRTC, перш ніж буде використане замість нього. Збільште, щоб дати повільному прямому з'єднанню більше часу; зменште, щоб швидше переходити на ретранслятор у мережах, де пряме з'єднання неможливе. Залиште порожнім для типового значення 2.5 секунди."),
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Щоб розпочати голосовий виклик, увімкніть «Захоплення аудіо» на сторінці «Демонстрація екрана»."),
+        ("This ID points to another ID server; it cannot be saved or connected to.", ""),
+        ("Edit the entry to remove the part after @, or delete it.", ""),
+        ("Error details", ""),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", ""),
+        ("Unlock General Settings", ""),
+        ("Unlock Display Settings", ""),
+        ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "")
     ].iter().cloned().collect();
 }

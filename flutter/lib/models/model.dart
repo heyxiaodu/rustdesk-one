@@ -965,8 +965,27 @@ class FfiModel with ChangeNotifier {
       if (!hasRetry) {
         hasRetry = shouldAutoRetryOnOffline(type, title, text);
       }
-      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
+      showMsgBox(sessionId, type, title, _localizeForeignIdServerError(text),
+          link, hasRetry, dialogManager);
     }
+  }
+
+  /// The client's refusal of an address-book entry whose `@server` part is not one of
+  /// our own ID servers (see `is_our_server` in `src/client.rs`).
+  static final _foreignIdServerRefusal =
+      RegExp(r'Refusing to connect "[^"]*" via "[^"]*": not our ID server');
+
+  /// Rewrites [_foreignIdServerRefusal] into localized text, keeping the original
+  /// English in a trailing details line so support can still diagnose from the dialog.
+  String _localizeForeignIdServerError(String text) {
+    if (!_foreignIdServerRefusal.hasMatch(text)) {
+      return text;
+    }
+    final reason = translate(
+        'This ID points to another ID server; it cannot be saved or connected to.');
+    final advice =
+        translate('Edit the entry to remove the part after @, or delete it.');
+    return '$reason\n$advice\n\n${translate('Error details')}: $text';
   }
 
   void resetRestartReconnectState() {

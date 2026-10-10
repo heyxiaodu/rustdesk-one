@@ -781,6 +781,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("RustDesk could not load a GStreamer component needed for screen capture ({})", "RustDesk 无法加载屏幕捕获所需的 GStreamer 组件 ({})"),
         ("Relay fallback delay in seconds", "回落到中继前的等待时间（秒）"),
         ("relay-fallback-delay-tip", "已经建立的中继连接会等待直连的 WebRTC 多久，超过这个时间就改用中继。调大可以让较慢的直连有更多机会胜出；调小则在无法直连的网络上更快回落到中继。留空表示使用默认值 2.5 秒。"),
-        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "开始语音通话前请在\"仅共享屏幕\"页面启用\"音频录制\"。")
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "开始语音通话前请在\"仅共享屏幕\"页面启用\"音频录制\"。"),
+        ("This ID points to another ID server; it cannot be saved or connected to.", "该 ID 指向另一台 ID 服务器，无法保存或连接。"),
+        ("Edit the entry to remove the part after @, or delete it.", "请编辑该条目，删掉 @ 后面的部分，或直接删除这条目。"),
+        ("Error details", "错误详情"),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", "本发行版锁死了固定密码；如需设置，只能用管理员身份在本机执行 rustdesk --password <新密码>。"),
+        ("Unlock General Settings", "解锁常规设置"),
+        ("Unlock Display Settings", "解锁显示设置"),
+        ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "本发行版不显示托盘图标。关闭主窗口只是把它隐藏，窗口会从任务栏消失：程序继续运行，已连接的会话不会中断，重新启动程序即可打开主窗口。")
     ].iter().cloned().collect();
 }

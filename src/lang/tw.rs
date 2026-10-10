@@ -780,6 +780,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("RustDesk could not load a GStreamer component needed for screen capture ({})", "RustDesk 無法載入螢幕擷取所需的 GStreamer 元件 ({})"),
         ("Relay fallback delay in seconds", "回退到中繼前的等待時間（秒）"),
         ("relay-fallback-delay-tip", "已經建立的中繼連線會等待直連的 WebRTC 多久，超過這個時間就改用中繼。調大可以讓較慢的直連有更多機會勝出；調小則在無法直連的網路上更快回退到中繼。留空表示使用預設值 2.5 秒。"),
-        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "若要開始語音通話，請在「僅分享螢幕畫面」頁面啟用「音訊錄製」。")
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "若要開始語音通話，請在「僅分享螢幕畫面」頁面啟用「音訊錄製」。"),
+        ("This ID points to another ID server; it cannot be saved or connected to.", "該 ID 指向另一台 ID 伺服器，無法儲存或連線。"),
+        ("Edit the entry to remove the part after @, or delete it.", "請編輯該項目，刪掉 @ 後面的部分，或直接刪除該項目。"),
+        ("Error details", "錯誤詳情"),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", "本發行版鎖死了固定密碼；如需設定，只能用管理員身分在本機執行 rustdesk --password <新密碼>。"),
+        ("Unlock General Settings", "解鎖一般設定"),
+        ("Unlock Display Settings", "解鎖顯示設定"),
+        ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "本發行版不顯示托盤圖示。關閉主視窗只是把它隱藏，視窗會從工作列消失：程式繼續執行，已連接的工作階段不會中斷，重新啟動程式即可開啟主視窗。")
     ].iter().cloned().collect();
 }

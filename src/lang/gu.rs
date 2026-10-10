@@ -780,6 +780,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("RustDesk could not load a GStreamer component needed for screen capture ({})", "RustDesk સ્ક્રીન કૅપ્ચર માટે જરૂરી GStreamer ઘટક લોડ કરી શક્યું નથી ({})"),
         ("Relay fallback delay in seconds", "રિલે પર પાછા ફરવામાં વિલંબ સેકન્ડમાં"),
         ("relay-fallback-delay-tip", "પહેલેથી સ્થાપિત રિલે કનેક્શન સીધા WebRTC કનેક્શનની કેટલો સમય રાહ જુએ છે, ત્યાર બાદ તેના બદલે વપરાય છે. ધીમા સીધા કનેક્શનને વધુ સમય આપવા માટે વધારો; જ્યાં સીધું કનેક્શન શક્ય નથી તેવા નેટવર્ક પર વહેલા રિલે પર જવા માટે ઘટાડો. મૂળભૂત 2.5 સેકન્ડ માટે ખાલી રાખો."),
-        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "")
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", ""),
+        ("This ID points to another ID server; it cannot be saved or connected to.", ""),
+        ("Edit the entry to remove the part after @, or delete it.", ""),
+        ("Error details", ""),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", ""),
+        ("Unlock General Settings", ""),
+        ("Unlock Display Settings", ""),
+        ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "")
     ].iter().cloned().collect();
 }

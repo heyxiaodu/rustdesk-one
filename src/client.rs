@@ -5307,7 +5307,11 @@ pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: b
                 && !text.to_lowercase().contains("manually")
                 && !text.to_lowercase().contains("restricted")
                 && !text.to_lowercase().contains("incoming only")
-                && !text.to_lowercase().contains("not allowed")))
+                && !text.to_lowercase().contains("not allowed")
+                // Refusing to connect via a foreign ID server is a permanent policy
+                // decision, not a transient failure: reconnecting to the same entry
+                // can never succeed, so do not offer the retry countdown.
+                && !text.to_lowercase().contains("not our id server")))
 }
 
 #[cfg(test)]
@@ -5320,6 +5324,16 @@ mod retry_tests {
             "error",
             "Connection Error",
             "Incoming only mode",
+            false,
+        ));
+    }
+
+    #[test]
+    fn foreign_id_server_refusal_is_not_retryable() {
+        assert!(!check_if_retry(
+            "error",
+            "Connection Error",
+            "Refusing to connect \"abc@public\" via \"public\": not our ID server",
             false,
         ));
     }

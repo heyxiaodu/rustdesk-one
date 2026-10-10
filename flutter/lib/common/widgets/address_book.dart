@@ -472,6 +472,12 @@ class _AddressBookState extends State<AddressBook> {
     final style = TextStyle(fontSize: 14.0);
     String? errorMsg;
     final isCurrentAbShared = !gFFI.abModel.current.isPersonal();
+    // An ID containing '@' points to another ID server: rustdesk-api refuses to
+    // save it and is_our_server() never matches it, so it can never connect.
+    String? otherServerIdError(String id) => id.contains('@')
+        ? translate(
+            'This ID points to another ID server; it cannot be saved or connected to.')
+        : null;
 
     gFFI.dialogManager.show((setState, close, context) {
       submit() async {
@@ -480,6 +486,14 @@ class _AddressBookState extends State<AddressBook> {
           errorMsg = null;
         });
         String id = idController.id;
+        final otherServerErr = otherServerIdError(id);
+        if (otherServerErr != null) {
+          setState(() {
+            isInProgress = false;
+            errorMsg = otherServerErr;
+          });
+          return;
+        }
         if (id.isEmpty) {
           // pass
         } else {
@@ -555,6 +569,11 @@ class _AddressBookState extends State<AddressBook> {
                     input: Obx(() => TextField(
                           controller: idController,
                           inputFormatters: [IDTextInputFormatter()],
+                          onChanged: (_) {
+                            setState(() {
+                              errorMsg = otherServerIdError(idController.id);
+                            });
+                          },
                           decoration: InputDecoration(
                               labelText: stateGlobal.isPortrait.isFalse
                                   ? null

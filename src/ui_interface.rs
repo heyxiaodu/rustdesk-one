@@ -1689,7 +1689,7 @@ pub fn get_unlock_pin() -> String {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return String::default();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    return ipc::get_unlock_pin();
+    return Config::resolve_unlock_pin(ipc::get_unlock_pin());
 }
 
 #[cfg(feature = "flutter")]
