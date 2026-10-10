@@ -385,9 +385,11 @@ pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
 /// `rustls-0.23.28/src/crypto/ring/quic.rs:44-59`（`true => 0x0f, // Long header: 4 bits masked`，
 /// 随后 `*first ^= first_mask & bits;`；该文件自述「implements Header Protection Application
 /// almost verbatim」并给出 RFC 9001 §5.4.1 链接）。
-/// 实测**两个构建、五次**跨机 A 格观测拿到 **0xC9 / 0xCA / 0xC0 / 0x8A / 0xC2** 五个不同首字节
-/// （首证批基线 `3fa0ea08d`／制品 `5e7a738f…492df6`：`0xC9`、`0xC2`；重锚批基线 `c4a0b0070`／制品
-/// `bb449101…fe2a`：`0xC9`、`0xCA`、`0xC0`、`0x8A`）；
+/// 实测**两个构建**、共 **5 个不同首字节**：`0xC9` / `0xCA` / `0xC0` / `0x8A` / `0xC2`。读数分两类、不可混：
+/// ① **程序自报**（`QUIC-PAIR` 末行 `first_byte=`）——首证批基线 `3fa0ea08d`／制品 `5e7a738f…492df6`：`0xC9`；
+///    重锚批基线 `c4a0b0070`／制品 `bb449101…fe2a`：`0xC0`、`0xC9`（合计 4 次 A 格运行）。
+/// ② **VPS 抓包逐包解码**——首证批 `0xC2`；重锚批 4 个入站 1200 字节包依次 `0xC9` / `0xCA` / `0xC0` / `0x8A`
+///    （1 次抓包 + 逐包解码；**同一构建内部**就能出现 4 个不同值）。
 /// 其中 `0xC9` 的低 4 位 `1001b` 若按未掩码解读即为「reserved = 10（非零）」，
 /// 会被误判成协议违规 —— 它其实只是掩码值。
 /// **最强的一条证据**：重锚批抓包里前 3 个入站 1200 字节包是**同一个 Initial 的重复发送**
