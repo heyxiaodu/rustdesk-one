@@ -1256,17 +1256,28 @@ impl QuicMode {
     }
 }
 
+/// 纯查表：`NERV_QUIC_MODE` 环境变量的**值** → 档位。
+/// 返回 `None` 表示「值无法识别」⇒ 调用方应继续看本地选项（`quic-mode`）。
+/// 抽成纯函数是为了让单元测试能**真的调用被测逻辑**（见 `quic_mode_from_env_value_*` 测试），
+/// 而不是在测试里重抄一遍 match 分支。
+pub fn quic_mode_from_env_value(v: &str) -> Option<QuicMode> {
+    match v.to_ascii_lowercase().as_str() {
+        "prefer" => Some(QuicMode::Prefer),
+        "required" => Some(QuicMode::Required),
+        "disabled" | "" => Some(QuicMode::Disabled),
+        _ => None, // 无法识别 ⇒ 落到本地选项层（不视为错误）
+    }
+}
+
 pub fn get_quic_mode() -> QuicMode {
     // P1d-tail-1: env-var override wins over local-option.
     // Useful for RT-01 on Win7 where Flutter UI is unavailable and the user
     // can only set environment variables before launching hbbndesk-client.exe.
     if let Ok(v) = std::env::var("NERV_QUIC_MODE") {
-        match v.to_ascii_lowercase().as_str() {
-            "prefer" => return QuicMode::Prefer,
-            "required" => return QuicMode::Required,
-            "disabled" | "" => return QuicMode::Disabled,
-            _ => {} // fall through to local-option for unrecognized values
+        if let Some(m) = quic_mode_from_env_value(&v) {
+            return m;
         }
+        // 无法识别的值：继续往下看本地选项（历史上是 `_ => {}` 的 fall-through）。
     }
     match get_local_option(keys::OPTION_QUIC_MODE).to_ascii_lowercase().as_str() {
         "prefer" => QuicMode::Prefer,
@@ -3928,29 +3939,28 @@ mod tests {
     }
 
     // P1d-tail-1: NERV_QUIC_MODE env-var overrides the local-option for get_quic_mode.
-    // Pure-function helper exercised here; the env-var-aware public path lives above.
+    // 这里**真的调用**被测函数 `quic_mode_from_env_value()`（此前这条测试在测试体内
+    // 重抄了一遍 match 分支，等于永远自我验证，属于无效测试）。
     #[test]
-    fn quic_mode_from_env_var_table_driven() {
+    fn quic_mode_from_env_value_table_driven() {
         for (input, expected) in [
-            (Some("prefer"), QuicMode::Prefer),
-            (Some("PREFER"), QuicMode::Prefer),
-            (Some("required"), QuicMode::Required),
-            (Some("REQUIRED"), QuicMode::Required),
-            (Some("disabled"), QuicMode::Disabled),
-            (Some(""), QuicMode::Disabled),
-            (Some("garbage"), QuicMode::Disabled), // unrecognized → fall through; LocalConfig returns "" so we get Disabled
-            (None, QuicMode::Disabled),
+            ("prefer", Some(QuicMode::Prefer)),
+            ("PREFER", Some(QuicMode::Prefer)),
+            ("Prefer", Some(QuicMode::Prefer)),
+            ("required", Some(QuicMode::Required)),
+            ("REQUIRED", Some(QuicMode::Required)),
+            ("disabled", Some(QuicMode::Disabled)),
+            ("", Some(QuicMode::Disabled)),
+            ("garbage", None), // 无法识别 ⇒ 调用方继续看本地选项
+            ("preferred", None),
+            ("1", None),
         ] {
-            let got = match input {
-                Some(v) => match v.to_ascii_lowercase().as_str() {
-                    "prefer" => QuicMode::Prefer,
-                    "required" => QuicMode::Required,
-                    "disabled" | "" => QuicMode::Disabled,
-                    _ => QuicMode::Disabled,
-                },
-                None => QuicMode::Disabled,
-            };
-            assert_eq!(got, expected, "env={:?}", input);
+            assert_eq!(
+                quic_mode_from_env_value(input),
+                expected,
+                "NERV_QUIC_MODE={:?}",
+                input
+            );
         }
     }
 
@@ -3961,8 +3971,13 @@ mod tests {
     // ⇒ 只有**未**设环境变量的进程才能断言「本地选项层返回 Prefer」。
     #[test]
     fn quic_mode_defaults_to_branding_seeded_local_option() {
-        if std::env::var("NERV_QUIC_MODE").is_ok() {
-            // 环境变量层优先，本进程不适合断言下一层；返回而不是失败。
+        if let Ok(v) = std::env::var("NERV_QUIC_MODE") {
+            // 环境变量层优先（get_quic_mode() 先读它），本进程无法断言下一层 ⇒ 跳过。
+            // 但必须**显式说明**，否则这条测试会以 "ok" 出现、让人误以为「默认值已验过」。
+            eprintln!(
+                "SKIP quic_mode_defaults_to_branding_seeded_local_option: \
+                 NERV_QUIC_MODE={v:?} 已设置，本进程验证不了品牌播种的默认档位"
+            );
             return;
         }
         base::branding::apply_defaults();
