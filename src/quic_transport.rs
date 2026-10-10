@@ -375,8 +375,22 @@ pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
 /// （`quinn-proto-0.11.14/src/config/mod.rs:580`），`make_quic_client_config` 没有覆盖
 /// `.version(...)`。客户端**首包（Initial）**的长首部形态为
 /// `LONG_HEADER_FORM | FIXED_BIT | type(00) | reserved(00) | (pn_len − 1)`
-/// （`quinn-proto-0.11.14/src/packet.rs:835`）⇒ 首字节 ∈ **{0xC0..0xC3}**（若只按「类型半字节」
-/// 描述则是 `first & 0xF0 == 0xC0`；实测值是 `0xC2`，即 pn_len = 3）。
+/// （`quinn-proto-0.11.14/src/packet.rs:835`）。
+///
+/// **但那是「头保护剥掉之后」的形态，网线上的首字节并不长这样**：首个 Initial 同样受头保护
+/// （Header Protection，RFC 9001 §5.4.1），长首部的**低 4 位**（reserved + `pn_len − 1`）会被
+/// `first_mask & 0x0f` 掩掉 ⇒ 网线上只有**高半字节**可靠、低半字节是伪随机的。源码链：
+/// `quinn-proto-0.11.14/src/packet.rs:198-214`（`fn decrypt_header` → `header_crypto.decrypt(...)`，
+/// 在解析 pn_len **之前**解掩）→ `src/crypto/rustls.rs:229-236` →
+/// `rustls-0.23.28/src/crypto/ring/quic.rs:44-59`（`true => 0x0f, // Long header: 4 bits masked`，
+/// 随后 `*first ^= first_mask & bits;`；该文件自述「implements Header Protection Application
+/// almost verbatim」并给出 RFC 9001 §5.4.1 链接）。
+/// 实测三次跨机 A 格（同一二进制、同一路径）拿到 **0xC9 / 0xC2 / 0xC0** 三个不同首字节；
+/// 其中 `0xC9` 的低 4 位 `1001b` 若按未掩码解读即为「reserved = 10（非零）」，
+/// 会被误判成协议违规 —— 它其实只是掩码值。
+/// ⇒ **不要把低半字节（含 reserved / pn_len）当判据**，也不要写 `{0xC0..0xC3}` 这类区间：
+/// 网线上 v1 Initial 的合法首字节是 `0xC0..0xCF`（`first & 0xF0 == 0xC0`），类型半字节
+/// （bit5-4）不在掩码内、仍然可读。
 ///
 /// 注意：**本函数的实际判据比上面那句更宽** —— `first & 0xC0 == 0xC0 && datagram[1..5] == QUIC_V1`，
 /// 只要求「长首部 + fixed bit」，不区分 Initial / 0-RTT / Handshake / Retry，也不检查 reserved 位
