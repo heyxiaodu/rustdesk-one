@@ -784,7 +784,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("This ID points to another ID server; it cannot be saved or connected to.", "該 ID 指向另一台 ID 伺服器，無法儲存或連線。"),
         ("Edit the entry to remove the part after @, or delete it.", "請編輯該項目，刪掉 @ 後面的部分，或直接刪除該項目。"),
         ("Error details", "錯誤詳情"),
-        ("The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.", "本發行版鎖死了固定密碼；如需設定，只能用管理員身分在本機執行 rustdesk --password <新密碼>。"),
+        ("The permanent password is locked by this build; setting it requires the administrator channel, by running nervdesk --password as administrator on this device.", "本發行版鎖死了固定密碼；如需設定，只能用管理員身分在本機執行 nervdesk --password <新密碼>。"),
         ("Unlock General Settings", "解鎖一般設定"),
         ("Unlock Display Settings", "解鎖顯示設定"),
         ("The tray icon is hidden by this build. Closing the main window only hides it, so it disappears from the taskbar: the program keeps running, connected sessions are not interrupted, and starting the app again reopens the window.", "本發行版不顯示托盤圖示。關閉主視窗只是把它隱藏，視窗會從工作列消失：程式繼續執行，已連接的工作階段不會中斷，重新啟動程式即可開啟主視窗。")

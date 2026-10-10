@@ -1401,7 +1401,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             if (usePassword) radios[1],
             if (usePassword && isChangePermanentPasswordDisabled())
               _SubNote(
-                  'The permanent password is locked by this build; setting it requires the administrator channel, by running rustdesk --password as administrator on this device.'),
+                  'The permanent password is locked by this build; setting it requires the administrator channel, by running nervdesk --password as administrator on this device.'),
             if (usePassword && !isChangePermanentPasswordDisabled())
               _SubButton('Set permanent password', setPasswordDialog,
                   permEnabled && !locked),
