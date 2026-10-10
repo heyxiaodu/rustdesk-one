@@ -380,17 +380,26 @@ pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
 /// **但那是「头保护剥掉之后」的形态，网线上的首字节并不长这样**：首个 Initial 同样受头保护
 /// （Header Protection，RFC 9001 §5.4.1），长首部的**低 4 位**（reserved + `pn_len − 1`）会被
 /// `first_mask & 0x0f` 掩掉 ⇒ 网线上只有**高半字节**可靠、低半字节是伪随机的。源码链：
-/// `quinn-proto-0.11.14/src/packet.rs:198-214`（`fn decrypt_header` → `header_crypto.decrypt(...)`，
+/// `quinn-proto-0.11.14/src/packet.rs:203-218`（`fn decrypt_header` → `header_crypto.decrypt(...)`，
 /// 在解析 pn_len **之前**解掩）→ `src/crypto/rustls.rs:229-236` →
 /// `rustls-0.23.28/src/crypto/ring/quic.rs:44-59`（`true => 0x0f, // Long header: 4 bits masked`，
 /// 随后 `*first ^= first_mask & bits;`；该文件自述「implements Header Protection Application
 /// almost verbatim」并给出 RFC 9001 §5.4.1 链接）。
-/// 实测三次跨机 A 格（同一二进制、同一路径）拿到 **0xC9 / 0xC2 / 0xC0** 三个不同首字节；
+/// 实测**两个构建、五次**跨机 A 格观测拿到 **0xC9 / 0xCA / 0xC0 / 0x8A / 0xC2** 五个不同首字节
+/// （首证批基线 `3fa0ea08d`／制品 `5e7a738f…492df6`：`0xC9`、`0xC2`；重锚批基线 `c4a0b0070`／制品
+/// `bb449101…fe2a`：`0xC9`、`0xCA`、`0xC0`、`0x8A`）；
 /// 其中 `0xC9` 的低 4 位 `1001b` 若按未掩码解读即为「reserved = 10（非零）」，
 /// 会被误判成协议违规 —— 它其实只是掩码值。
+/// **最强的一条证据**：重锚批抓包里前 3 个入站 1200 字节包是**同一个 Initial 的重复发送**
+/// （DCID / SCID 逐字相同：`9857d41d5dc7aa694cb1d0805aa8e0f27fadfd69` / `628bfb742eebdfec`），
+/// 而它们在网线上的首字节分别是 **`0xC9` / `0xCA` / `0xC0`** —— 差异**全部**落在被掩码的低 4 位，
+/// 高半字节恒为 `0xC`。⇒ 「按首字节精确匹配」这类判据在本协议上天生不可靠。
 /// ⇒ **不要把低半字节（含 reserved / pn_len）当判据**，也不要写 `{0xC0..0xC3}` 这类区间：
-/// 网线上 v1 Initial 的合法首字节是 `0xC0..0xCF`（`first & 0xF0 == 0xC0`），类型半字节
-/// （bit5-4）不在掩码内、仍然可读。
+/// 网线上 v1 **首个** Initial 的合法首字节是 `first & 0xF0 == 0xC0`（即 `0xC0..0xCF`，此时
+/// fixed bit 保证为 1），类型半字节（bit5-4）不在掩码内、仍然可读。
+/// **但 `first & 0xC0 == 0xC0` 这一条只对「第一个包」成立**：一旦对端送来 `grease_quic_bit = true`，
+/// 之后的 Initial 有约 1/2 概率 fixed bit 被清零 ⇒ 高半字节变成 `0x8`（重锚批抓包实测到
+/// `0x8A`：长首部 + type=Initial + fixed bit = 0，见下方 fixed bit 一段）。
 ///
 /// 注意：**本函数的实际判据比上面那句更宽** —— `first & 0xC0 == 0xC0 && datagram[1..5] == QUIC_V1`，
 /// 只要求「长首部 + fixed bit」，不区分 Initial / 0-RTT / Handshake / Retry，也不检查 reserved 位
@@ -405,7 +414,10 @@ pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
 /// `quinn-proto-0.11.14/src/config/mod.rs:63` 的 `TransportConfig` 默认值），**此后**发出的包
 /// （含 Initial 重传）就有约 1/2 概率 fixed bit 被清零，接收侧也在
 /// `quinn-proto-0.11.14/src/packet.rs:585` 相应放宽检查。
-/// 实证：2026-10-10 跨机抓包 21 个包里，12 个短首部包中有 **6 个 fixed bit = 0**。
+/// 实证（首证批，2026-10-10 跨机抓包）：21 个包里 12 个短首部包中有 **6 个 fixed bit = 0**。
+/// 重锚批抓包更直接：4 个入站 1200 字节 Initial 的第 4 个首字节是 **`0x8A`**
+/// （`0x8A = 1000_1010b` ⇒ 长首部、type=Initial、**fixed bit = 0**，`version=0x00000001`）——
+/// 即非首包的 Initial 在网线上确实出现过 fixed bit 被 grease 清零的形态。
 /// ⇒ **不要把 fixed bit 当成通用的「这是 QUIC」判据**；本函数只被喂 `punch_udp` 消费掉的
 /// **第一个**数据报（必然早于对端 transport parameters 到达），所以本处安全；任何复用此函数的
 /// 新场景都必须重新论证这一点。
