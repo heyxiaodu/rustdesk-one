@@ -98,8 +98,15 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
+        // NERV Desk：必须与上游 RustDesk 的 applicationId（com.carriez.flutter_hbb）区分开，
+        // 否则同一台手机上两者会互相覆盖（安装一个会顶掉另一个），也无法与官方版共存。
+        // 采用自有域名的反写形式（项目服务器域 = nervcode.eu.org）。
+        // 代价（有意接受）：已经装有旧 applicationId 版本的设备无法原地升级，需先卸载再安装。
+        // 注意：上面 android.namespace 与 src/main/kotlin 下的包名（com.carriez.flutter_hbb）
+        // 保持不变 —— applicationId 才是设备上的安装身份，namespace 只影响 R/BuildConfig
+        // 与清单类的解析；改 namespace 需要同时搬动 11 个 Kotlin 文件与清单 package，
+        // 对用户不可见且风险更大。
+        applicationId "org.eu.nervcode.nervdesk"
         minSdkVersion 22
         targetSdkVersion 36
         versionCode flutterVersionCode.toInteger()
