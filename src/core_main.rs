@@ -34,13 +34,6 @@ pub fn core_main() -> Option<Vec<String>> {
         return None;
     }
     crate::load_custom_client();
-    // P6（plan.md §12）：QUIC 档位在进程启动时确定，且只在这里打一行 —— 跨机排查时不必再猜
-    // 「这次到底跑的是哪个档位」。来源优先级：NERV_QUIC_MODE 环境变量 > 本地选项 quic-mode。
-    #[cfg(feature = "quic")]
-    log::info!(
-        "QUIC 档位={}（启动时确定，本次进程内不再变化）",
-        crate::common::get_quic_mode().as_str()
-    );
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
         // return None to terminate the process
@@ -319,6 +312,16 @@ pub fn core_main() -> Option<Vec<String>> {
         }
     }
     hbb_common::init_log(false, &log_name);
+
+    // P6（plan.md §12）：QUIC 档位在进程启动时确定，且本进程只打这一行 —— 排查跨机问题时
+    // 不必再猜「这次跑的到底是哪个档位」。来源优先级：NERV_QUIC_MODE 环境变量 > 本地选项 quic-mode。
+    // 必须放在 init_log **之后**：logger 未装好时 log::max_level()==Off，这一行会被静默丢弃
+    // （独立复核 944177453 的 N1 就是这个问题 —— 原位置在 init_log 之前的 :40）。
+    #[cfg(feature = "quic")]
+    log::info!(
+        "QUIC 档位={}（启动时确定，本次进程内不再变化）",
+        crate::common::get_quic_mode().as_str()
+    );
 
     // linux uni (url) go here.
     #[cfg(all(target_os = "linux", feature = "flutter"))]

@@ -447,11 +447,11 @@ pub async fn quic_direct_attempt_with_conn(
         .await
         .map_err(|e| hbb_common::anyhow::anyhow!("open_bi failed: {e:?}"))?;
     hbb_common::log::info!(
-        "QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）；握手耗时 {} ms，local={:?} peer={}",
-        t0.elapsed().as_millis(),
-        socket.local_addr(),
-        peer
+        "QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）；握手耗时 {} ms",
+        t0.elapsed().as_millis()
     );
+    // N3（复核 944177453）：地址属敏感信息，默认级别不留 IP/端口 —— 需要时用 debug 级复现。
+    hbb_common::log::debug!("QUIC 直连建立细节：local={:?} peer={}", socket.local_addr(), peer);
     // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
     retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
@@ -516,11 +516,11 @@ pub async fn quic_accept_attempt_with_conn(
         .await
         .map_err(|e| hbb_common::anyhow::anyhow!("accept_bi failed: {e:?}"))?;
     hbb_common::log::info!(
-        "QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定；握手耗时 {} ms，local={:?} peer={}",
-        t0.elapsed().as_millis(),
-        socket.local_addr(),
-        peer
+        "QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定；握手耗时 {} ms",
+        t0.elapsed().as_millis()
     );
+    // N3（复核 944177453）：地址属敏感信息，默认级别不留 IP/端口 —— 需要时用 debug 级复现。
+    hbb_common::log::debug!("QUIC 入站连接细节：local={:?} peer={}", socket.local_addr(), peer);
     // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
     retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
