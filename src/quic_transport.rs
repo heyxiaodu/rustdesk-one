@@ -241,7 +241,8 @@ pub fn quic_failure_disposition(mode: crate::common::QuicMode) -> QuicFailure {
 //    学到的那个地址，因此 `try_send_to` 到该地址与 `send` 等价（Linux/Windows 同）。
 //
 // 已知代价（诚实声明）：`punch_udp` 的监听侧在"对端第一个真实数据包"上返回并**消费**该包
-// （`src/common.rs:2810-2818` 的设计），而 quinn 0.11.9 的 `Endpoint` **没有**把数据报注回
+// （`src/common.rs:2964-2969`：`else if ack.is_none() && n > 0` 分支把对端第一个真实数据报
+// 原样返回给调用方、该数据报不会再进队列），而 quinn 0.11.9 的 `Endpoint` **没有**把数据报注回
 // 协议栈的公有 API（`endpoint.rs` 无 `pub fn handle`）。所以那第一个 QUIC Initial 会被丢弃，
 // 由客户端按 PTO 重传才能开始握手；重传时刻由下面的 `QUIC_INITIAL_RTT` 钉住，
 // 不再取 quinn 默认的 999ms（那已经吃满 `client.rs` 给这条路径的全部预算）。
@@ -325,9 +326,9 @@ impl AsyncUdpSocket for TokioAsyncUdpSocket {
 /// R4-3（task-15）：本机 Sodium ed25519 身份 → `(raw pk, seed)`，供 QUIC 服务端固定 RPK。
 ///
 /// 零改动 `libs/hbb_common`（task-15 Q3）：`Config::get_key_pair()`
-/// （`libs/hbb_common/src/config.rs:1116`）已经是 pub，返回 `(sk, pk)`（`type KeyPair =
-/// (Vec<u8>, Vec<u8>)`，同文件 `:61`）。Sodium 的 `sign::SecretKey` 是 64 字节 seed‖pk
-/// （`libs/hbb_common/src/config.rs:1127` 的 `sign::gen_keypair()`），故 seed = `sk[..32]`。
+/// （`libs/hbb_common/src/config.rs:1130`）已经是 pub，返回 `(sk, pk)`（`type KeyPair =
+/// (Vec<u8>, Vec<u8>)`，同文件 `:75`）。Sodium 的 `sign::SecretKey` 是 64 字节 seed‖pk
+/// （`libs/hbb_common/src/config.rs:1140` 的 `sign::gen_keypair()`），故 seed = `sk[..32]`。
 #[cfg(feature = "quic")]
 pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
     let (sk, pk) = hbb_common::config::Config::get_key_pair();
@@ -371,12 +372,29 @@ pub fn quic_local_identity() -> hbb_common::ResultType<([u8; 32], [u8; 32])> {
 /// 误判才会杀掉连接。
 ///
 /// 本模块的客户端恒发 v1：quinn-proto 的 `ClientConfig::new` 默认 `version: 1`
-/// （`quinn-proto-0.11.14/src/config/mod.rs:576`），`make_quic_client_config` 没有覆盖
-/// `.version(...)`。客户端首包的长首部形态为 `LONG_HEADER_FORM | FIXED_BIT | (pn_len − 1)`
-/// （`src/packet.rs:835`）⇒ 首字节 ∈ {0xC0..0xC3}；fixed bit 不会被 grease 掉，因为客户端在
-/// 收到服务端 transport parameters 之前构造首包，此时 `peer_params.grease_quic_bit` 仍是默认
-/// `false`（`src/transport_parameters.rs:127`），grease 只在 `peer_params.grease_quic_bit` 为真
-/// 时随机翻转 fixed bit（`src/connection/packet_builder.rs:127`）。
+/// （`quinn-proto-0.11.14/src/config/mod.rs:580`），`make_quic_client_config` 没有覆盖
+/// `.version(...)`。客户端**首包（Initial）**的长首部形态为
+/// `LONG_HEADER_FORM | FIXED_BIT | type(00) | reserved(00) | (pn_len − 1)`
+/// （`quinn-proto-0.11.14/src/packet.rs:835`）⇒ 首字节 ∈ **{0xC0..0xC3}**（若只按「类型半字节」
+/// 描述则是 `first & 0xF0 == 0xC0`；实测值是 `0xC2`，即 pn_len = 3）。
+///
+/// 注意：**本函数的实际判据比上面那句更宽** —— `first & 0xC0 == 0xC0 && datagram[1..5] == QUIC_V1`，
+/// 只要求「长首部 + fixed bit」，不区分 Initial / 0-RTT / Handshake / Retry，也不检查 reserved 位
+/// （reserved 位留给 quinn 按协议违规处理）。上面描述形态只为说明「正常客户端打过来长什么样」。
+///
+/// fixed bit 的可靠性**只对首包成立**：grease（RFC 9287）看的是
+/// `conn.peer_params.grease_quic_bit`（`quinn-proto-0.11.14/src/connection/packet_builder.rs:127`），
+/// 而首包在收到对端 transport parameters 之前构造，此时 `peer_params` 还是
+/// `TransportParameters::default()`、`grease_quic_bit = false`
+/// （`quinn-proto-0.11.14/src/transport_parameters.rs:127`）⇒ 首包 fixed bit 不会被翻转。
+/// 但只要对端把 `grease_quic_bit = true` 送过来（quinn 端点是**默认开**的：
+/// `quinn-proto-0.11.14/src/config/mod.rs:63` 的 `TransportConfig` 默认值），**此后**发出的包
+/// （含 Initial 重传）就有约 1/2 概率 fixed bit 被清零，接收侧也在
+/// `quinn-proto-0.11.14/src/packet.rs:585` 相应放宽检查。
+/// 实证：2026-10-10 跨机抓包 21 个包里，12 个短首部包中有 **6 个 fixed bit = 0**。
+/// ⇒ **不要把 fixed bit 当成通用的「这是 QUIC」判据**；本函数只被喂 `punch_udp` 消费掉的
+/// **第一个**数据报（必然早于对端 transport parameters 到达），所以本处安全；任何复用此函数的
+/// 新场景都必须重新论证这一点。
 pub fn looks_like_quic_long_header(datagram: &[u8]) -> bool {
     /// QUIC v1 的版本字段（RFC 9000）。
     const QUIC_V1: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
@@ -450,8 +468,12 @@ pub async fn quic_direct_attempt_with_conn(
         "QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）；握手耗时 {} ms",
         t0.elapsed().as_millis()
     );
-    // N3（复核 944177453）：地址属敏感信息，默认级别不留 IP/端口 —— 需要时用 debug 级复现。
-    hbb_common::log::debug!("QUIC 直连建立细节：local={:?} peer={}", socket.local_addr(), peer);
+    // N3（复核 944177453 / task-12 更正）：地址属敏感信息，**默认级别不留 IP/端口**。
+    // 这里必须是 `trace!` 而不是 `debug!`：release 构建的默认过滤器是
+    // `"debug,reqwest=warn,…"`（`libs/hbb_common/src/lib.rs:455`，flexi_logger
+    // `try_with_env_or_str`）⇒ `debug!` **会落盘**；只有 `trace!` 低于该级别、默认不写。
+    // 需要复现握手细节时显式把环境变量调到 trace。
+    hbb_common::log::trace!("QUIC 直连建立细节：local={:?} peer={}", socket.local_addr(), peer);
     // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
     retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
@@ -519,8 +541,10 @@ pub async fn quic_accept_attempt_with_conn(
         "QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定；握手耗时 {} ms",
         t0.elapsed().as_millis()
     );
-    // N3（复核 944177453）：地址属敏感信息，默认级别不留 IP/端口 —— 需要时用 debug 级复现。
-    hbb_common::log::debug!("QUIC 入站连接细节：local={:?} peer={}", socket.local_addr(), peer);
+    // N3（复核 944177453 / task-12 更正）：地址属敏感信息，**默认级别不留 IP/端口**。
+    // 这里必须是 `trace!` 而不是 `debug!`：release 构建的默认过滤器是
+    // `"debug,reqwest=warn,…"`（`libs/hbb_common/src/lib.rs:455`）⇒ `debug!` 会落盘。
+    hbb_common::log::trace!("QUIC 入站连接细节：local={:?} peer={}", socket.local_addr(), peer);
     // P0-2：仅在 NERV_QUIC_KEEPALIVE 开启时保留句柄（默认关闭 = 与改动前逐字一致）。
     retain_conn_for_stats(&conn);
     Ok((quic_into_framed_stream(recv, send, peer), conn))
@@ -994,7 +1018,7 @@ pub fn make_quic_client_config(
 // `udp_nat_listen`（`src/rendezvous_mediator.rs:1475` → QUIC 分支 `:1493`）的顺序一致。
 // 因此它回答的是「打洞之后 QUIC 能不能过」，而不是「无 NAT 的裸 QUIC 能不能过」；
 // 后者正是 probe-mode 的限界，也是「探针 PASS、跨机从未成功」的成因 —— 打洞函数会吃掉
-// 对端第一个数据报，也就是首个 QUIC Initial（`src/common.rs:2963-2968`）。
+// 对端第一个数据报，也就是首个 QUIC Initial（`src/common.rs:2964-2969`）。
 //
 // 用法：
 //   nervdesk --quic-pair-mode genkey
@@ -2078,13 +2102,18 @@ mod tests {
     /// 与 `quic_dial_quinn_loopback` 走的都是 quinn 自带的 `Endpoint::server` /
     /// `Endpoint::client` —— 由 **quinn-udp** 自己建 socket、自己跑 `UdpSocketState`。
     /// 本测试驱动的是**产品入口**：它把调用方传入的 `Arc<tokio UdpSocket>` 包成
-    /// `TokioAsyncUdpSocket`（`quic_transport.rs:167`），也就是被控端/主控端在真实
-    /// `client.rs:udp_nat_connect` / `rendezvous_mediator.rs:udp_nat_loop` 里传进来的那个
+    /// `TokioAsyncUdpSocket`（本文件的薄包装，紧跟其 `impl AsyncUdpSocket`），也就是被控端/主控端
+    /// 在真实 `client.rs:udp_nat_connect` / `rendezvous_mediator.rs:udp_nat_loop` 里传进来的那个
     /// **已 `connect()` 的打洞 socket**。因此本测试真实覆盖：
-    /// - `quic_direct_attempt` `:318` → `:357`（含 `socket.peer_addr()` 取对端、
-    ///   `TokioAsyncUdpSocket::try_send` / `poll_recv`、`open_bi`）；
-    /// - `quic_accept_attempt` `:370` → `:404`（含 `endpoint.accept()` → `incoming` →
-    ///   `accept_bi`，即 `:404` 那条「QUIC 入站连接已建立…」路径）。
+    /// - 主控侧产品入口 `quic_direct_attempt`（薄包装）→ 实体 `quic_direct_attempt_with_conn`
+    ///   （含 `socket.peer_addr()` 取对端、`TokioAsyncUdpSocket::try_send` / `poll_recv`、
+    ///   `open_bi`，以及那条 `QUIC 直连建立…` 的 info 日志）；
+    /// - 被控侧产品入口 `quic_accept_attempt`（薄包装）→ 实体 `quic_accept_attempt_with_conn`
+    ///   （含 `endpoint.accept()` → `incoming` → `accept_bi`，即 `QUIC 入站连接已建立…` 那条路径）。
+    ///
+    /// 行号口径（防漂移）：本文件内的自引用一律**以符号名/日志字符串为准**，不再钉死行号 ——
+    /// 本文件的每次编辑都会让行号整体位移（F6 就是这么产生的）。外部 crate 的行号可以保留，
+    /// 前提是 Cargo.lock 里的版本被钉住（如 `quinn-proto-0.11.14`）。
     ///
     /// 两侧 socket 都 `connect()` 对方，刻意复刻产品里「同一个 4 元组」的形态；
     /// 主控侧必须已连接，否则 `quic_direct_attempt` 的 `socket.peer_addr()?` 会返回
@@ -2109,7 +2138,7 @@ mod tests {
 
         const T: u64 = 5_000;
 
-        // 被控端：产品入口 accept（覆盖 :404）。
+        // 被控端：产品入口 accept（覆盖 `QUIC 入站连接已建立…` 那条路径）。
         let server_task = tokio::spawn(async move {
             let mut s = match super::quic_accept_attempt(server_sock, client_addr, T, server_cfg).await
             {
@@ -2167,7 +2196,7 @@ mod tests {
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });
 
-        // 主控端：产品入口 dial（覆盖 :318 → :357）。
+        // 主控端：产品入口 dial（覆盖 `quic_direct_attempt_with_conn` 的 `QUIC 直连建立…` 路径）。
         let mut c = match super::quic_direct_attempt(client_sock, &pk, T).await {
             Ok(c) => c,
             Err(e) => {
@@ -2202,7 +2231,7 @@ mod tests {
     ///
     /// 对端故意选一张**只 bind、不 connect、不读**的 socket：UDP 无 ICMP 端口不可达，
     /// 因此 quinn 只能靠自身 PTO 重传，最终由 `quic_direct_attempt` 的
-    /// `connect_timeout_ms` 兜底（`quic_transport.rs:345-352`）。
+    /// `connect_timeout_ms` 兜底（`quic_direct_attempt_with_conn` 里 `timeout(connect_timeout_ms, …)` 那段）。
     #[tokio::test]
     async fn quic_product_entry_dial_timeout_is_reported()
     -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -2272,7 +2301,7 @@ mod tests {
     }
 
     /// 由 32B seed 导出配对的 32B raw pk，并用产品入口 `make_quic_server_config`
-    /// 构造服务端 RPK 配置（`quic_c1_rpk_handshake_loopback:1400-1409` 的提取版）。
+    /// 构造服务端 RPK 配置（从 `quic_c1_rpk_handshake_loopback` 里 `make_quic_server_config` 那段提取）。
     fn test_identity_and_server_cfg(
         seed: &[u8; 32],
     ) -> Result<([u8; 32], ServerConfig), Box<dyn std::error::Error + Send + Sync>> {
@@ -2301,7 +2330,7 @@ mod tests {
 
     /// 复现接受侧 `punch_udp`：先**消费掉对端的第一个数据报**（并断言它确实是 QUIC 长首部
     /// Initial），再把**同一张** socket 交给产品 accept 入口 —— 顺序与
-    /// `rendezvous_mediator.rs:1487` 一致（`punch_udp` 返回后 `quic_accept_attempt` 才建 endpoint）。
+    /// `rendezvous_mediator.rs` 的 `udp_nat_listen` 一致（`punch_udp` 返回后 `quic_accept_attempt` 才建 endpoint）。
     /// 因此被消费的那个 Initial 永远不会到达 quinn，只能靠发起侧 PTO 重传。
     fn spawn_punch_eats_first_initial(
         server_sock: Arc<tokio::net::UdpSocket>,
@@ -2333,7 +2362,7 @@ mod tests {
         Ok(cfg)
     }
 
-    /// 复刻 `quic_direct_attempt:327-358` 的拨号序列，唯一差别是允许注入 client 配置。
+    /// 复刻 `quic_direct_attempt_with_conn` 的拨号序列，唯一差别是允许注入 client 配置。
     async fn dial_with_config(
         socket: Arc<tokio::net::UdpSocket>,
         client_cfg: ClientConfig,
@@ -2558,7 +2587,7 @@ mod tests {
     /// R4-3（task-15）F-R1：打洞探针、空包、过短的包、非 v1 版本都不得命中。
     #[test]
     fn quic_discriminator_rejects_non_quic_datagrams() {
-        // src/common.rs:2785-2787：PUNCH_PROBE = *b"RDP?"、PUNCH_ACK = *b"RDP!"，共 12 字节，
+        // src/common.rs:2864-2865：PUNCH_PROBE = *b"RDP?"、PUNCH_ACK = *b"RDP!"，共 12 字节，
         // 其余 8 字节是随机 tid。首字节 'R' = 0x52，bit7 = 0 ⇒ 恒不命中。
         for tag in [b"RDP?", b"RDP!"] {
             let mut p = [0u8; 12];
@@ -2603,8 +2632,9 @@ mod tests {
         // 已知残余形状（本仓不可达，但行为必须被钉住 —— 见 analysis/network/quic-server-wiring.md
         // §4.1.1「残余形状」）：判据只看首字节的两个高位与版本字段，**不要求 QUIC Initial 的最小长度**。
         // 因此一个恰好 5 字节的 `C0 00 00 00 01` 会被判为 QUIC。这是刻意保留的：
-        //   - 监听 socket（src/rendezvous_mediator.rs:1486）已 connect 到对端，对端只会发
-        //     12 字节打洞探针（src/common.rs:2785-2787）、14 字节 KCP SYN（src/kcp_stream.rs:117）
+        //   - 监听 socket（`rendezvous_mediator.rs` 的 `udp_nat_listen` 交给 `quic_accept_attempt`
+        //     的那张，已 connect 到对端）只会收到：12 字节打洞探针（src/common.rs:2864-2865）、
+        //     14 字节 KCP SYN（src/kcp_stream.rs:117）
         //     或 >= 1200 字节 QUIC Initial ⇒ 该形状不可达。
         //   - 若加 `datagram.len() >= 1200`（RFC 9000 §14.1 的填充是**客户端义务**），会引入一个
         //     **新的误判类**：漏判 ⇒ 退回 KCP ⇒ 连接失败，比「多等一个 PTO」更差的失败模式。

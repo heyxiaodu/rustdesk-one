@@ -629,20 +629,25 @@ pub fn core_main() -> Option<Vec<String>> {
             }
             return None;
         } else if args[0] == "--set-unlock-pin" {
+            // FIX-03: this branch must use `my_println!`, not `println!`. A release Windows
+            // build is a GUI subsystem binary (see `src/main.rs`), so it has no console: every
+            // `println!` here is silently discarded and the user sees *nothing* after a
+            // successful `--set-unlock-pin`. `my_println!` shows a message box on Windows and
+            // still writes to stdout elsewhere, exactly like the `--password` branch above.
             if config::Config::is_disable_unlock_pin() {
-                println!("Unlock PIN is disabled!");
+                crate::my_println!("Unlock PIN is disabled!");
                 return None;
             }
             #[cfg(feature = "flutter")]
             if args.len() == 2 {
                 if crate::platform::is_installed() && is_root() {
                     if let Err(err) = crate::ipc::set_unlock_pin(args[1].to_owned(), false) {
-                        println!("{err}");
+                        crate::my_println!("{err}");
                     } else {
-                        println!("Done!");
+                        crate::my_println!("Done!");
                     }
                 } else {
-                    println!("Installation and administrative privileges required!");
+                    crate::my_println!("Installation and administrative privileges required!");
                 }
             }
             return None;
