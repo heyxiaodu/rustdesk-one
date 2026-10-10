@@ -315,12 +315,17 @@ pub fn looks_like_quic_long_header(datagram: &[u8]) -> bool {
 /// `stream.rs` 之上的 E2E secretbox 链不变。`peer_raw_pubkey` 是对端 32 字节 ed25519 公钥，
 /// 来自 `signed_id_pk` 经 `common::decode_id_pk` 解出、且已在调用侧做过 `id == peer_id` 校验
 /// （`src/client.rs`，task-15 Q4 裁决 A+）—— 它就是 RFC 7250 的信任锚。
+/// 与 `quic_direct_attempt` 逐字同体，只多交回 `quinn::Connection` 句柄 —— 只有诊断入口
+/// （`run_quic_pair_mode`）需要它：拿到句柄才能在收尾阶段**事件驱动**地等连接真正关闭
+/// （`analysis/round23-quic-measure/plan.md` §12 的 D-2）。产品路径继续用
+/// `quic_direct_attempt`（丢弃句柄，行为与改动前逐字一致）：多留一个句柄会推迟
+/// CONNECTION_CLOSE，因为 quinn 只在最后一个句柄 drop 时才关闭连接。
 #[cfg(feature = "quic")]
-pub async fn quic_direct_attempt(
+pub async fn quic_direct_attempt_with_conn(
     socket: Arc<hbb_common::tokio::net::UdpSocket>,
     peer_raw_pubkey: &[u8; 32],
     connect_timeout_ms: u64,
-) -> hbb_common::ResultType<FramedStream> {
+) -> hbb_common::ResultType<(FramedStream, quinn::Connection)> {
     // ring provider 是本模块的唯一全局前置条件。此前产品路径没有任何调用者装它，只有
     // `run_quic_probe_mode` 与测试装（缺口 G3，见
     // `analysis/network/phase3-wiring-options.md`）。在这里装一次是幂等的，从而不必去改
@@ -365,7 +370,19 @@ pub async fn quic_direct_attempt(
         socket.local_addr(),
         peer
     );
-    Ok(quic_into_framed_stream(recv, send, peer))
+    Ok((quic_into_framed_stream(recv, send, peer), conn))
+}
+
+/// 产品路径入口：只要那条双向字节流，丢弃连接句柄（行为与改动前逐字一致）。
+#[cfg(feature = "quic")]
+pub async fn quic_direct_attempt(
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+    peer_raw_pubkey: &[u8; 32],
+    connect_timeout_ms: u64,
+) -> hbb_common::ResultType<FramedStream> {
+    quic_direct_attempt_with_conn(socket, peer_raw_pubkey, connect_timeout_ms)
+        .await
+        .map(|(stream, _conn)| stream)
 }
 
 /// R4-3（task-15）：产品入口 —— 在**已打洞**的 UDP socket 上接受一条 QUIC 连接（被控端）。
@@ -377,12 +394,12 @@ pub async fn quic_direct_attempt(
 /// （`src/quic_transport.rs` 内），即**QUIC 层只让客户端认证服务端**，服务端不认证客户端 ——
 /// 主控端身份仍由上层既有的 `identity_handshake` 完成。这与服务端侧既有行为一致，未新增缺口。
 #[cfg(feature = "quic")]
-pub async fn quic_accept_attempt(
+pub async fn quic_accept_attempt_with_conn(
     socket: Arc<hbb_common::tokio::net::UdpSocket>,
     peer: SocketAddr,
     accept_timeout_ms: u64,
     server_cfg: QuinnServerConfig,
-) -> hbb_common::ResultType<FramedStream> {
+) -> hbb_common::ResultType<(FramedStream, quinn::Connection)> {
     install_ring_provider();
     // P2（task-4）：被控端同样需要握手耗时与本地端口 —— 它是「首包被 `punch_udp` 吃掉、
     // 只能靠 PTO 重传」这一时序缺陷的受害侧，没有这条日志就只能靠猜。
@@ -420,7 +437,20 @@ pub async fn quic_accept_attempt(
         socket.local_addr(),
         peer
     );
-    Ok(quic_into_framed_stream(recv, send, peer))
+    Ok((quic_into_framed_stream(recv, send, peer), conn))
+}
+
+/// 产品路径入口（被控端只用它）：只要那条双向字节流，丢弃连接句柄（行为与改动前逐字一致）。
+#[cfg(feature = "quic")]
+pub async fn quic_accept_attempt(
+    socket: Arc<hbb_common::tokio::net::UdpSocket>,
+    peer: SocketAddr,
+    accept_timeout_ms: u64,
+    server_cfg: QuinnServerConfig,
+) -> hbb_common::ResultType<FramedStream> {
+    quic_accept_attempt_with_conn(socket, peer, accept_timeout_ms, server_cfg)
+        .await
+        .map(|(stream, _conn)| stream)
 }
 
 // ---------- P1d-tail-3：`--quic-probe-mode` 调试入口（仅 RT-01 / Win7 字节级实测用）----------
@@ -1114,21 +1144,27 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
                 return (false, outcome!(false, bind, "-", format!("bind: {e}")));
             }
         };
+        // D-1：报 bind 地址还是报真实本地地址，之前不一致 —— 失败行报 `bind`（用户传的），
+        // 成功行报 `local_addr()`。同一格字段两种含义会让两机比对时误判端口；统一取真实值。
+        let local = socket.local_addr().unwrap_or(bind);
         if role_dial {
             let p = peer.unwrap();
             if let Err(e) = socket.connect(p).await {
-                return (false, outcome!(false, bind, p, format!("connect: {e}")));
+                return (false, outcome!(false, local, p, format!("connect: {e}")));
             }
             peer_addr = p;
         } else {
             match peer {
                 Some(p) => {
                     if let Err(e) = socket.connect(p).await {
-                        return (false, outcome!(false, bind, p, format!("connect: {e}")));
+                        return (false, outcome!(false, local, p, format!("connect: {e}")));
                     }
                     peer_addr = p;
                 }
                 None => {
+                    // D-1：先置 `mode` 再尝试学习对端，否则超时行会报 `mode=with-peer`
+                    // （用户明明没给 `--peer`）；两机比对时这一格是判「谁没发包」的入口。
+                    mode = "learn-peer";
                     // 与产品顺序的已知偏差：产品由 ID Server 提供对端地址；本入口在此学习。
                     let mut buf = [0u8; 1500];
                     let dur = Duration::from_millis(timeout_ms.clamp(1_000, 10_000));
@@ -1137,20 +1173,19 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
                             init_len = n;
                             first_byte = buf.first().copied().unwrap_or(0);
                             if let Err(e) = socket.connect(from).await {
-                                return (false, outcome!(false, bind, from, format!("connect: {e}")));
+                                return (false, outcome!(false, local, from, format!("connect: {e}")));
                             }
                             peer_addr = from;
-                            mode = "learn-peer";
                         }
                         Ok(Err(e)) => {
-                            return (false, outcome!(false, bind, "-", format!("recv_from: {e}")));
+                            return (false, outcome!(false, local, "-", format!("recv_from: {e}")));
                         }
                         Err(_) => {
                             return (
                                 false,
                                 outcome!(
                                     false,
-                                    bind,
+                                    local,
                                     "-",
                                     "learn-peer timeout: 未收到任何入站数据报（NAT 未打洞或对端未发）"
                                 ),
@@ -1160,7 +1195,6 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
                 }
             }
         }
-        let local = socket.local_addr().unwrap_or(bind);
         install_ring_provider();
         if punch {
             let t = Instant::now();
@@ -1184,10 +1218,10 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
             }
         }
         let t = Instant::now();
-        let mut stream = if role_dial {
+        let (mut stream, conn) = if role_dial {
             let pk = peer_pk.unwrap();
-            match quic_direct_attempt(socket.clone(), &pk, timeout_ms).await {
-                Ok(s) => s,
+            match quic_direct_attempt_with_conn(socket.clone(), &pk, timeout_ms).await {
+                Ok(pair) => pair,
                 Err(e) => {
                     hs_ms = t.elapsed().as_millis();
                     return (
@@ -1206,8 +1240,8 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
                     );
                 }
             };
-            match quic_accept_attempt(socket.clone(), peer_addr, timeout_ms, cfg).await {
-                Ok(s) => s,
+            match quic_accept_attempt_with_conn(socket.clone(), peer_addr, timeout_ms, cfg).await {
+                Ok(pair) => pair,
                 Err(e) => {
                     hs_ms = t.elapsed().as_millis();
                     return (
@@ -1245,11 +1279,18 @@ pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
                 );
             }
         }
-        // 让 quinn 的连接驱动把已缓冲的字节真正发到线上再返回：`poll_write` 只保证
-        // 写进缓冲，而 core_main 的挂载点是 `std::process::exit(...)`，进程立刻退出
-        // 会把最后一段数据丢掉 —— 首轮 loopback 实测里 listen 侧的 `qp:pong` 就是这样
-        // 丢的（dial 侧报 `byte roundtrip timeout`，而 listen 侧 echo_bytes=8 正常）。
-        hbb_common::tokio::time::sleep(Duration::from_millis(500)).await;
+        // D-2（task-6 §12 的补丁项）：此前这里是固定 `sleep(500ms)` 等 quinn 把缓冲字节
+        // 发到线上 —— 那是时间猜测，慢机器会复发。根因是 `poll_write` 只保证写进缓冲，
+        // 而 `core_main` 的挂载点拿到返回值后立刻 `std::process::exit(...)`：进程一退，
+        // 最后一段数据就没了（首轮 loopback 实测里 listen 侧的 `qp:pong` 正是这样丢的，
+        // dial 侧报 `byte roundtrip timeout` 而 listen 侧 echo_bytes=8 正常）。
+        //
+        // 改法：不再猜时间，也不再主动 `conn.close()` —— quinn 的 `close()` 会立刻停发
+        // 且丢弃未确认的流数据（`Connection::close` 文档：pending operations fail
+        // immediately），刚写完的那 8 字节就可能在关闭时被丢掉。这里改为「保持连接打开、
+        // 等到对端关闭或到达上限」：这段时间连接仍是活的，quinn 的连接驱动会照常重传
+        // 未确认字节，因此等待本身就把「已写入但未上线」的数据推出去了。两端对称。
+        let _ = hbb_common::tokio::time::timeout(Duration::from_secs(3), conn.closed()).await;
         (
             true,
             outcome!(true, local, peer_addr, ""),
