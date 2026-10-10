@@ -42,3 +42,24 @@ hide-tray = "Y"
 # ⇒ 用户无法在界面里改回来；删掉配置文件也无效，apply_defaults() 每次启动都会
 # 重新播种。要解除只能改本文件后重新构建，或用签名 custom.txt 覆盖。
 disable-change-permanent-password = "Y"
+
+# 传输模式（QUIC 三档之一）：disabled / prefer / required。
+# 读取链：src/client.rs 与 src/rendezvous_mediator.rs 调
+# crate::common::get_quic_mode()（src/common.rs:1259-1277），它**先看环境变量
+# NERV_QUIC_MODE**，再看本地选项 quic-mode（本键）→ LocalConfig::get_option →
+# DEFAULT_LOCAL_SETTINGS（config.rs:2234-2242）。GUI 进程（src/core_main.rs:36）与
+# 服务进程（src/service.rs:16）都会经 load_custom_client() → apply_defaults() 播种，
+# 所以"两台都装新包就能直接跑 QUIC"，不需要手工设环境变量。
+#
+# "prefer" = 先试 QUIC（与 KCP 共用**同一个已打洞的 UDP socket**，见 src/client.rs:5715-5730），
+# 失败只记 warn 并自动回退原传输（TCP/KCP/WebRTC/中继）⇒ 对旧版对端仍然兼容，
+# 代价是最坏情况下多等一个连接预算（下限 1000 ms）。
+# "required" = 只允许 QUIC、失败把真实错误报出来（不回退）——用于验收，不作出厂默认。
+#
+# 覆盖方式（优先级从高到低）：① 启动前设环境变量 NERV_QUIC_MODE=disabled|prefer|required；
+# ② Flutter 构建上可用命令行 `nervdesk --transport quic-off|quic-prefer|quic-required`
+# （sciter/Win7 产物不支持，见 src/core_main.rs:194-220）；
+# ③ 改本文件后重新构建。
+# 本键只在**编了 `quic` feature 的构建**里有读取点（所有 get_quic_mode() 调用点都在
+# #[cfg(feature = "quic")] 之内）⇒ 默认的 nightly（不带 quic feature）行为不受影响。
+quic-mode = "prefer"

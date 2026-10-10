@@ -3953,4 +3953,28 @@ mod tests {
             assert_eq!(got, expected, "env={:?}", input);
         }
     }
+
+    // 真实链路（与上面那条纯查表测试不同：这里真的调 get_quic_mode()）。
+    // apply_defaults() 把本地选项 quic-mode 播种成 "prefer"（branding/nerv.toml），
+    // 而 get_quic_mode() 的优先级是
+    //   环境变量 NERV_QUIC_MODE  >  本地选项 quic-mode  >  无
+    // ⇒ 只有**未**设环境变量的进程才能断言「本地选项层返回 Prefer」。
+    #[test]
+    fn quic_mode_defaults_to_branding_seeded_local_option() {
+        if std::env::var("NERV_QUIC_MODE").is_ok() {
+            // 环境变量层优先，本进程不适合断言下一层；返回而不是失败。
+            return;
+        }
+        base::branding::apply_defaults();
+        assert_eq!(
+            get_local_option(keys::OPTION_QUIC_MODE),
+            "prefer",
+            "branding 应把 quic-mode 播种为 prefer"
+        );
+        assert_eq!(
+            get_quic_mode(),
+            QuicMode::Prefer,
+            "播种后 get_quic_mode() 应返回 Prefer（默认 QUIC 优先）"
+        );
+    }
 }

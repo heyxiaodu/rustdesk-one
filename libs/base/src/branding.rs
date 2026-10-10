@@ -43,6 +43,12 @@ pub fn apply_defaults() {
             .entry("disable-change-permanent-password".to_owned())
             .or_insert_with(|| "Y".to_owned());
     }
+    {
+        let mut settings = hbb_common::config::DEFAULT_LOCAL_SETTINGS.write().unwrap();
+        settings
+            .entry("quic-mode".to_owned())
+            .or_insert_with(|| "prefer".to_owned());
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +107,10 @@ mod tests {
                 settings.get("disable-change-permanent-password").map(String::as_str),
                 Some("Y")
             );
+        }
+        {
+            let settings = hbb_common::config::DEFAULT_LOCAL_SETTINGS.read().unwrap();
+            assert_eq!(settings.get("quic-mode").map(String::as_str), Some("prefer"));
         }
     }
 

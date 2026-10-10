@@ -36,7 +36,12 @@ REQUIRED_FIELDS = ("id_server", "relay_server", "api_server", "public_key")
 # libs/hbb_common/src/config.rs. A key seeded into the wrong map is silently
 # ineffective at runtime, so which map reads an option is recorded here rather
 # than guessed from the manifest.
-DEFAULT_TABLES = ("DEFAULT_SETTINGS", "BUILTIN_SETTINGS", "DEFAULT_DISPLAY_SETTINGS")
+DEFAULT_TABLES = (
+    "DEFAULT_SETTINGS",
+    "BUILTIN_SETTINGS",
+    "DEFAULT_DISPLAY_SETTINGS",
+    "DEFAULT_LOCAL_SETTINGS",
+)
 
 # option name -> settings map. Every key allowed in [defaults] must appear here;
 # anything else is a generation error naming this table, so a new default cannot
@@ -46,6 +51,10 @@ DEFAULT_TABLES = ("DEFAULT_SETTINGS", "BUILTIN_SETTINGS", "DEFAULT_DISPLAY_SETTI
 # BUILTIN_SETTINGS: read by get_builtin_option (src/common.rs:2622-2629).
 # DEFAULT_DISPLAY_SETTINGS: read through UserDefaultConfig::get -> get_after
 #   -> get_or(&OVERWRITE_DISPLAY_SETTINGS, &options, &DEFAULT_DISPLAY_SETTINGS, k).
+# DEFAULT_LOCAL_SETTINGS: read by LocalConfig::get_option
+#   (config.rs:2234-2242: OVERWRITE_LOCAL_SETTINGS > LOCAL_CONFIG file >
+#   DEFAULT_LOCAL_SETTINGS); this is the layer src/common.rs `get_local_option`
+#   sees, and therefore the one the transport-mode option has to be seeded into.
 KEY_TARGETS = {
     "custom-rendezvous-server": "DEFAULT_SETTINGS",
     "relay-server": "DEFAULT_SETTINGS",
@@ -81,6 +90,18 @@ KEY_TARGETS = {
     "image_quality": "DEFAULT_DISPLAY_SETTINGS",
     "custom_image_quality": "DEFAULT_DISPLAY_SETTINGS",
     "custom-fps": "DEFAULT_DISPLAY_SETTINGS",
+    # NERV Desk transport mode: "disabled" | "prefer" | "required".
+    # Read chain: src/client.rs + src/rendezvous_mediator.rs call
+    # crate::common::get_quic_mode() (src/common.rs:1259-1277), which reads the
+    # NERV_QUIC_MODE env var first and then get_local_option(OPTION_QUIC_MODE)
+    # -> LocalConfig::get_option -> this map. Both the GUI process and the
+    # service process reach it: src/core_main.rs:36 and src/service.rs:16 both
+    # call load_custom_client() -> apply_defaults().
+    # Inert in builds without the `quic` feature: every get_quic_mode() call site
+    # is behind #[cfg(feature = "quic")] (src/client.rs:1509-1556, :1650,
+    # :4345-4356, :5722-5724; src/rendezvous_mediator.rs:1499-1503;
+    # src/flutter.rs:842-847; src/core_main.rs:321-325).
+    "quic-mode": "DEFAULT_LOCAL_SETTINGS",
 }
 
 # Options whose seeded value drives a predicate in the client. Listing one here
@@ -471,6 +492,7 @@ def render(values: dict[str, str], defaults: dict[str, list[tuple[str, str]]]) -
     lines += seed_block("DEFAULT_SETTINGS", server_seeds + extra["DEFAULT_SETTINGS"])
     lines += seed_block("BUILTIN_SETTINGS", extra["BUILTIN_SETTINGS"])
     lines += seed_block("DEFAULT_DISPLAY_SETTINGS", extra["DEFAULT_DISPLAY_SETTINGS"])
+    lines += seed_block("DEFAULT_LOCAL_SETTINGS", extra["DEFAULT_LOCAL_SETTINGS"])
     lines += [
         "}",
         "",
