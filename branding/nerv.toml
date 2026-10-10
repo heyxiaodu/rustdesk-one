@@ -44,7 +44,7 @@ hide-tray = "Y"
 disable-change-permanent-password = "Y"
 
 # 传输模式（QUIC 三档之一）：disabled / prefer / required。
-# 读取链：`crate::common::get_quic_mode()`（src/common.rs:1259-1277）**先看环境变量
+# 读取链：`crate::common::get_quic_mode()`（src/common.rs:1272-1290；值的纯解析函数 quic_mode_from_env_value 在 :1263-1270）**先看环境变量
 # NERV_QUIC_MODE**，再看本地选项 quic-mode（本键）→ LocalConfig::get_option →
 # DEFAULT_LOCAL_SETTINGS（config.rs:2234-2242）。全部读取点（7 处，均在
 # `#[cfg(feature = "quic")]` 之内）：

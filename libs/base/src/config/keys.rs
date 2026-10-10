@@ -136,7 +136,7 @@ pub const OPTION_RELAY_FALLBACK_DELAY: &str = "relay-fallback-delay";
 // 本常量只是**键名**：上游构建或不带品牌播种的构建落到默认分支 = disabled；
 // NERV Desk 出厂值由 OEM 品牌清单播种为 prefer（`branding/nerv.toml` 的
 // `quic-mode = "prefer"` → scripts/gen-branding.py → libs/base/src/branding.rs 的
-// `DEFAULT_LOCAL_SETTINGS.entry("quic-mode")`），读取点见 src/common.rs:1259-1277。
+// `DEFAULT_LOCAL_SETTINGS.entry("quic-mode")`），读取点见 src/common.rs:1272-1290（纯函数 quic_mode_from_env_value 在 :1263）。
 pub const OPTION_QUIC_MODE: &str = "quic-mode";
 pub const OPTION_ALLOW_KCP_CC: &str = "allow-kcp-congestion-control";
 pub const OPTION_HIDE_USERNAME_ON_CARD: &str = "hide-username-on-card";
