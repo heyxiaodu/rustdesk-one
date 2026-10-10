@@ -870,6 +870,395 @@ pub fn make_quic_client_config(
     Ok(client_cfg)
 }
 
+// ---------- task-5：`--quic-pair-mode` 跨机 QUIC 实测诊断入口（无头、机器可判定）----------
+//
+// 与 `--quic-probe-mode`（上面的 `run_quic_probe_mode`）的**本质区别**：本入口复用产品同一
+// `punch_udp`（`src/common.rs:2898`），并**在同一条已打洞的 UDP socket 上**做 QUIC ——
+// 与产品主控侧 `udp_nat_connect`（`src/client.rs:5646` → QUIC 调用点 `:5686`）和被控侧
+// `udp_nat_listen`（`src/rendezvous_mediator.rs:1475` → QUIC 分支 `:1493`）的顺序一致。
+// 因此它回答的是「打洞之后 QUIC 能不能过」，而不是「无 NAT 的裸 QUIC 能不能过」；
+// 后者正是 probe-mode 的限界，也是「探针 PASS、跨机从未成功」的成因 —— 打洞函数会吃掉
+// 对端第一个数据报，也就是首个 QUIC Initial（`src/common.rs:2963-2968`）。
+//
+// 用法：
+//   nervdesk --quic-pair-mode genkey
+//   nervdesk --quic-pair-mode dial   --local-port <P> --peer <ip:port> --peer-key <64hex>
+//                                    [--key <64hex>] [--timeout-ms N] [--no-punch]
+//   nervdesk --quic-pair-mode listen --port <P> [--peer <ip:port>] [--key <64hex>]
+//                                    [--peer-key <64hex>] [--timeout-ms N] [--no-punch]
+//
+// `listen` 带 `--peer` = 与产品同序（先 connect 再打洞）；不带 `--peer` 时先在 `recv_from`
+// 上学习对端地址（只适用于本端公开可达的一侧）—— 这是与产品顺序的**已知偏差**，实测报告
+// 里必须如实标注。`--no-punch` 是负对照（跨 NAT 预期 FAIL）。`--key` 省略时随机生成
+// 临时身份（限界：不是产品 RustDesk 身份键，见报告模板的登记项）。
+//
+// 输出：最后一行 `QUIC-PAIR …`；`exesha=` 是**运行中二进制**的 sha256，两端一致才说明
+// 两侧跑的是同一个 `--features quic` 产物。密钥只作 hex 入参，绝不回显。
+#[cfg(feature = "quic")]
+pub fn run_quic_pair_mode(args: &[String]) -> Option<bool> {
+    use hbb_common::tokio::net::UdpSocket;
+    use hbb_common::tokio::runtime::Builder;
+    use std::time::{Duration, Instant};
+
+    fn to_hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+    fn hex32(s: &str) -> Option<[u8; 32]> {
+        if s.len() != 64 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (i, c) in s.as_bytes().chunks(2).enumerate() {
+            out[i] = u8::from_str_radix(std::str::from_utf8(c).ok()?, 16).ok()?;
+        }
+        Some(out)
+    }
+    fn new_seed() -> Option<[u8; 32]> {
+        let mut s = [0u8; 32];
+        ring::rand::SecureRandom::fill(&SystemRandom::new(), &mut s).ok()?;
+        Some(s)
+    }
+    fn pk_of(seed: &[u8; 32]) -> Option<[u8; 32]> {
+        let kp = Ed25519KeyPair::from_seed_unchecked(seed).ok()?;
+        let mut p = [0u8; 32];
+        p.copy_from_slice(kp.public_key().as_ref());
+        Some(p)
+    }
+    /// 运行中二进制的 sha256：两端一致，才证明两侧是同一个 `--features quic` 产物。
+    fn exe_sha() -> String {
+        match std::env::current_exe()
+            .ok()
+            .and_then(|p| std::fs::read(p).ok())
+        {
+            Some(bytes) => to_hex(ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()),
+            None => "-".to_owned(),
+        }
+    }
+
+    let sub = args.get(1).map(String::as_str).unwrap_or("");
+    if sub == "genkey" {
+        let Some(seed) = new_seed() else {
+            eprintln!("[quic-pair] cannot read entropy");
+            return Some(false);
+        };
+        let Some(pk) = pk_of(&seed) else {
+            eprintln!("[quic-pair] key derive failed");
+            return Some(false);
+        };
+        println!("priv={} pub={}", to_hex(&seed), to_hex(&pk));
+        return Some(true);
+    }
+    if sub != "dial" && sub != "listen" {
+        eprintln!("[quic-pair] usage:");
+        eprintln!("  --quic-pair-mode genkey");
+        eprintln!(
+            "  --quic-pair-mode dial   --local-port <P> --peer <ip:port> --peer-key <64hex> \
+             [--key <64hex>] [--timeout-ms N] [--no-punch]"
+        );
+        eprintln!(
+            "  --quic-pair-mode listen --port <P> [--peer <ip:port>] [--key <64hex>] \
+             [--peer-key <64hex>] [--timeout-ms N] [--no-punch]"
+        );
+        return Some(false);
+    }
+    let role_dial = sub == "dial";
+    let (mut local_port, mut port): (u16, u16) = (0, 0);
+    let (mut peer, mut peer_pk): (Option<SocketAddr>, Option<[u8; 32]>) = (None, None);
+    let mut seed: Option<[u8; 32]> = None;
+    let (mut timeout_ms, mut punch): (u64, bool) = (15_000, true);
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--local-port" => {
+                match args.get(i + 1).and_then(|v| v.parse::<u16>().ok()) {
+                    Some(v) => local_port = v,
+                    None => {
+                        eprintln!("[quic-pair] bad --local-port");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--port" => {
+                match args.get(i + 1).and_then(|v| v.parse::<u16>().ok()) {
+                    Some(v) => port = v,
+                    None => {
+                        eprintln!("[quic-pair] bad --port");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--peer" => {
+                match args.get(i + 1).and_then(|v| v.parse::<SocketAddr>().ok()) {
+                    Some(v) => peer = Some(v),
+                    None => {
+                        eprintln!("[quic-pair] bad --peer");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--key" => {
+                match args.get(i + 1).and_then(|v| hex32(v)) {
+                    Some(v) => seed = Some(v),
+                    None => {
+                        eprintln!("[quic-pair] bad --key (need 64 hex chars)");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--peer-key" => {
+                match args.get(i + 1).and_then(|v| hex32(v)) {
+                    Some(v) => peer_pk = Some(v),
+                    None => {
+                        eprintln!("[quic-pair] bad --peer-key (need 64 hex chars)");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--timeout-ms" => {
+                match args.get(i + 1).and_then(|v| v.parse::<u64>().ok()) {
+                    Some(v) => timeout_ms = v,
+                    None => {
+                        eprintln!("[quic-pair] bad --timeout-ms");
+                        return Some(false);
+                    }
+                }
+                i += 2;
+            }
+            "--no-punch" => {
+                punch = false;
+                i += 1;
+            }
+            other => {
+                eprintln!("[quic-pair] unknown argument `{other}`");
+                return Some(false);
+            }
+        }
+    }
+    if role_dial && (peer.is_none() || peer_pk.is_none()) {
+        eprintln!("[quic-pair] dial needs --peer and --peer-key");
+        return Some(false);
+    }
+    if !role_dial && port == 0 {
+        eprintln!("[quic-pair] listen needs --port");
+        return Some(false);
+    }
+    let Some(my_seed) = seed.or_else(new_seed) else {
+        eprintln!("[quic-pair] cannot read entropy");
+        return Some(false);
+    };
+    let Some(my_pk) = pk_of(&my_seed) else {
+        eprintln!("[quic-pair] local key derive failed");
+        return Some(false);
+    };
+    let exesha = exe_sha();
+    let bind: SocketAddr = if role_dial {
+        SocketAddr::from(([0, 0, 0, 0], local_port))
+    } else {
+        SocketAddr::from(([0, 0, 0, 0], port))
+    };
+    println!(
+        "[quic-pair] role={} bind={} my_pub={} peer={:?} peer_key={} punch={} timeout_ms={}",
+        if role_dial { "dial" } else { "listen" },
+        bind,
+        to_hex(&my_pk),
+        peer,
+        peer_pk.is_some(),
+        punch as u8,
+        timeout_ms
+    );
+    let rt = match Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("[quic-pair] tokio runtime build failed: {e}");
+            return Some(false);
+        }
+    };
+    let t_all = Instant::now();
+    let (ok, line) = rt.block_on(async move {
+        let (mut init_len, mut first_byte) = (0usize, 0u8);
+        let (mut punch_ms, mut hs_ms, mut echo_bytes) = (0u128, 0u128, 0usize);
+        // `mode` 必须在 `macro_rules!` 之前声明：宏体里的自由标识符在展开点按定义处的
+        // 语法上下文解析，定义之后才 `let` 绑定的名字会报 E0425（macro hygiene）。
+        let mut mode = "with-peer";
+        macro_rules! outcome {
+            ($ok:expr, $local:expr, $peer:expr, $err:expr) => {
+                format!(
+                    "role={} result={} punch={} mode={} local={} peer={} punch_ms={} hs_ms={} \
+                     init_len={} first_byte=0x{:02x} echo_bytes={} total_ms={} exesha={} err=\"{}\"",
+                    if role_dial { "dial" } else { "listen" },
+                    if $ok { "PASS" } else { "FAIL" },
+                    punch as u8,
+                    mode,
+                    $local,
+                    $peer,
+                    punch_ms,
+                    hs_ms,
+                    init_len,
+                    first_byte,
+                    echo_bytes,
+                    t_all.elapsed().as_millis(),
+                    exesha,
+                    $err
+                )
+            };
+        }
+        let peer_addr: SocketAddr;
+        let socket = match UdpSocket::bind(bind).await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                return (false, outcome!(false, bind, "-", format!("bind: {e}")));
+            }
+        };
+        if role_dial {
+            let p = peer.unwrap();
+            if let Err(e) = socket.connect(p).await {
+                return (false, outcome!(false, bind, p, format!("connect: {e}")));
+            }
+            peer_addr = p;
+        } else {
+            match peer {
+                Some(p) => {
+                    if let Err(e) = socket.connect(p).await {
+                        return (false, outcome!(false, bind, p, format!("connect: {e}")));
+                    }
+                    peer_addr = p;
+                }
+                None => {
+                    // 与产品顺序的已知偏差：产品由 ID Server 提供对端地址；本入口在此学习。
+                    let mut buf = [0u8; 1500];
+                    let dur = Duration::from_millis(timeout_ms.clamp(1_000, 10_000));
+                    match hbb_common::tokio::time::timeout(dur, socket.recv_from(&mut buf)).await {
+                        Ok(Ok((n, from))) => {
+                            init_len = n;
+                            first_byte = buf.first().copied().unwrap_or(0);
+                            if let Err(e) = socket.connect(from).await {
+                                return (false, outcome!(false, bind, from, format!("connect: {e}")));
+                            }
+                            peer_addr = from;
+                            mode = "learn-peer";
+                        }
+                        Ok(Err(e)) => {
+                            return (false, outcome!(false, bind, "-", format!("recv_from: {e}")));
+                        }
+                        Err(_) => {
+                            return (
+                                false,
+                                outcome!(
+                                    false,
+                                    bind,
+                                    "-",
+                                    "learn-peer timeout: 未收到任何入站数据报（NAT 未打洞或对端未发）"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let local = socket.local_addr().unwrap_or(bind);
+        install_ring_provider();
+        if punch {
+            let t = Instant::now();
+            let r = if role_dial {
+                crate::punch_udp(socket.clone(), false).await
+            } else {
+                crate::punch_udp(socket.clone(), true).await
+            };
+            punch_ms = t.elapsed().as_millis();
+            match r {
+                Ok(Some(b)) => {
+                    if init_len == 0 {
+                        init_len = b.len();
+                        first_byte = b.first().copied().unwrap_or(0);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return (false, outcome!(false, local, peer_addr, format!("punch_udp: {e}")));
+                }
+            }
+        }
+        let t = Instant::now();
+        let mut stream = if role_dial {
+            let pk = peer_pk.unwrap();
+            match quic_direct_attempt(socket.clone(), &pk, timeout_ms).await {
+                Ok(s) => s,
+                Err(e) => {
+                    hs_ms = t.elapsed().as_millis();
+                    return (
+                        false,
+                        outcome!(false, local, peer_addr, format!("quic_direct_attempt: {e}")),
+                    );
+                }
+            }
+        } else {
+            let cfg = match make_quic_server_config(&my_pk, &my_seed) {
+                Ok(c) => c,
+                Err(e) => {
+                    return (
+                        false,
+                        outcome!(false, local, peer_addr, format!("make_quic_server_config: {e}")),
+                    );
+                }
+            };
+            match quic_accept_attempt(socket.clone(), peer_addr, timeout_ms, cfg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    hs_ms = t.elapsed().as_millis();
+                    return (
+                        false,
+                        outcome!(false, local, peer_addr, format!("quic_accept_attempt: {e}")),
+                    );
+                }
+            }
+        };
+        hs_ms = t.elapsed().as_millis();
+        // 握手成功 ≠ 数据能过：两端各发 8 字节、各读一次。
+        let payload: Vec<u8> = if role_dial {
+            b"qp:ping\n".to_vec()
+        } else {
+            b"qp:pong\n".to_vec()
+        };
+        if let Err(e) = stream.send_raw(payload).await {
+            return (false, outcome!(false, local, peer_addr, format!("send_raw: {e}")));
+        }
+        match hbb_common::tokio::time::timeout(Duration::from_secs(5), stream.next()).await {
+            Ok(Some(Ok(b))) => echo_bytes = b.len(),
+            Ok(Some(Err(e))) => {
+                return (false, outcome!(false, local, peer_addr, format!("read: {e}")));
+            }
+            Ok(None) => {
+                return (
+                    false,
+                    outcome!(false, local, peer_addr, "stream closed before any byte"),
+                );
+            }
+            Err(_) => {
+                return (
+                    false,
+                    outcome!(false, local, peer_addr, "byte roundtrip timeout"),
+                );
+            }
+        }
+        // 让 quinn 的连接驱动把已缓冲的字节真正发到线上再返回：`poll_write` 只保证
+        // 写进缓冲，而 core_main 的挂载点是 `std::process::exit(...)`，进程立刻退出
+        // 会把最后一段数据丢掉 —— 首轮 loopback 实测里 listen 侧的 `qp:pong` 就是这样
+        // 丢的（dial 侧报 `byte roundtrip timeout`，而 listen 侧 echo_bytes=8 正常）。
+        hbb_common::tokio::time::sleep(Duration::from_millis(500)).await;
+        (
+            true,
+            outcome!(true, local, peer_addr, ""),
+        )
+    });
+    println!("QUIC-PAIR {line}");
+    Some(ok)
+}
+
 #[cfg(all(test, feature = "quic"))]
 mod tests {
     use super::{install_ring_provider, quic_into_framed_stream};

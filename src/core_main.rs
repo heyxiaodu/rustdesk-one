@@ -167,6 +167,35 @@ pub fn core_main() -> Option<Vec<String>> {
                 );
                 std::process::exit(2);
             }
+        } else if args[0] == "--quic-pair-mode" {
+            // task-5：跨机 QUIC 实测诊断入口（无头、可机器判定）。
+            // 与 `--quic-probe-mode` 的本质差别：复用产品同一 `punch_udp`
+            // （src/common.rs:2898），在**同一条已打洞的 UDP socket** 上做 QUIC，
+            // 与产品主控侧 udp_nat_connect（src/client.rs:5646）和被控侧
+            // udp_nat_listen（src/rendezvous_mediator.rs:1475）同序。
+            // 只作诊断入口：不进 Flutter UI、不进任何默认路径。
+            // 调用形态：
+            //   nervdesk --quic-pair-mode genkey
+            //   nervdesk --quic-pair-mode dial   --local-port P --peer ip:port --peer-key <64hex> ...
+            //   nervdesk --quic-pair-mode listen --port P [--peer ip:port] ...
+            //
+            // 必须 cfg-gate：与 src/lib.rs:78 `pub mod quic_transport` 同条件，
+            // feature-off 时 `crate::quic_transport` 整体不存在，否则 E0433。
+            #[cfg(feature = "quic")]
+            {
+                if let Some(outcome) = crate::quic_transport::run_quic_pair_mode(&args) {
+                    std::process::exit(if outcome { 0 } else { 1 });
+                }
+                return None;
+            }
+            #[cfg(not(feature = "quic"))]
+            {
+                eprintln!(
+                    "--quic-pair-mode requires the `quic` feature at build time; \
+                     rebuild with `cargo ... --features quic`"
+                );
+                std::process::exit(2);
+            }
         } else if args[0] == "--transport" {
             // P3 Path-A CLI: --transport <name>
             // Maps <name> to NERV_QUIC_MODE env-var that get_quic_mode() (src/common.rs:1259)
