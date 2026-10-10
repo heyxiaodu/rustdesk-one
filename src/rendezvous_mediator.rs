@@ -1482,6 +1482,14 @@ async fn udp_nat_listen(
 ) -> ResultType<()> {
     let tm = Instant::now();
     let socket_cloned = socket.clone();
+    // P3（task-4，`analysis/round23-quic-measure/plan.md` §3 G4/G5）：被控端的 QUIC 分支此前
+    // **零日志**，而且一旦 QUIC 失败，唯一的线索是外层 `map_err` 写死的 "with KCP" —— 排查时
+    // 会把人引到完全错误的方向。用一个原子旗标把「这条打洞连接实际走了哪条路」带到 `map_err`。
+    // feature 关闭时下面两行与 `what` 的 QUIC 分支都不编译 ⇒ KCP 路径的错误文本逐字不变。
+    #[cfg(feature = "quic")]
+    let quic_path = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(feature = "quic")]
+    let quic_path_in = quic_path.clone();
     let func = async {
         socket.connect(peer_addr).await?;
         let init_packet = crate::punch_udp(socket.clone(), true).await?;
@@ -1496,15 +1504,33 @@ async fn udp_nat_listen(
                 .as_ref()
                 .is_some_and(|p| crate::quic_transport::looks_like_quic_long_header(p))
         {
+            quic_path_in.store(true, std::sync::atomic::Ordering::Relaxed);
+            let first_byte = init_packet
+                .as_ref()
+                .and_then(|p| p.first().copied())
+                .unwrap_or(0);
+            log::info!(
+                "对端首包是 QUIC 长首部（0x{first_byte:02x}，mode={:?}），本连接走 QUIC 接受分支",
+                crate::common::get_quic_mode()
+            );
             let (pk, seed) = crate::quic_transport::quic_local_identity()?;
             let server_cfg = crate::quic_transport::make_quic_server_config(&pk, &seed)?;
-            let stream = crate::quic_transport::quic_accept_attempt(
+            // P3（G5）：这里此前用 `?` 直接抛出，错误原文被外层 "with KCP" 覆盖。现在先按
+            // 真实原因打一条 WARN，再把原错误继续向上抛（不改变控制流，只补可观测性）。
+            let stream = match crate::quic_transport::quic_accept_attempt(
                 socket,
                 peer_addr,
                 CONNECT_TIMEOUT as u64,
                 server_cfg,
             )
-            .await?;
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("QUIC 接受失败（首字节 0x{first_byte:02x}）：{e:?}");
+                    return Err(e);
+                }
+            };
             // 与下面的 KCP 分支一致：连接层自己的限流接手，这里把打洞位还回去。
             drop(slot);
             crate::server::create_tcp_connection(server, Stream::Tcp(stream), peer_addr_v4, true, meta)
@@ -1524,8 +1550,18 @@ async fn udp_nat_listen(
         Ok(())
     };
     func.await.map_err(|e: anyhow::Error| {
+        // P3：KCP 路径的文本与改动前**逐字相同**（`what` 取 "KCP"）；只有真的走了 QUIC 分支时
+        // 才显示 "QUIC"，避免把 QUIC 的失败报成 KCP 的失败。
+        #[cfg(feature = "quic")]
+        let what = if quic_path.load(std::sync::atomic::Ordering::Relaxed) {
+            "QUIC"
+        } else {
+            "KCP"
+        };
+        #[cfg(not(feature = "quic"))]
+        let what = "KCP";
         anyhow::anyhow!(
-            "Stop listening on {:?} for remote {peer_addr} with KCP, {:?} elapsed: {e}",
+            "Stop listening on {:?} for remote {peer_addr} with {what}, {:?} elapsed: {e}",
             socket_cloned.local_addr(),
             tm.elapsed()
         )

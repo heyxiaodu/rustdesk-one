@@ -326,6 +326,10 @@ pub async fn quic_direct_attempt(
     // `analysis/network/phase3-wiring-options.md`）。在这里装一次是幂等的，从而不必去改
     // 共享核心文件 `src/lib.rs`（AGENTS.md：共享文件只留 thin hook）。
     install_ring_provider();
+    // P2（task-4，`analysis/round23-quic-measure/plan.md` §4）：握手耗时此前完全不可见 ——
+    // 产品路径只有一条「建立成功」的 INFO，既没有耗时也没有本地端口，跨机排查时无法区分
+    // 「握手慢」与「根本没连上」。
+    let t0 = std::time::Instant::now();
 
     let peer = socket.peer_addr()?;
     let client_cfg = make_quic_client_config(peer_raw_pubkey)?;
@@ -355,7 +359,12 @@ pub async fn quic_direct_attempt(
         .open_bi()
         .await
         .map_err(|e| hbb_common::anyhow::anyhow!("open_bi failed: {e:?}"))?;
-    hbb_common::log::info!("QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）");
+    hbb_common::log::info!(
+        "QUIC 直连建立：对端 raw ed25519 公钥已固定（RFC 7250 RPK）；握手耗时 {} ms，local={:?} peer={}",
+        t0.elapsed().as_millis(),
+        socket.local_addr(),
+        peer
+    );
     Ok(quic_into_framed_stream(recv, send, peer))
 }
 
@@ -375,6 +384,9 @@ pub async fn quic_accept_attempt(
     server_cfg: QuinnServerConfig,
 ) -> hbb_common::ResultType<FramedStream> {
     install_ring_provider();
+    // P2（task-4）：被控端同样需要握手耗时与本地端口 —— 它是「首包被 `punch_udp` 吃掉、
+    // 只能靠 PTO 重传」这一时序缺陷的受害侧，没有这条日志就只能靠猜。
+    let t0 = std::time::Instant::now();
 
     let endpoint = quinn::Endpoint::new_with_abstract_socket(
         EndpointConfig::default(),
@@ -402,7 +414,12 @@ pub async fn quic_accept_attempt(
         .accept_bi()
         .await
         .map_err(|e| hbb_common::anyhow::anyhow!("accept_bi failed: {e:?}"))?;
-    hbb_common::log::info!("QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定");
+    hbb_common::log::info!(
+        "QUIC 入站连接已建立：对端 raw ed25519 公钥已按 RFC 7250 RPK 固定；握手耗时 {} ms，local={:?} peer={}",
+        t0.elapsed().as_millis(),
+        socket.local_addr(),
+        peer
+    );
     Ok(quic_into_framed_stream(recv, send, peer))
 }
 
