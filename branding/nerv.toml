@@ -67,3 +67,18 @@ disable-change-permanent-password = "Y"
 # 本键只在**编了 `quic` feature 的构建**里有读取点（所有 get_quic_mode() 调用点都在
 # #[cfg(feature = "quic")] 之内）⇒ 默认的 nightly（不带 quic feature）行为不受影响。
 quic-mode = "prefer"
+
+# QUIC 的硬前置条件：`get_udp_punch_enabled()`（src/common.rs:1220-1225）在**自建服务器**上
+# 默认是关的 —— get_local_option() 对 enable-udp-punch / enable-ipv6-punch / enable-webrtc
+# 三键有保守默认（src/common.rs:1288-1300）：值为空且 rendezvous server 不是 rustdesk.com
+# 时返回 "N"，option2bool（libs/hbb_common/src/config.rs:2860）于是为 false。而 QUIC 的拨号
+# 写在 udp_nat_connect()（src/client.rs:5705，QUIC 尝试 :5728-5740）里，那个已打洞的 UDP
+# socket 只在 src/client.rs:533 那道门为真时才创建 ⇒ 不打开本键，QUIC **永远不会被尝试**
+# （2026-10-11 真机第一轮实测：日志里 QUIC 三标记全 0，只有 TCP punch；见
+# docs/NERV_DESK_STATUS.md §12.27）。官方公网服务器的 host 是 rustdesk.com ⇒ 该门默认就为真，
+# 所以本键是"与官方默认行为对齐"，不是新增行为；失败照旧回退（TCP punch / 中继），不引入新
+# 失败模式。注意：enable-tcp-punch 仍默认开且通常先赢（同网实测 2.8–6.5 ms）⇒
+# "开箱即用一定走 QUIC"尚不成立（产品决策 N-5，见 §12.27）。
+# 读取链：src/client.rs:386/:533 的 get_udp_punch_enabled() → get_local_option
+# (keys.rs:130 OPTION_ENABLE_UDP_PUNCH) → LocalConfig::get_option → DEFAULT_LOCAL_SETTINGS。
+enable-udp-punch = "Y"

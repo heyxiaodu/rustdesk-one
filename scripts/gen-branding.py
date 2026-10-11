@@ -102,6 +102,16 @@ KEY_TARGETS = {
     # :4345-4356, :5722-5724; src/rendezvous_mediator.rs:1499-1503;
     # src/flutter.rs:842-847; src/core_main.rs:321-325).
     "quic-mode": "DEFAULT_LOCAL_SETTINGS",
+    # NERV Desk: QUIC's hard prerequisite. get_udp_punch_enabled()
+    # (src/common.rs:1220-1225) reads this key through get_local_option, which
+    # holds a conservative default for self-hosted servers: with an empty value
+    # and a rendezvous server that is not rustdesk.com it returns "N"
+    # (src/common.rs:1288-1300) and option2bool makes it false
+    # (libs/hbb_common/src/config.rs:2860). QUIC's dial lives inside
+    # udp_nat_connect() (src/client.rs:5705, QUIC attempt :5728-5740) and is only
+    # scheduled when the poked UDP socket exists (src/client.rs:533), so without
+    # this seed QUIC is never even attempted. Same layer as quic-mode.
+    "enable-udp-punch": "DEFAULT_LOCAL_SETTINGS",
 }
 
 # Options whose seeded value drives a predicate in the client. Listing one here

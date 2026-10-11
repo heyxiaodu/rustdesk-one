@@ -3992,4 +3992,28 @@ mod tests {
             "播种后 get_quic_mode() 应返回 Prefer（默认 QUIC 优先）"
         );
     }
+
+    // QuicMode::Prefer 只是"允许试 QUIC"，并不保证它**有机会被试**：QUIC 的拨号在
+    // udp_nat_connect() 里（src/client.rs:5728-5740），而那个函数只在 udp_socket_nat 为
+    // Some 时才会被排进竞速（src/client.rs:1584-1593），该 socket 又只在
+    // get_udp_punch_enabled() 为真时创建（src/client.rs:533）。
+    //
+    // 关键在 get_local_option() 对自建服务器的保守默认（src/common.rs:1288-1300）：
+    // enable-udp-punch / enable-ipv6-punch / enable-webrtc 三键在**值为空**且
+    // rendezvous server 不是 rustdesk.com 时返回 "N" ⇒ option2bool 为 false。品牌清单
+    // 播种 "Y" 正是要跨过这道默认（2026-10-11 真机第一轮实测：未播种时 QUIC 三标记全 0）。
+    // 本测试真的走这条链路（apply_defaults → get_local_option → option2bool）。
+    #[test]
+    fn udp_punch_enabled_after_branding_seed() {
+        base::branding::apply_defaults();
+        assert_eq!(
+            get_local_option(keys::OPTION_ENABLE_UDP_PUNCH),
+            "Y",
+            "branding 应把 enable-udp-punch 播种为 Y"
+        );
+        assert!(
+            get_udp_punch_enabled(),
+            "播种后 get_udp_punch_enabled() 应为 true（否则 QUIC 永远不会被尝试）"
+        );
+    }
 }

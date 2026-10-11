@@ -48,6 +48,9 @@ pub fn apply_defaults() {
         settings
             .entry("quic-mode".to_owned())
             .or_insert_with(|| "prefer".to_owned());
+        settings
+            .entry("enable-udp-punch".to_owned())
+            .or_insert_with(|| "Y".to_owned());
     }
 }
 
@@ -111,6 +114,7 @@ mod tests {
         {
             let settings = hbb_common::config::DEFAULT_LOCAL_SETTINGS.read().unwrap();
             assert_eq!(settings.get("quic-mode").map(String::as_str), Some("prefer"));
+            assert_eq!(settings.get("enable-udp-punch").map(String::as_str), Some("Y"));
         }
     }
 
